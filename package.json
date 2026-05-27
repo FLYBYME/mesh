@@ -1,0 +1,50 @@
+{
+  "name": "mesh",
+  "version": "1.0.0",
+  "description": "Mesh Network Library",
+  "main": "src/index.ts",
+  "type": "module",
+  "browser": "./dist/mesh.browser.js",
+  "bin": {
+    "mesh": "./bin/mesh.js"
+  },
+  "scripts": {
+    "generate": "npx tsx src/cli/index.ts generate --dir src/examples",
+    "build": "npm run generate && tsc --noEmit --diagnostics",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "start": "ts-node demo-service/app.ts",
+    "test": "jest",
+    "demo": "npx tsx src/network_demo.ts",
+    "cli": "npx tsx src/cli/index.ts"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
+    "eventemitter3": "^5.0.1",
+    "express": "^4.19.2",
+    "mongodb": "^7.2.0",
+    "nanoid": "^3.3.7",
+    "nats": "^2.29.3",
+    "ws": "^8.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.12.7",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
+    "eslint": "^10.4.0",
+    "eslint-plugin-jest": "^29.15.2",
+    "globals": "^17.6.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

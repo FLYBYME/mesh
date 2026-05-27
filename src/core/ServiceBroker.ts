@@ -1,0 +1,461 @@
+import type { IServiceBroker } from '../interfaces/IServiceBroker.js';
+import type { ILogger } from '../interfaces/ILogger.js';
+import type { IMeshNetwork } from '../interfaces/IMeshNetwork.js';
+import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
+import type { IContext } from '../interfaces/IContext.js';
+import type { IMeshPacket } from '../interfaces/IMeshNetwork.js';
+import type { IBrokerPlugin } from '../interfaces/IBrokerPlugin.js';
+import type { IMiddleware } from '../interfaces/IInterceptor.js';
+import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
+import type { TimerHandle } from '../interfaces/ITimer.js';
+import type { IServiceModule } from '../interfaces/IServiceModule.js';
+import type { EventRegistry } from '../interfaces/IEventContract.js';
+import type { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
+import { SafeTimer } from '../utils/SafeTimer.js';
+import { nanoid } from 'nanoid';
+import { z } from 'zod';
+import { EventEmitter } from 'eventemitter3';
+import { ContextStack } from './ContextStack.js';
+
+interface LocalTool {
+    handler: (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => Promise<unknown>;
+    highSecurity?: boolean;
+}
+
+export const MeshToolSchemaRegistry: Map<string, {
+    params?: z.ZodTypeAny,
+    returns?: z.ZodTypeAny,
+    mutates?: boolean,
+    timeout?: number,
+    isCrud?: boolean,
+    domain?: string
+}> = new Map();
+
+export class ServiceBroker implements IServiceBroker {
+    private localTools = new Map<string, LocalTool>();
+    private modules: IServiceModule[] = [];
+    private isStarted: boolean = false;
+
+    private globalMiddleware: IMiddleware[] = [];
+    private localMiddleware: IMiddleware[] = [];
+
+    private plugins: IBrokerPlugin[] = [];
+    private localEvents: EventEmitter = new EventEmitter();
+
+    public registry!: IServiceRegistry;
+    public network!: IMeshNetwork;
+    public resiliency = {} as Record<string, unknown>;
+
+    private providers = new Map<string, unknown>();
+
+    private pendingRequests = new Map<string, {
+        resolve: (val: unknown) => void,
+        reject: (err: Error) => void,
+        timeout: TimerHandle
+    }>();
+
+    constructor(
+        public readonly nodeID: string,
+        public readonly logger: ILogger
+    ) {}
+
+    public registerProvider(name: string, provider: unknown): void {
+        this.providers.set(name, provider);
+    }
+
+    public getProvider<T>(name: string): T {
+        return this.providers.get(name) as T;
+    }
+
+    public pipe(plugin: IBrokerPlugin): this {
+        this.plugins.push(plugin);
+        plugin.onRegister(this);
+        return this;
+    }
+
+    public setNetwork(network: IMeshNetwork): void {
+        this.network = network;
+        this.setupNetworkListeners();
+    }
+
+    public setRegistry(registry: IServiceRegistry): void {
+        this.registry = registry;
+    }
+
+    private setupNetworkListeners() {
+        if (!this.network) return;
+
+        this.network.onMessage('*', (data: unknown, packet: IMeshPacket) => {
+            if (packet.type === 'RESPONSE' || packet.type === 'RESPONSE_ERROR') {
+                const correlationId = (packet.meta?.correlationID || packet.id) as string;
+                const pending = this.pendingRequests.get(correlationId);
+                if (pending) {
+                    SafeTimer.clearTimeout(pending.timeout);
+                    this.pendingRequests.delete(correlationId);
+                    try {
+                        if (packet.type === 'RESPONSE_ERROR') {
+                            const errorData = packet.error;
+                            pending.reject(new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error }));
+                        } else {
+                            pending.resolve(packet.data);
+                        }
+                    } catch (err) {
+                        this.logger.error(`[ServiceBroker] Bridge RPC error: ${err}`);
+                    }
+                }
+            } else if (packet.type === 'REQUEST') {
+                this.handleIncomingRPC(packet).then(res => {
+                    this.network.send(packet.senderNodeID, packet.topic, res, {
+                        type: 'RESPONSE',
+                        id: packet.id,
+                        meta: { correlationID: packet.id }
+                    }).catch(err => this.logger.error(`[ServiceBroker] Failed to send RESPONSE: ${err}`));
+                }).catch(err => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.network.send(packet.senderNodeID, packet.topic, { message }, {
+                        type: 'RESPONSE_ERROR',
+                        id: packet.id,
+                        meta: { correlationID: packet.id },
+                        error: { message }
+                    }).catch(sendErr => this.logger.error(`[ServiceBroker] Failed to send RESPONSE_ERROR: ${sendErr}`));
+                });
+            } else if (packet.type === 'EVENT') {
+                this._triggerLocal(packet.topic, packet.data, packet);
+            }
+        });
+    }
+
+    public use(mw: IMiddleware): void {
+        this.globalMiddleware.push(mw);
+    }
+
+    public useLocal(mw: IMiddleware): void {
+        this.localMiddleware.push(mw);
+    }
+
+    public getContext(): IContext<Record<string, unknown>, Record<string, unknown>> | undefined {
+        return ContextStack.getContext() as IContext<Record<string, unknown>, Record<string, unknown>> | undefined;
+    }
+
+    public on<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): (() => void) {
+        if (topic.includes('*')) {
+            const regex = new RegExp('^' + topic
+                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                .replace(/\\\*/g, '.*')
+                + '$');
+            const wrapper = (payload: T, packet?: IMeshPacket<T>) => {
+                const topicToTest = packet?.topic || topic;
+                if (regex.test(topicToTest)) {
+                    handler(payload, packet);
+                }
+            };
+            (handler as any)._wrapper = wrapper;
+            this.localEvents.on('__pattern_event', wrapper);
+        } else {
+            this.localEvents.on(topic, handler);
+        }
+
+        return () => this.off(topic, handler);
+    }
+
+    public off<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): void {
+        if (topic.includes('*')) {
+            const wrapper = (handler as any)._wrapper;
+            if (wrapper) this.localEvents.off('__pattern_event', wrapper as (...args: unknown[]) => void);
+        } else {
+            this.localEvents.off(topic, handler);
+        }
+    }
+
+    public _triggerLocal(topic: string, data: unknown, packet: IMeshPacket): void {
+        this.localEvents.emit(topic, data, packet);
+        this.localEvents.emit('__pattern_event', data, packet);
+    }
+
+    public async registerModule(module: IServiceModule): Promise<void> {
+        const domain = module.domain;
+        if (!domain) throw new Error('[ServiceBroker] Module domain must be provided');
+
+        this.logger.info(`[ServiceBroker] Registering module: ${domain} (Node: ${this.nodeID})`);
+        this.modules.push(module);
+
+        if ('onInit' in module && typeof (module as Record<string, unknown>).onInit === 'function') {
+            await (module as Record<string, unknown> & { onInit: (broker: IServiceBroker) => Promise<void> }).onInit(this);
+        }
+
+        const contracts = module.getContracts();
+        this.logger.debug(`[ServiceBroker] Module '${domain}' has ${contracts.length} contracts`);
+
+        for (const contract of contracts) {
+            const toolKeyStr = `${contract.domain}.${contract.action}`;
+
+            MeshToolSchemaRegistry.set(toolKeyStr, {
+                params: contract.inputSchema as z.ZodTypeAny,
+                returns: contract.outputSchema as z.ZodTypeAny,
+                mutates: contract.destructive,
+                isCrud: contract.isCrud,
+                domain: contract.domain
+            });
+
+            this.localTools.set(toolKeyStr, {
+                handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
+                    const serviceCtx = {
+                        correlationId: ctx.correlationID || nanoid(),
+                        nodeID: this.nodeID,
+                        call: async (a: string, p: Record<string, unknown>, o?: unknown) => this.call(a as any, p as any, o as any),
+                        emit: (e: string, p: Record<string, unknown>, o?: unknown) => this.emit(e as any, p as any, o as any)
+                    };
+                    return await module.execute(contract.domain, contract.action, ctx.params, serviceCtx as never);
+                },
+                highSecurity: contract.destructive === true
+            });
+            this.logger.info(`[ServiceBroker] Tool registered successfully: ${toolKeyStr}`);
+        }
+
+        if (this.registry) {
+            this.registry.registerModule(module);
+        }
+
+        if (this.isStarted && 'onStart' in module && typeof (module as Record<string, unknown>).onStart === 'function') {
+            await (module as Record<string, unknown> & { onStart: (broker: IServiceBroker) => Promise<void> }).onStart(this);
+        }
+    }
+
+    public async call<K extends keyof IServiceToolRegistry>(
+        tool: K,
+        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
+        options?: { nodeID?: string; timeout?: number }
+    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
+
+    public async call(tool: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<unknown>;
+
+    public async call(tool: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<unknown> {
+        return this.internalCall(tool, params as Record<string, unknown>, options);
+    }
+
+    public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
+        const packet: IMeshPacket = {
+            id: nanoid(),
+            topic: event as string,
+            data: payload,
+            senderNodeID: this.nodeID,
+            type: 'EVENT',
+            timestamp: Date.now(),
+            version: 1,
+            priority: 1,
+            meta: { local: true }
+        };
+
+        this._triggerLocal(event as string, payload, packet);
+
+        if (this.network && !options?.skipNetwork) {
+            this.network.publish(event as string, payload);
+        }
+    }
+
+    private async internalCall(
+        toolName: string,
+        params: Record<string, unknown>,
+        options?: { nodeID?: string; timeout?: number },
+        parentCtx?: IContext<Record<string, unknown>, Record<string, unknown>>
+    ): Promise<unknown> {
+        const schema = MeshToolSchemaRegistry.get(toolName);
+        if (schema?.params && params !== undefined) {
+            try {
+                if (typeof (schema.params as z.ZodTypeAny).parse === 'function') {
+                    params = (schema.params as z.ZodTypeAny).parse(params) as Record<string, unknown>;
+                }
+            } catch (error) {
+                throw new Error(`[ServiceBroker] Invalid params for tool ${toolName}: ${error}`);
+            }
+        } else if (params === undefined) {
+            params = {};
+        }
+
+        let targetNodeID = options?.nodeID;
+
+        if (!targetNodeID && !this.localTools.has(toolName)) {
+            if (this.registry) {
+                const endpoint = this.registry.selectNode(toolName, {
+                    toolName: toolName,
+                    params
+                });
+                if (endpoint) {
+                    targetNodeID = endpoint.nodeID;
+                }
+            }
+        }
+
+        const activeCtx = parentCtx || this.getContext();
+        const traceId = activeCtx?.traceId || nanoid();
+        const parentId = activeCtx?.spanId;
+        const spanId = nanoid();
+
+        const timeout = options?.timeout || schema?.timeout;
+
+        const ctx: IContext<Record<string, unknown>, IMeshMeta> = {
+            id: nanoid(),
+            correlationID: activeCtx?.correlationID || nanoid(),
+            toolName,
+            params: params,
+            meta: { ...activeCtx?.meta as IMeshMeta, timeout },
+            targetNodeID: targetNodeID,
+            callerID: activeCtx?.id || null,
+            nodeID: this.nodeID,
+            traceId,
+            spanId,
+            parentId,
+        };
+
+        const result = await this.handlePipeline(ctx);
+        if (schema?.returns) {
+            return (schema.returns as z.ZodTypeAny).parse(result);
+        }
+        return result;
+    }
+
+    public async handleIncomingRPC(packet: IMeshPacket): Promise<unknown> {
+        const meta = (packet.meta as Record<string, unknown>) || {};
+        const targetNodeID = (meta.finalDestinationID as string) || packet.targetNodeID;
+
+        const ctx: IContext<Record<string, unknown>, IMeshMeta> = {
+            id: packet.id,
+            correlationID: (packet.meta?.correlationID as string) || packet.id,
+            toolName: packet.topic,
+            params: packet.data as Record<string, unknown>,
+            meta: meta as IMeshMeta,
+            callerID: packet.senderNodeID,
+            nodeID: this.nodeID,
+            targetNodeID: targetNodeID,
+            traceId: (meta.traceId as string) || nanoid(),
+            spanId: (meta.spanId as string) || nanoid(),
+            parentId: meta.parentId as string,
+        };
+
+        const result = await this.handlePipeline(ctx);
+        const schema = MeshToolSchemaRegistry.get(packet.topic);
+        if (schema?.returns) {
+            return (schema.returns as z.ZodTypeAny).parse(result);
+        }
+        return result;
+    }
+
+    public async handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown> {
+        return await ContextStack.run(ctx, async () => {
+            try {
+                const finalHandler = async () => {
+                    const isLocal = !ctx.targetNodeID || ctx.targetNodeID === this.nodeID;
+                    if (isLocal) {
+                        const tool = this.localTools.get(ctx.toolName);
+                        if (!tool) {
+                            this.logger.error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`, {
+                                targetNodeID: ctx.targetNodeID,
+                                nodeID: this.nodeID,
+                                registeredTools: Array.from(this.localTools.keys())
+                            });
+                            throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`);
+                        }
+                        return await tool.handler(ctx as IContext<Record<string, unknown>, Record<string, unknown>>);
+                    } else {
+                        return await this.executeRemote(ctx.targetNodeID!, ctx.toolName, ctx.params, ctx.meta as Record<string, unknown>);
+                    }
+                };
+
+                const isLocalInitially = !ctx.targetNodeID || ctx.targetNodeID === this.nodeID;
+                const chain = [...this.globalMiddleware];
+                if (isLocalInitially) {
+                    chain.push(...this.localMiddleware);
+                }
+
+                return await this.executeChain(ctx as IContext<Record<string, unknown>, Record<string, unknown>>, chain, finalHandler);
+
+            } catch (err) {
+                ctx.error = err instanceof Error ? err : new Error(String(err));
+                throw ctx.error;
+            }
+        });
+    }
+
+    private async executeChain(
+        ctx: IContext<Record<string, unknown>, Record<string, unknown>>,
+        chain: IMiddleware[],
+        finalHandler: () => Promise<unknown>
+    ): Promise<unknown> {
+        const executeNext = async (index: number): Promise<unknown> => {
+            if (index < chain.length) {
+                return await chain[index](ctx, () => executeNext(index + 1));
+            }
+            return await finalHandler();
+        };
+        return await executeNext(0);
+    }
+
+    public async executeRemote(nodeID: string, toolName: string, params: unknown, meta: Record<string, unknown> = {}): Promise<unknown> {
+        if (!this.network) throw new Error('[ServiceBroker] Network not initialized');
+
+        const requestId = (meta.correlationID as string) || (meta.id as string) || nanoid();
+
+        const currentCtx = this.getContext();
+        const tracingMeta = {
+            traceId: currentCtx?.traceId,
+            spanId: currentCtx?.spanId,
+            parentId: currentCtx?.parentId
+        };
+
+        const schema = MeshToolSchemaRegistry.get(toolName);
+        const timeoutMs = (meta.timeout as number) || schema?.timeout || 10000;
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingRequests.delete(requestId);
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
+            }, timeoutMs) as unknown as TimerHandle;
+            this.pendingRequests.set(requestId, { resolve, reject, timeout });
+            this.network.send(nodeID, toolName, params, {
+                id: requestId,
+                type: 'REQUEST',
+                meta: { ...meta, ...tracingMeta, correlationID: requestId },
+                senderNodeID: this.nodeID,
+                topic: toolName
+            }).catch(err => {
+                SafeTimer.clearTimeout(timeout);
+                this.pendingRequests.delete(requestId);
+                reject(err instanceof Error ? err : new Error(String(err)));
+            });
+        });
+    }
+
+    public async start(): Promise<void> {
+        this.isStarted = true;
+
+        for (const plugin of this.plugins) {
+            if (plugin.onStart) await plugin.onStart(this);
+        }
+
+        for (const module of this.modules) {
+            if (typeof (module as any).onStart === 'function') {
+                await (module as any).onStart(this);
+            }
+        }
+    }
+
+    public async stop(): Promise<void> {
+        this.isStarted = false;
+
+        for (const module of this.modules) {
+            if (typeof (module as any).onStop === 'function') {
+                await (module as any).onStop(this);
+            }
+        }
+
+        for (const pending of this.pendingRequests.values()) {
+            SafeTimer.clearTimeout(pending.timeout);
+            pending.reject(new Error('Broker stopped'));
+        }
+        this.pendingRequests.clear();
+
+        for (const plugin of this.plugins) {
+            if (plugin.onStop) await plugin.onStop(this);
+        }
+    }
+}
