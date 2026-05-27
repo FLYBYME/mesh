@@ -10,7 +10,7 @@ import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { EventRegistry } from '../interfaces/IEventContract.js';
-import type { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
+import type { IServiceToolRegistry, IServiceContext } from '../interfaces/IServiceContext.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
@@ -57,7 +57,7 @@ export class ServiceBroker implements IServiceBroker {
     constructor(
         public readonly nodeID: string,
         public readonly logger: ILogger
-    ) {}
+    ) { }
 
     public registerProvider(name: string, provider: unknown): void {
         this.providers.set(name, provider);
@@ -216,6 +216,25 @@ export class ServiceBroker implements IServiceBroker {
             this.registry.registerModule(module);
         }
 
+        // Subscribe declarative event handlers
+        if (typeof module.getEventHandlers === 'function') {
+            const eventHandlers = module.getEventHandlers();
+            for (const [name, handler] of eventHandlers.entries()) {
+                this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${name}`);
+                this.localEvents.on(name as string, (data: unknown, packet?: IMeshPacket) => {
+                    const ctx = {
+                        correlationId: packet?.id || nanoid(),
+                        nodeID: this.nodeID,
+                        call: async (a: any, p: any, o?: any) => this.call(a, p, o),
+                        emit: (e: any, p: any, o?: any) => this.emit(e, p, o)
+                    };
+                    void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
+                        this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
+                    });
+                });
+            }
+        }
+
         if (this.isStarted && 'onStart' in module && typeof (module as Record<string, unknown>).onStart === 'function') {
             await (module as Record<string, unknown> & { onStart: (broker: IServiceBroker) => Promise<void> }).onStart(this);
         }
@@ -225,12 +244,8 @@ export class ServiceBroker implements IServiceBroker {
         tool: K,
         params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
-
-    public async call(tool: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<unknown>;
-
-    public async call(tool: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<unknown> {
-        return this.internalCall(tool, params as Record<string, unknown>, options);
+    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown> {
+        return this.internalCall(tool, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {

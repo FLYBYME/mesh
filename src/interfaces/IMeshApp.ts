@@ -4,6 +4,7 @@ import type { IServiceModule } from './IServiceModule.js';
 import type { IProviderToken } from './IProviderToken.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
 import type { IServiceToolRegistry } from './IServiceContext.js';
+import { EventRegistry } from './IEventContract.js';
 
 export interface AppConfig extends Record<string, unknown> {
     nodeID: string;
@@ -20,7 +21,7 @@ export interface IMeshNode {
     readonly logger: ILogger;
     readonly registry: IServiceRegistry;
     getConfig?(): Record<string, unknown>;
-    publish<T = unknown>(topic: string, data: T): Promise<void>;
+    publish<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
 }
 
 /**

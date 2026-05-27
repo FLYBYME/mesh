@@ -9,7 +9,8 @@ import type { EventRegistry } from '../interfaces/IEventContract.js';
  * EventHandler: Signature for a strictly-typed event subscriber.
  */
 export type EventHandler<K extends keyof EventRegistry> = (
-    payload: EventRegistry[K]
+    payload: EventRegistry[K],
+    ctx: IServiceContext
 ) => void | Promise<void>;
 
 /**
@@ -132,8 +133,8 @@ export abstract class ServiceModule implements IServiceModule {
         return !!entry?.contract.isCrud;
     }
 
-    public getEventHandlers(): Map<keyof EventRegistry, (payload: any) => void | Promise<void>> {
-        return this.eventHandlerMap as Map<keyof EventRegistry, (payload: any) => void | Promise<void>>;
+    public getEventHandlers(): Map<keyof EventRegistry, (payload: any, ctx: IServiceContext) => void | Promise<void>> {
+        return this.eventHandlerMap as Map<keyof EventRegistry, (payload: any, ctx: IServiceContext) => void | Promise<void>>;
     }
 
     // ─── CRUD Hook Execution ─────────────────────────────────────────────────

@@ -12,7 +12,7 @@ export interface IServiceModule {
     getContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
     execute(domain: string, action: string, input: unknown, ctx: IServiceContext): Promise<unknown>;
     isCrud(domain: string, action: string): boolean;
-    getEventHandlers(): Map<keyof EventRegistry, (payload: any) => void | Promise<void>>;
+    getEventHandlers(): Map<keyof EventRegistry, (payload: any, ctx: IServiceContext) => void | Promise<void>>;
     beforeCrud(domain: string, action: string, input: unknown, ctx: IServiceContext): Promise<unknown>;
     afterCrud(domain: string, action: string, output: unknown, ctx: IServiceContext): Promise<unknown>;
 }

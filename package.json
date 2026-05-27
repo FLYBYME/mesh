@@ -9,8 +9,7 @@
     "mesh": "./bin/mesh.js"
   },
   "scripts": {
-    "generate": "npx tsx src/cli/index.ts generate --dir src/examples",
-    "build": "npm run generate && tsc --noEmit --diagnostics",
+    "build": "npx mesh generate && tsc --noEmit --diagnostics",
     "type-check": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",

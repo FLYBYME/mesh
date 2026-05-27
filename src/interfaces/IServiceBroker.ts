@@ -33,9 +33,6 @@ export interface IServiceBroker {
         options?: { nodeID?: string; timeout?: number }
     ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
 
-    /** Untyped fallback for internal dynamic routing */
-    call(tool: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<unknown>;
-
     /** Typed event emit. */
     emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
 

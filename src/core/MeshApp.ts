@@ -5,7 +5,8 @@ import type {
     IProviderToken,
     ILogger,
     IServiceBroker,
-    IServiceRegistry
+    IServiceRegistry,
+    EventRegistry
 } from '../interfaces/index.js';
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
@@ -38,7 +39,7 @@ export class MeshApp implements IMeshApp {
         // Ensure logger is prefixed with nodeID for better context
         // Note: Assuming Logger has a method to add context if needed, 
         // but for now we just use it directly as in the demo.
-        
+
         this.registerProvider<ILogger>('logger', this.logger);
         this.registerProvider<IMeshApp>('app', this);
     }
@@ -138,20 +139,20 @@ export class MeshApp implements IMeshApp {
     }
 
     public async call<K extends keyof IServiceToolRegistry>(
-        action: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : Record<string, unknown>,
+        tool: K,
+        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
         options?: { nodeID?: string; timeout?: number }
     ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown> {
         const broker = this.getProvider<IServiceBroker>('broker');
-        return broker.call(action as string, params, options) as any;
+        return broker.call(tool, params, options);
     }
 
-    public async publish<T = unknown>(topic: string, data: T): Promise<void> {
+    public async publish<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): Promise<void> {
         if (this.hasProvider('broker')) {
             const broker = this.getProvider<IServiceBroker>('broker');
-            broker.emit(topic as any, data);
+            broker.emit(event, payload, options);
         } else {
-            this.logger.warn(`[MeshApp] Cannot publish to ${topic}, broker not initialized.`);
+            this.logger.warn(`[MeshApp] Cannot publish to ${event}, broker not initialized.`);
         }
     }
 }
