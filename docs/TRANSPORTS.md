@@ -1,53 +1,149 @@
-# Mesh Transports Specification
+# Transports Specification
 
 ## Overview
-Transports are the protocol-specific drivers that handle the physical movement of packets between nodes. Mesh uses a modular transport system that allows swapping the underlying networking layer without changing the application logic.
+Transports handle the raw bytes sent between nodes. The `BaseTransport` class abstracts physical network details (TCP sockets, WebSockets, WebRTC, WebWorkers) into a unified isomorphic interface, enabling the core engine to operate independently of the underlying protocol.
 
-## Base Class (`BaseTransport`)
-Every transport must inherit from `BaseTransport` and implement the core lifecycle methods:
-- `connect(options)`: Initialize the connection.
-- `disconnect()`: Close the connection and clean up resources.
-- `send(nodeID, packet)`: Point-to-point delivery.
-- `publish(topic, packet)`: Broadcast/Multicast delivery.
-- `start()` / `stop()`: Manage internal listeners.
+---
 
-## Implementations
+## Transport Bridges
 
-### 1. WebSocket Transport (`WSTransport`)
-The primary isomorphic transport.
-- **Isomorphic**: Uses `ws` in Node.js and the native `WebSocket` API in the browser.
-- **Mode**: Can act as both a Client and a Server (via `UnifiedServer`).
-- **Heartbeats**: Built-in ping/pong to detect dead connections.
+```mermaid
+graph TD
+    subgraph ServerDomain [Node.js Server Domain]
+        ServerBroker[ServiceBroker] --> ServerNet[MeshNetwork]
+        ServerNet --> ServerWS[WSTransport: Server Sockets]
+        ServerNet --> ServerTCP[TCPTransport: Fast TCP]
+    end
+    
+    subgraph BrowserDomain [Web Browser Client Domain]
+        BrowserBroker[ServiceBroker] --> BrowserNet[MeshNetwork]
+        BrowserNet --> BrowserWS[BrowserWebSocketTransport: Client Sockets]
+        BrowserNet --> BrowserRTC[WebRTCTransport: Browser P2P RTC]
+    end
+    
+    ServerWS <===>|Secure WebSockets wss://| BrowserWS
+    BrowserRTC <===>|WebRTC DataChannel| BrowserRTC2[Another Browser Peer]
+```
 
-### 2. TCP Transport (`TCPTransport`)
-High-performance server-to-server transport.
-- **Node-only**: Uses the native `net` module.
-- **Framing**: Uses `TCPFrameCodec` to handle packet boundary detection (Length-Prefixing).
-- **Speed**: Lowest overhead for high-throughput RPC.
+---
 
-### 3. NATS Transport (`NATSTransport`)
-Broker-based transport for cloud-native environments.
-- **Pub/Sub**: Uses NATS subjects for routing (e.g., `mesh.<nodeID>`).
-- **Scalability**: Decouples nodes from each other; nodes don't need direct IP connectivity.
-- **Resilience**: Leverages NATS' built-in load balancing and persistence features.
+## The `BaseTransport` Abstract Class
 
-### 4. Mock Transport (`MockTransport`)
-In-memory transport for unit testing.
-- **Static Registry**: Uses a static Map to track all instances in the process.
-- **Simulated Latency**: Adds a small (5ms) delay to mimic real network behavior.
+All transports extend `BaseTransport` and inherit standard event-emitting capabilities:
 
-## Transport Manager
-The `TransportManager` coordinates multiple transports:
-1. **Selection**: It looks at a target node's `addresses` and selects the first transport that supports the address protocol (e.g., `tcp://` or `ws://`).
-2. **Failover**: If the primary transport fails, it can attempt fallback to secondary addresses.
-3. **Unified Interface**: Provides a single `send()` and `publish()` entry point for the `MeshNetwork`.
-
-## Protocol Detection
 ```typescript
-private getAddressType(address: string): TransportType {
-    if (address.startsWith('tcp://')) return 'tcp';
-    if (address.startsWith('ws://') || address.startsWith('wss://')) return 'ws';
-    if (address.startsWith('nats://')) return 'nats';
-    return 'ws'; // Default fallback
+import { EventEmitter } from 'eventemitter3';
+import { BaseSerializer } from '../serializers/BaseSerializer.js';
+import { TransportConnectOptions, MeshPacket } from '../interfaces/IMeshNetwork.js';
+
+export abstract class BaseTransport extends EventEmitter {
+    abstract readonly protocol: string;
+    abstract readonly version: number;
+
+    protected serializer: BaseSerializer;
+    protected connected: boolean = false;
+    protected nodeID: string = 'unknown';
+
+    constructor(serializer: BaseSerializer) {
+        super();
+        this.serializer = serializer;
+    }
+
+    /** Establish physical socket connections or server binds */
+    abstract connect(opts: TransportConnectOptions): Promise<void>;
+
+    /** Gracefully close connections, release sockets, and clear intervals */
+    abstract disconnect(): Promise<void>;
+
+    /** Send a point-to-point packet directly to a specific target node */
+    abstract send(nodeID: string, packet: MeshPacket): Promise<void>;
+
+    /** Broadcast a packet across a channel or publish to all active peers */
+    abstract publish(topic: string, packet: MeshPacket): Promise<void>;
+
+    /** Optional: Establish direct peer-to-peer tunnels (e.g. WebRTC) */
+    async connectToPeer(nodeID: string, url: string, options?: Record<string, unknown>): Promise<void> {
+        throw new Error(`Transport ${this.protocol} does not support direct peer connections`);
+    }
 }
+```
+
+---
+
+## Isomorphic Transport Implementations
+
+Mesh partitions its transport layers based on execution safety and platform availability:
+
+### 1. Server-Side Node.js Transports (`src/transports/node/`)
+* **`TCPTransport`**: A high-performance transport that uses native Node.js TCP sockets (`net`) for fast, low-overhead communication between backend services.
+* **`WSTransport`**: Uses the `ws` package to spin up a WebSocket server on a shared port. It handles incoming browser client connections and outgoing peer connections.
+* **`IPCTransport`**: Uses Named Pipes / Unix Sockets (`net.connect`) for fast, secure local communication on the same machine.
+
+### 2. Browser Client Transports (`src/transports/browser/`)
+* **`BrowserWebSocketTransport`**: Standard browser implementation that uses the isomorphic `WebSocket` Web API to connect to the backend server.
+* **`WebRTCTransport`**: Uses WebRTC `RTCDataChannel` to establish direct browser-to-browser P2P tunnels, bypassing backend server relays after initial signaling.
+* **`BrowserWorkerTransport`**: Bridges communication between the main browser window and WebWorkers using `postMessage` channels.
+
+---
+
+## Code Example: Bootstrapping a Node.js WebSocket Server
+
+The following example demonstrates how to configure and start a server-side node that hosts services and listens for browser WebSocket clients:
+
+```typescript
+import { MeshApp } from '../core/MeshApp.js';
+import { ServiceBroker } from '../core/ServiceBroker.js';
+import { Registry } from '../core/Registry.js';
+import { MeshNetwork } from '../core/MeshNetwork.js';
+import { WSTransport } from '../transports/node/WSTransport.js';
+import { JSONSerializer } from '../serializers/JSONSerializer.js';
+import { Logger } from '../utils/Logger.js';
+
+async function startServerNode() {
+    const logger = new Logger();
+    const nodeID = 'hub-node-1';
+    
+    // 1. Initialize DB-safe serializer
+    const serializer = new JSONSerializer();
+    
+    // 2. Instantiate WSTransport to act as a Server listener on port 5005
+    const wsTransport = new WSTransport(serializer, 5005);
+    
+    // 3. Initialize Registry and Network
+    const registry = new Registry(logger, { localNodeID: nodeID });
+    
+    const network = new MeshNetwork({
+        nodeId: nodeID,
+        transports: [wsTransport],
+        port: 5005 // Port to bind to
+    }, logger, registry);
+
+    const broker = new ServiceBroker(nodeID, logger);
+    broker.setNetwork(network);
+    broker.setRegistry(registry);
+
+    const app = new MeshApp({ nodeID, logger });
+    app.registerProvider('registry', registry);
+    app.registerProvider('broker', broker);
+
+    await app.start();
+    logger.info(`WebSocket Server active and listening on ws://127.0.0.1:5005`);
+}
+```
+---
+
+## Code Example: Connecting from a Web Browser
+
+In browser threads, instantiate the browser transport to connect directly to the hub:
+
+```typescript
+import { MeshApp } from '../core/MeshApp.js';
+import { BrowserWebSocketTransport } from '../transports/browser/BrowserWebSocketTransport.js';
+import { JSONSerializer } from '../serializers/JSONSerializer.js';
+
+const app = new MeshApp({ nodeID: 'browser-client-node' });
+const serializer = new JSONSerializer();
+
+// Connect to the server hub ws://127.0.0.1:5005
+const browserTransport = new BrowserWebSocketTransport(serializer, 'ws://127.0.0.1:5005');
 ```

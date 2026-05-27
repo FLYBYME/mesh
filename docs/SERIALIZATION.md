@@ -1,46 +1,116 @@
 # Serialization Specification
 
 ## Overview
-Serialization is the process of converting `IMeshPacket` objects and their payloads into binary formats for transmission over the wire. Mesh supports multiple serialization protocols, allowing for a balance between speed, payload size, and language compatibility.
+Mesh is an isomorphic network library, meaning it must serialize structured data packets into byte buffers for network transport and parse them back at their destinations. Mesh achieves this by defining a pluggable serializer architecture.
 
-## Base Class (`BaseSerializer`)
-All serializers inherit from `BaseSerializer`:
-- `serialize(data: any): Uint8Array`: Encodes a JavaScript object into a byte buffer.
-- `deserialize(buffer: Uint8Array): any`: Decodes a byte buffer into a JavaScript object.
+---
 
-## Implementations
+## Serialization Flow
 
-### 1. JSON Serializer (`JSONSerializer`)
-The default and most flexible serializer.
-- **Protocol**: Standard JSON stringified and encoded to UTF-8.
-- **Isomorphic Support**: Handles `Buffer` objects by converting them to `{ type: 'Buffer', data: [...] }` to ensure they survive transmission to the browser (where native Node.js Buffers don't exist).
-- **Pros**: Human-readable, native to JS, highly compatible.
-- **Cons**: Large payload size, slower than binary formats.
-
-### 2. Binary Serializer (`BinarySerializer`)
-A optimized format for numerical and simple key-value data.
-- **Protocol**: Uses a compact binary representation.
-- **Isomorphic**: Utilizes `TypedArray` and `DataView` for platform-agnostic bit manipulation.
-- **Pros**: Smaller footprint, faster for numerical data.
-
-### 3. ProtoBuf Serializer (`ProtoBufSerializer`)
-Strict, schema-based serialization using Google's Protocol Buffers.
-- **Protocol**: Binary wire format.
-- **Validation**: Ensures that outbound and inbound data strictly adheres to `.proto` definitions.
-- **Pros**: Smallest payloads, cross-language support, schema evolution.
-- **Cons**: Requires pre-defined schemas and code generation.
-
-## Handling Isomorphism
-Mesh's serialization layer is designed to bridge the gap between Node.js and the Browser:
-- **Buffer vs. Uint8Array**: Automatically normalizes binary data types.
-- **Encoder/Decoder**: Uses `TextEncoder` and `TextDecoder` for high-performance UTF-8 handling in all environments.
-
-## Selection
-The serializer is typically configured at the Transport level:
-```typescript
-const serializer = new JSONSerializer();
-const transport = new WSTransport(serializer);
+```mermaid
+graph LR
+    subgraph Serialization [Sender Node]
+        Object[TypeScript Object] -->|JSON.stringify + Replacer| JSON[JSON String]
+        JSON -->|TextEncoder| Bytes[Uint8Array Buffer]
+    end
+    
+    subgraph Deserialization [Receiver Node]
+        Bytes -->|TextDecoder| JSONRecv[JSON String]
+        JSONRecv -->|JSON.parse + Reviver| ObjectRecv[TypeScript Object]
+    end
 ```
 
-## Packet Envelope
-Regardless of the serializer used for the `data` payload, the `IMeshPacket` envelope contains mandatory metadata (ID, Topic, SenderID) that allows the `MeshNetwork` to route the packet without necessarily knowing how to decode the payload.
+---
+
+## The `BaseSerializer` Interface
+
+All serialization engines inherit from the `BaseSerializer` abstract class:
+
+```typescript
+export abstract class BaseSerializer {
+    /** Unique serializer format identifier (e.g. 'json', 'protobuf') */
+    abstract readonly type: string;
+
+    /**
+     * serialize: Encodes a JavaScript value into a binary buffer.
+     * @param data Payload object to transmit
+     */
+    abstract serialize(data: unknown): Uint8Array;
+
+    /**
+     * deserialize: Decodes a binary buffer or string back into a typed object.
+     * @param buf Raw buffer, string, or ArrayBuffer
+     */
+    abstract deserialize<T>(buf: Uint8Array | ArrayBuffer | string): T;
+}
+```
+
+---
+
+## Standard Serializer: Isomorphic JSON
+
+The default serialization engine is the `JSONSerializer`. It uses modern, standard Web APIs (`TextEncoder` and `TextDecoder`) which are natively supported in both Node.js and web browsers.
+
+### 1. Isomorphic Node.js Buffer Preservation
+JSON does not natively support binary buffer formats (like Node's `Buffer` or browser `Uint8Array` arrays). The `JSONSerializer` solves this by mounting custom `replacer` and `reviver` mapping functions:
+
+* **Serialization replacer**: Intercepts `Buffer` objects and translates them into a JSON-safe struct:
+  ```json
+  { "type": "Buffer", "data": [72, 101, 108, 108, 111] }
+  ```
+* **Deserialization reviver**: Detects the `{ type: "Buffer" }` signature and reconstructs a proper `Buffer` object using `Buffer.from(value.data)`.
+
+---
+
+## Alternative Serializers
+
+Mesh supports alternative serializers for high-throughput or low-bandwidth environments:
+
+1. **`ProtoBufSerializer`** (`protobuf`): Converts payloads into highly-optimized binary structures using predefined Protocol Buffer schemas.
+2. **`BinarySerializer`** (`binary`): A lightweight, specialized binary format designed for streaming raw files or video buffers.
+
+---
+
+## Code Example: Serializing custom packets
+
+The following example demonstrates how to serialize and deserialize a `MeshPacket` containing complex binary buffer types using the isomorphic `JSONSerializer`:
+
+```typescript
+import { JSONSerializer } from '../serializers/JSONSerializer.js';
+import type { MeshPacket } from '../interfaces/IMeshNetwork.js';
+
+function testSerialization() {
+    const serializer = new JSONSerializer();
+
+    // 1. Construct a packet containing a Node.js Buffer
+    const originalPacket: MeshPacket = {
+        id: 'pkg-100',
+        topic: 'file.upload',
+        type: 'REQUEST',
+        senderNodeID: 'node-client',
+        timestamp: Date.now(),
+        version: 1,
+        priority: 1,
+        data: {
+            filename: 'document.txt',
+            // Raw binary data
+            content: Buffer.from('Hello world, this is mesh binary!'), 
+        }
+    } as MeshPacket;
+
+    console.log('Original Packet:', originalPacket.data);
+
+    // 2. Serialize to Uint8Array bytes
+    const binaryBuffer: Uint8Array = serializer.serialize(originalPacket);
+    console.log(`Serialized Size: ${binaryBuffer.length} bytes`);
+
+    // 3. Deserialize back into a typed packet
+    const parsedPacket = serializer.deserialize<MeshPacket>(binaryBuffer);
+    
+    // The content field is parsed back as a fully functional Buffer object
+    console.log('Deserialized Packet:', parsedPacket.data);
+    
+    const isBuffer = Buffer.isBuffer(parsedPacket.data.content);
+    console.log(`Content is a valid Node.js Buffer: ${isBuffer}`);
+}
+```

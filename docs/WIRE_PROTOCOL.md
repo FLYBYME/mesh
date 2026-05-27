@@ -1,73 +1,143 @@
 # Wire Protocol & Framing Specification
 
-## 1. Packet Anatomy
-Every message sent over a Mesh transport follows this structure.
+## Overview
+To communicate across distinct processes and network boundaries, Mesh relies on a strictly structured, high-performance wire protocol. Packets carry RPC calls, event propagation data, routing coordinates, namespaces, priorities, and distributed tracing metadata.
 
-### Binary Header (Optional for TCP)
-If using `TCPTransport`, the packet is prefixed with a 4-byte big-endian integer representing the length of the following JSON/Protobuf payload.
+---
 
-### The Envelope (JSON Representation)
+## 1. The `MeshPacket` TypeScript Structure
+
+All packets conform to the isomorphic `MeshPacket` TypeScript interface:
+
+```typescript
+export interface MeshPacket<T = unknown> {
+    id: string;                    // Unique packet identifier (UUID / NanoID)
+    topic: string;                 // The service action name or event name (e.g. "math.add")
+    type: 'REQUEST' | 'RESPONSE' | 'RESPONSE_ERROR' | 'EVENT';
+    senderNodeID: string;          // Source Node ID
+    targetNodeID?: string;         // Target Node ID (undefined for broadcast events)
+    namespace: string;             // logical namespace boundary
+    timestamp: number;             // Unix timestamp in ms
+    version: number;               // Protocol version
+    priority: number;              // Transmission priority queue index (1-3)
+    data?: T;                      // Payload structure (undefined if error packet)
+    error?: {                      // Error block (only present if type = 'RESPONSE_ERROR')
+        message: string;
+        code?: string | number;
+        data?: unknown;
+    };
+    meta?: {                       // Protocol metadata envelope
+        ttl?: number;              // Time-to-Live hops counter (default: 5)
+        path?: string[];           // Peer hop path list for loop prevention
+        correlationID?: string;    // Matches response packets back to caller requests
+        traceId?: string;          // Distributed transaction trace ID
+        spanId?: string;           // Current execution span ID
+        parentId?: string;         // Parent span ID
+        compressed?: boolean;      // Payload gzip compression indicator
+        signature?: string;        // HMAC security packet signature
+        [key: string]: unknown;
+    };
+}
+```
+
+---
+
+## 2. Wire Representation Examples (JSON Format)
+
+### `REQUEST` Packet
+Initiates an RPC call. It expects a matching `RESPONSE` and contains tracking headers:
+
 ```json
 {
-  "id": "mesh_abc123",
-  "topic": "service.action",
+  "id": "req-98765-ab",
+  "topic": "math.add",
   "type": "REQUEST",
-  "data": { ... },
-  "senderNodeID": "node_server_1",
-  "targetNodeID": "node_worker_2",
-  "namespace": "prod",
-  "timestamp": 1716674400,
+  "senderNodeID": "node-alpha",
+  "targetNodeID": "node-beta",
+  "namespace": "production",
+  "timestamp": 1716674400234,
   "version": 1,
   "priority": 1,
+  "data": {
+    "a": 10,
+    "b": 20
+  },
   "meta": {
     "ttl": 5,
-    "path": ["node_server_1"],
-    "correlationID": "orig_request_789",
-    "traceId": "t-123",
-    "compressed": true
+    "path": ["node-alpha"],
+    "traceId": "trace-442211",
+    "spanId": "span-553322"
   }
 }
 ```
 
-## 2. Packet Types
-- **`REQUEST`**: Expects a response. Uses `id` for tracking.
-- **`RESPONSE`**: Successful result of a request. `meta.correlationID` must match original `id`.
-- **`RESPONSE_ERROR`**: Failed result. `data` is replaced by an `error` object.
-- **`EVENT`**: Fire-and-forget. Propagated via flooding.
+### `RESPONSE` Packet (Success)
+Carries the result of a successful `REQUEST`. The `meta.correlationID` matches the original `REQUEST` packet's `id`:
 
-## 3. Serialization Rules
+```json
+{
+  "id": "req-98765-ab",
+  "topic": "math.add",
+  "type": "RESPONSE",
+  "senderNodeID": "node-beta",
+  "targetNodeID": "node-alpha",
+  "namespace": "production",
+  "timestamp": 1716674400245,
+  "version": 1,
+  "priority": 1,
+  "data": 30,
+  "meta": {
+    "correlationID": "req-98765-ab",
+    "traceId": "trace-442211",
+    "parentId": "span-553322"
+  }
+}
+```
 
-### Isomorphic JSON (`JSONSerializer`)
-- **Strings/Numbers/Booleans**: Standard JSON.
-- **Buffers (Node.js)**: Encoded as `{ "type": "Buffer", "data": [byte, byte, ...] }`.
-- **Uint8Array (Browser)**: Decoded from the JSON Buffer representation back into `Uint8Array`.
+### `RESPONSE_ERROR` Packet (Failure)
+Sent when an RPC call fails. The `data` field is empty, and the `error` block is populated:
 
-### Binary (Future `BinarySerializer`)
-- **Field 1 (Varint)**: Version
-- **Field 2 (String)**: ID
-- **Field 3 (Byte)**: Type (0=Req, 1=Res, etc.)
-- ...
+```json
+{
+  "id": "req-98765-ab",
+  "topic": "math.add",
+  "type": "RESPONSE_ERROR",
+  "senderNodeID": "node-beta",
+  "targetNodeID": "node-alpha",
+  "namespace": "production",
+  "timestamp": 1716674400248,
+  "version": 1,
+  "priority": 1,
+  "error": {
+    "message": "Division by zero is undefined.",
+    "code": "MATH_EXECUTION_ERROR"
+  },
+  "meta": {
+    "correlationID": "req-98765-ab",
+    "traceId": "trace-442211"
+  }
+}
+```
 
-## 4. Framing Strategies
+---
 
-### WebSockets
-- Each Mesh packet is sent as a single WebSocket message (Binary or Text frame).
-- Multi-packet fragmentation is handled by the browser/engine.
+## 3. TCP Framing & Length-Prefixing
 
-### TCP
-- **Streaming**: TCP is a stream, not a packet protocol.
-- **Delimiter**: Mesh uses a **Length-Prefix** (4 bytes).
-- **Process**:
-  1. Read 4 bytes.
-  2. Parse as `Uint32BE`.
-  3. Wait for exactly `N` bytes of data.
-  4. Pass `N` bytes to the Serializer.
+Because TCP is a stream-oriented protocol rather than a message-oriented protocol, data packets can arrive fragmented. To reconstruct complete packets, the `TCPTransport` prefixes each payload with a **4-byte big-endian length header** (`Uint32BE`).
 
-### NATS
-- Each Mesh packet is the payload of a NATS message.
-- Subject format: `mesh.<namespace>.<topic>` or `node.<nodeID>`.
+```
++---------------------------+-----------------------------------------------+
+|  Length Prefix (4 Bytes)  |         Serialized Packet Payload (N Bytes)   |
+|  Uint32BE Big-Endian Int  |         (JSON String or Protobuf Bytes)       |
++---------------------------+-----------------------------------------------+
+|  Example: 0x000000FA      |  {"id":"mesh_abc123","topic":"math.add",...}  |
+|  (250 bytes data payload) |                                               |
++---------------------------+-----------------------------------------------+
+```
 
-## 5. Metadata Propagation
-Metadata keys starting with `_` are reserved for internal use. User metadata should be placed in `meta.custom`.
-- `meta.ttl`: Initialized to 5, dropped at 0.
-- `meta.path`: Array of visited NodeIDs. Max length 10.
+### Stream Parsing Lifecycle
+1. The receiver buffers incoming TCP chunks.
+2. Once at least **4 bytes** are buffered, the receiver parses them as a `Uint32BE` integer to get length $N$.
+3. The receiver waits until at least $N$ bytes have arrived.
+4. Once $N$ bytes are in the buffer, they are sliced and passed to the `BaseSerializer` for decoding.
+5. The parsed message is dispatched, and the buffer offset is updated to parse the next packet.

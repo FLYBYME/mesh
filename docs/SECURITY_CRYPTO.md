@@ -1,45 +1,111 @@
-# Security & Crypto Specification
+# Security & Cryptography Specification
 
 ## Overview
-Security in Mesh is built around cryptographic identity and payload integrity. It utilizes a unified `IsomorphicCrypto` utility to provide consistent cryptographic primitives across Node.js and the Browser.
+Mesh is isomorphic, meaning it runs on servers and in untrusted client browsers. Consequently, the network must enforce strict boundaries, message verification, and sandboxed execution environments.
 
-## Cryptographic Primitives
-Mesh relies on the **WebCrypto API**:
-- **Node.js**: Uses `node:crypto.webcrypto`.
-- **Browser**: Uses `globalThis.crypto.subtle`.
+---
 
-## Key Features
+## Security Model
 
-### 1. Identity & Signing
-Mesh uses **Ed25519** (Edwards-curve Digital Signature Algorithm) for high-performance, low-latency signing and verification.
-- **Node Keys**: Every node can be assigned a private/public key pair.
-- **Packet Signing**: Outbound packets can be signed to ensure they originated from a trusted node.
-- **Verification**: Inbound packets are verified against the sender's public key stored in the `ServiceRegistry`.
+```mermaid
+graph TD
+    Client[Browser / Public Node] -->|REST / WebSocket| Gateway[Gateway / Edge Hub]
+    Gateway -->|Verify Signature & Token| Trusted[Trusted Internal Network]
+    
+    subgraph Sandboxed [Untrusted Client Sandbox]
+        Client
+    end
+    
+    subgraph SecureCore [Secure Server Core]
+        Gateway
+        Trusted --> Server1[Worker Node 1]
+        Trusted --> Server2[Worker Node 2]
+    end
+    
+    style Sandboxed fill:#f9d,stroke:#333,stroke-width:2px
+    style SecureCore fill:#d9f,stroke:#333,stroke-width:2px
+```
 
-### 2. Randomness
-- **Nonces**: Secure random IDs (16-32 bytes) are generated for packet correlation and trace IDs using `getRandomValues()`.
-- **Fallback**: In non-secure contexts or legacy environments, a `Math.random` fallback is provided, though not recommended for production.
+---
 
-### 3. Encoding
-Isomorphic Base64 utilities handle binary-to-string conversions:
-- **`toBase64`**: Uses `btoa` in the browser and `Buffer.toString('base64')` in Node.
-- **`fromBase64`**: Uses `atob` in the browser and `Buffer.from(..., 'base64')` in Node.
+## 1. Node Trust Levels
 
-### 4. Payload Security
-- **Data Redaction**: Interceptors can be registered to sanitize sensitive fields before they reach the `LogInterceptor`.
-- **Auth Metadata**: The `IMeshAuthMeta` interface allows attaching authentication tokens (e.g., JWT) to every call, which are validated by the `Local Pipeline` middleware in the `ServiceBroker`.
+The system categorizes connected nodes into two logical trust levels:
 
-## Trust Levels
-The `ServiceRegistry` tracks the `trustLevel` of each node:
-- `internal`: Nodes within the same secure VPC/environment.
-- `public`: Untrusted nodes (e.g., external clients).
-- `user`: Authenticated user-provided nodes.
+### `internal` (Server-Side Core Nodes)
+* **Description**: Backend servers, hubs, or workers running in secure cloud environments.
+* **Capabilities**: Direct access to local storage, full CRUD operations, and cross-domain events.
+* **Network Role**: Direct peer-to-peer connection paths via TCP, NATS, or local WebSockets.
 
-## Implementation Details
+### `public` (Client-Side Sandboxed Nodes)
+* **Description**: Web browser clients, mobile devices, or external API consumers.
+* **Capabilities**: Restricted to sandboxed client RPCs. All local filesystems and operating system operations are disabled.
+* **Network Role**: Connect as leaf nodes through gateways; prevented from acting as multi-node relay nodes.
+
+---
+
+## 2. Sandbox Jailing & Path Resolution
+
+To prevent directory traversal attacks and host OS mutations in backend actions, all server-side tools that touch files or processes must execute in a jailed container.
+
+### Path Isolation via `getSandbox`
+Sever-side executors resolve filesystem paths exclusively using a sandbox context:
+
 ```typescript
-class IsomorphicCrypto {
-    static async signEd25519(payload: string, privateKey: string): Promise<string>;
-    static async verifyEd25519(sig: string, payload: string, publicKey: string): Promise<boolean>;
-    static randomID(len: number): string;
+import { IServiceContext } from '../interfaces/IServiceContext.js';
+import path from 'path';
+
+export async function writeFileTool(
+    input: { filename: string; content: string },
+    ctx: IServiceContext
+): Promise<{ success: boolean; resolvedPath: string }> {
+    
+    // 1. Resolve path using getSandbox context
+    // This blocks access to folders outside the allowed directory structure (e.g. /etc/passwd)
+    const sandboxDir = ctx.sandbox.getSandbox(); 
+    
+    const targetPath = path.resolve(sandboxDir, input.filename);
+    
+    // Double check that resolved path is inside sandbox directory
+    if (!targetPath.startsWith(sandboxDir)) {
+        throw new Error(`[Security] Directory traversal detected: ${input.filename}`);
+    }
+    
+    // Safe write operation
+    await ctx.fs.writeFile(targetPath, input.content);
+    
+    return { 
+        success: true, 
+        resolvedPath: targetPath 
+    };
 }
 ```
+
+---
+
+## 3. Payload Signing & HMAC Verification
+
+To verify packet authenticity without the overhead of asymmetric handshakes for every packet, Mesh supports isomorphic HMAC signing for internal communications.
+
+```typescript
+import { z } from 'zod';
+import { defineContract } from '../interfaces/IToolContract.js';
+
+export const secureActionContract = defineContract({
+    domain: 'admin',
+    action: 'shutdown',
+    inputSchema: z.object({ force: z.boolean() }),
+    outputSchema: z.object({ success: z.boolean() }),
+    
+    // Signals to the outbound pipeline to enforce high-security requirements
+    destructive: true 
+});
+```
+
+* **Action**: If a tool is marked `destructive: true`, the outbound pipeline requires HMAC headers. Incoming packets lacking valid signatures are dropped at the network boundary.
+
+---
+
+## 4. Transport Layer Security (TLS)
+* **Server**: WebSockets run over Secure WebSockets (`wss://`). The Hub uses certificates (`key.pem`, `cert.pem`) to terminate TLS.
+* **Browser**: Browser runtimes are protected by the same-origin policy and default browser TLS termination.
