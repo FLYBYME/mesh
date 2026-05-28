@@ -117,11 +117,14 @@ export interface NodeCapabilities {
 
 export interface ToolInfo {
     name?: string;
+    description?: string;
     visibility?: 'public' | 'user' | 'internal' | 'published' | 'protected' | 'private';
     params?: Record<string, unknown>;
+    returns?: Record<string, unknown>;
     rest?: Record<string, unknown>;
     roles?: string[];
     matchAny?: boolean;
+    metadata?: Record<string, unknown>;
 }
 
 export interface EventInfo {

@@ -218,6 +218,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
                 id: options?.id || `mesh_${Math.random().toString(36).substr(2, 9)}`,
                 type: (options?.type as MeshPacket['type']) || 'EVENT',
                 senderNodeID: this.nodeID,
+                targetNodeID: targetNodeID,
                 namespace: this.namespace,
                 timestamp: Date.now(),
                 version: primaryTransport.version,

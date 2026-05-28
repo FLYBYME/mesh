@@ -1,5 +1,6 @@
 import type { EventRegistry } from './IEventContract.js';
 import { ILogger } from './ILogger.js';
+import type { IServiceBroker } from './IServiceBroker.js';
 
 /**
  * IServiceToolRegistry: The global registry mapping tool keys to their parameter and return types.
@@ -15,6 +16,9 @@ export interface IServiceToolRegistry {
  * IServiceContext: The strictly-typed execution context injected into every tool handler.
  */
 export interface IServiceContext {
+    /** The service broker instance handling this execution context. */
+    readonly broker: IServiceBroker;
+
     /** Unique correlation ID for distributed tracing. */
     readonly correlationId: string;
 

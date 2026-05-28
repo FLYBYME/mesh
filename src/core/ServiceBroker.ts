@@ -99,9 +99,12 @@ export class ServiceBroker implements IServiceBroker {
                     this.pendingRequests.delete(correlationId);
                     try {
                         if (packet.type === 'RESPONSE_ERROR') {
-                            const errorData = packet.error;
-                            console.log(errorData);
-                            pending.reject(new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error }));
+                            const errorData = packet.error as { message?: string, data?: { stack?: string } };
+                            const err = new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error });
+                            if (errorData?.data?.stack) {
+                                err.stack = errorData.data.stack + '\n--- Remote Boundary ---\n' + err.stack;
+                            }
+                            pending.reject(err);
                         } else {
                             pending.resolve(packet.data);
                         }
@@ -122,7 +125,7 @@ export class ServiceBroker implements IServiceBroker {
                         type: 'RESPONSE_ERROR',
                         id: packet.id,
                         meta: { correlationID: packet.id },
-                        error: { message }
+                        error: { message, data: { stack: err instanceof Error ? err.stack : undefined } }
                     }).catch(sendErr => this.logger.error(`[ServiceBroker] Failed to send RESPONSE_ERROR: ${sendErr}`));
                 });
             } else if (packet.type === 'EVENT') {
@@ -206,6 +209,7 @@ export class ServiceBroker implements IServiceBroker {
             this.localTools.set(toolKeyStr, {
                 handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
                     const serviceCtx = {
+                        broker: this,
                         correlationId: ctx.correlationID || nanoid(),
                         nodeID: this.nodeID,
                         call: async <K extends keyof IServiceToolRegistry>(
@@ -241,6 +245,7 @@ export class ServiceBroker implements IServiceBroker {
                 this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${name}`);
                 this.localEvents.on(name as string, (data: unknown, packet?: IMeshPacket) => {
                     const ctx = {
+                        broker: this,
                         correlationId: packet?.id || nanoid(),
                         nodeID: this.nodeID,
                         call: async (a: any, p: any, o?: any) => this.call(a, p, o),
@@ -389,7 +394,14 @@ export class ServiceBroker implements IServiceBroker {
                             });
                             throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`);
                         }
-                        return await tool.handler(ctx as IContext<Record<string, unknown>, Record<string, unknown>>);
+                        
+                        let parsedParams = ctx.params;
+                        const schema = MeshToolSchemaRegistry.get(ctx.toolName);
+                        if (schema?.params) {
+                            parsedParams = schema.params.parse(ctx.params);
+                        }
+                        
+                        return await tool.handler({ ...ctx, params: parsedParams } as IContext<Record<string, unknown>, Record<string, unknown>>);
                     } else {
                         return await this.executeRemote(ctx.targetNodeID!, ctx.toolName, ctx.params, ctx.meta as Record<string, unknown>);
                     }
@@ -442,6 +454,7 @@ export class ServiceBroker implements IServiceBroker {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 this.pendingRequests.delete(requestId);
+                console.log(this.registry.getNodes())
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
             }, timeoutMs) as unknown as TimerHandle;
             this.pendingRequests.set(requestId, { resolve, reject, timeout });

@@ -1,4 +1,4 @@
-import type { NodeInfo, IServiceNode } from './IMeshNetwork.js';
+import type { NodeInfo, IServiceNode, ToolInfo } from './IMeshNetwork.js';
 import type { ToolContract } from './IToolContract.js';
 import type { IServiceModule } from './IServiceModule.js';
 
@@ -25,6 +25,8 @@ export interface IServiceRegistry {
 
     /** Selects a node for a given tool using internal load-balancing (e.g. DHT). */
     selectNode(toolName: string, context?: { toolName: string, params: Record<string, unknown> }): IServiceNode | undefined;
+    
+    getNextToolEndpoint(toolName: string): { nodeID: string; tool: ToolInfo } | undefined;
 
     /** Tool registration */
     registerTool(contract: ToolContract): void;

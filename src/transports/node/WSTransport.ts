@@ -222,10 +222,30 @@ export class WSTransport extends BaseTransport {
             return;
         }
 
-        const ws = this.peers.get(nodeID);
+        let ws = this.peers.get(nodeID);
         if (!ws || ws.readyState !== 1) {
-            //this.logger?.debug(`[WSTransport] Cannot send to ${nodeID}: connection not open`);
-            return;
+            // Hub and Spoke Proxy Routing
+            // If target is not directly connected, route through a connected peer
+            if (this.peers.size > 0 && packet.targetNodeID && packet.targetNodeID !== this.nodeID) {
+                const path = Array.isArray(packet.meta?.path) ? packet.meta.path as string[] : [];
+                const peerEntry = Array.from(this.peers.entries()).find(([peerId, p]) => 
+                    p.readyState === 1 && !path.includes(peerId)
+                );
+                if (peerEntry) {
+                    ws = peerEntry[1];
+                }
+            }
+
+            if (!ws || ws.readyState !== 1) {
+                return;
+            }
+        }
+
+        // Add ourselves to the routing path
+        if (packet.meta && Array.isArray(packet.meta.path)) {
+            if (!packet.meta.path.includes(this.nodeID)) {
+                packet.meta.path.push(this.nodeID);
+            }
         }
 
         // Backpressure: if bufferedAmount is too high, wait

@@ -6,8 +6,10 @@ import { z } from 'zod';
  */
 export const ToolInfoSchema = z.object({
     name: z.string().optional(),
+    description: z.string().optional(),
     visibility: z.enum(['public', 'user', 'internal', 'published', 'protected', 'private']).optional(),
     params: z.record(z.unknown()).optional(),
+    returns: z.record(z.unknown()).optional(),
     rest: z.record(z.unknown()).optional(),
     roles: z.array(z.string()).optional(),
     matchAny: z.boolean().optional(),

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'eventemitter3';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { NodeInfo as RegistryNodeInfo, ServiceInfo as RegistryServiceInfo, ToolInfo as RegistryToolInfo } from '../types/registry.schema.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import { BaseBalancer } from '../balancers/BaseBalancer.js';
@@ -128,6 +129,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.off('changed', check);
+                console.log(this);
                 reject(new Error(`Timeout: Tool "${toolName}" not found after ${timeoutMs}ms`));
             }, timeoutMs);
             if (timer.unref) timer.unref();
@@ -342,12 +344,14 @@ export class Registry extends EventEmitter implements IServiceRegistry {
                     const toolKeyStr = `${contract.domain}.${contract.action}`;
                     acc[toolKeyStr] = {
                         name: toolKeyStr,
+                        description: contract.description,
                         visibility: 'public',
                         metadata: {
-                            description: contract.description,
                             isCrud: contract.isCrud,
                             destructive: contract.destructive
-                        }
+                        },
+                        params: zodToJsonSchema(contract.inputSchema) as Record<string, unknown>,
+                        returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>
                     };
                     return acc;
                 }, {} as Record<string, RegistryToolInfo>)
@@ -453,13 +457,13 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
             const age = now - (node.timestamp || 0);
 
-            if (age > ttlMs) {
+            if (age > ttlMs * 2) {
                 this.nodes.delete(nodeID);
                 if (this.dht) this.dht.removeNode(nodeID);
                 this.logger.info(`Pruned stale node: ${nodeID}`);
                 changed = true;
             }
-            else if (age > 10000 && node.available) {
+            else if (age > ttlMs && node.available) {
                 this.logger.info(`Node offline (missed heartbeats): ${nodeID}`);
                 node.available = false;
                 changed = true;
