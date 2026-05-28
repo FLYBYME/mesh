@@ -32,8 +32,21 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         }
 
         const repo = db.repo(schema, domain);
-        const params = ctx.params as Record<string, unknown>;
+        let params = ctx.params as Record<string, unknown>;
         let result: unknown;
+
+        const module = broker.getModule(domain);
+        let serviceCtx: any = null;
+
+        if (module) {
+            serviceCtx = {
+                correlationId: ctx.correlationID || ctx.id,
+                nodeID: broker.nodeID,
+                call: async (a: any, p: any, o?: any) => broker.call(a, p, o),
+                emit: (e: any, p: any, o?: any) => broker.emit(e, p, o)
+            };
+            params = await module.beforeCrud(domain, action, params, serviceCtx) as Record<string, unknown>;
+        }
 
         try {
             switch (action) {
@@ -81,6 +94,10 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     break;
                 default:
                     return await next(); // Pass through unknown actions
+            }
+
+            if (module) {
+                result = await module.afterCrud(domain, action, result, serviceCtx);
             }
 
             return result;

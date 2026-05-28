@@ -29,15 +29,15 @@ export interface IServiceBroker {
     /** Typed tool call. */
     call<K extends keyof IServiceToolRegistry>(
         tool: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
+        params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
+    ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /** Typed event emit. */
     emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
 
-    on<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): (() => void);
-    off<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): void;
+    on<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): (() => void);
+    off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void;
 
     getContext(): IContext<Record<string, unknown>, IMeshMeta> | undefined;
 
@@ -49,4 +49,5 @@ export interface IServiceBroker {
 
     registerProvider(name: string, provider: unknown): void;
     getProvider<T>(name: string): T;
+    getModule(domain: string): IServiceModule | undefined;
 }

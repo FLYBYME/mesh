@@ -41,6 +41,7 @@ export class ServiceBroker implements IServiceBroker {
 
     private plugins: IBrokerPlugin[] = [];
     private localEvents: EventEmitter = new EventEmitter();
+    private patternWrappers = new WeakMap<Function, (...args: unknown[]) => void>();
 
     public registry!: IServiceRegistry;
     public network!: IMeshNetwork;
@@ -65,6 +66,10 @@ export class ServiceBroker implements IServiceBroker {
 
     public getProvider<T>(name: string): T {
         return this.providers.get(name) as T;
+    }
+
+    public getModule(domain: string): IServiceModule | undefined {
+        return this.modules.find(m => m.domain === domain);
     }
 
     public pipe(plugin: IBrokerPlugin): this {
@@ -95,6 +100,7 @@ export class ServiceBroker implements IServiceBroker {
                     try {
                         if (packet.type === 'RESPONSE_ERROR') {
                             const errorData = packet.error;
+                            console.log(errorData);
                             pending.reject(new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error }));
                         } else {
                             pending.resolve(packet.data);
@@ -149,7 +155,7 @@ export class ServiceBroker implements IServiceBroker {
                     handler(payload, packet);
                 }
             };
-            (handler as any)._wrapper = wrapper;
+            this.patternWrappers.set(handler, wrapper as (...args: unknown[]) => void);
             this.localEvents.on('__pattern_event', wrapper);
         } else {
             this.localEvents.on(topic, handler);
@@ -160,8 +166,8 @@ export class ServiceBroker implements IServiceBroker {
 
     public off<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): void {
         if (topic.includes('*')) {
-            const wrapper = (handler as any)._wrapper;
-            if (wrapper) this.localEvents.off('__pattern_event', wrapper as (...args: unknown[]) => void);
+            const wrapper = this.patternWrappers.get(handler);
+            if (wrapper) this.localEvents.off('__pattern_event', wrapper);
         } else {
             this.localEvents.off(topic, handler);
         }
@@ -202,8 +208,20 @@ export class ServiceBroker implements IServiceBroker {
                     const serviceCtx = {
                         correlationId: ctx.correlationID || nanoid(),
                         nodeID: this.nodeID,
-                        call: async (a: string, p: Record<string, unknown>, o?: unknown) => this.call(a as any, p as any, o as any),
-                        emit: (e: string, p: Record<string, unknown>, o?: unknown) => this.emit(e as any, p as any, o as any)
+                        call: async <K extends keyof IServiceToolRegistry>(
+                            tool: K,
+                            params: IServiceToolRegistry[K]['params'],
+                            options?: { nodeID?: string; timeout?: number }
+                        ): Promise<IServiceToolRegistry[K]['returns']> => {
+                            const result = await this.call(tool, params, options);
+                            return result as IServiceToolRegistry[K]['returns'];
+                        },
+                        emit: <K extends keyof EventRegistry>(
+                            event: K,
+                            payload: EventRegistry[K],
+                            options?: { skipNetwork?: boolean }
+                        ) => this.emit(event, payload, options),
+                        logger: this.logger
                     };
                     return await module.execute(contract.domain, contract.action, ctx.params, serviceCtx as never);
                 },
@@ -226,7 +244,8 @@ export class ServiceBroker implements IServiceBroker {
                         correlationId: packet?.id || nanoid(),
                         nodeID: this.nodeID,
                         call: async (a: any, p: any, o?: any) => this.call(a, p, o),
-                        emit: (e: any, p: any, o?: any) => this.emit(e, p, o)
+                        emit: (e: any, p: any, o?: any) => this.emit(e, p, o),
+                        logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
                         this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
@@ -242,10 +261,10 @@ export class ServiceBroker implements IServiceBroker {
 
     public async call<K extends keyof IServiceToolRegistry>(
         tool: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
+        params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown> {
-        return this.internalCall(tool, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
+    ): Promise<IServiceToolRegistry[K]['returns']> {
+        return this.internalCall(tool, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
@@ -448,8 +467,8 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         for (const module of this.modules) {
-            if (typeof (module as any).onStart === 'function') {
-                await (module as any).onStart(this);
+            if ('onStart' in module && typeof (module as Record<string, unknown>).onStart === 'function') {
+                await (module as Record<string, unknown> & { onStart: (broker: IServiceBroker) => Promise<void> }).onStart(this);
             }
         }
     }
@@ -458,8 +477,8 @@ export class ServiceBroker implements IServiceBroker {
         this.isStarted = false;
 
         for (const module of this.modules) {
-            if (typeof (module as any).onStop === 'function') {
-                await (module as any).onStop(this);
+            if ('onStop' in module && typeof (module as Record<string, unknown>).onStop === 'function') {
+                await (module as Record<string, unknown> & { onStop: (broker: IServiceBroker) => Promise<void> }).onStop(this);
             }
         }
 

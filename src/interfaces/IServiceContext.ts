@@ -1,10 +1,11 @@
 import type { EventRegistry } from './IEventContract.js';
+import { ILogger } from './ILogger.js';
 
 /**
  * IServiceToolRegistry: The global registry mapping tool keys to their parameter and return types.
  * Populated by generated code.
  */
- 
+
 export interface IServiceToolRegistry {
     // Generated tools will appear here like:
     // 'demo.hello': { params: z.infer<...>, returns: z.infer<...> }
@@ -26,9 +27,9 @@ export interface IServiceContext {
     /** Strictly typed tool call. */
     call<K extends keyof IServiceToolRegistry>(
         tool: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
+        params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
+    ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /** Strictly typed event dispatch. */
     emit<K extends keyof EventRegistry>(
@@ -36,6 +37,8 @@ export interface IServiceContext {
         payload: EventRegistry[K],
         options?: { skipNetwork?: boolean }
     ): void;
+
+    logger: ILogger;
 }
 
 /**

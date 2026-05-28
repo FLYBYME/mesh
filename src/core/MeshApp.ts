@@ -140,9 +140,9 @@ export class MeshApp implements IMeshApp {
 
     public async call<K extends keyof IServiceToolRegistry>(
         tool: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : never,
+        params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown> {
+    ): Promise<IServiceToolRegistry[K]['returns']> {
         const broker = this.getProvider<IServiceBroker>('broker');
         return broker.call(tool, params, options);
     }
