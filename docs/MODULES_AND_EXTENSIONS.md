@@ -107,11 +107,11 @@ Creates and manages the `ServiceBroker`.
 
 [DatabaseModule.ts](file:///home/ubuntu/code/mesh/src/modules/DatabaseModule.ts)
 
-Creates the MongoDB connection and installs the CRUD interception middleware.
+Creates the MongoDB connection and installs the CRUD/TS interception middleware.
 
 **`onInit`**: Creates a `Database` instance and registers it as the `database` provider.
 
-**`onStart`**: Connects to MongoDB. If the broker is available, creates a `DatabaseMiddleware` and installs it as **local middleware** on the broker via `broker.useLocal()`. This means the CRUD interception only applies to tools executed on the local node (remote RPC calls are forwarded as-is).
+**`onStart`**: Connects to MongoDB. If the broker is available, creates a `DatabaseMiddleware` and installs it as **local middleware** on the broker via `broker.useLocal()`. This means the CRUD and Time Series interception only applies to tools executed on the local node (remote RPC calls are forwarded as-is).
 
 **`onStop`**: Disconnects from MongoDB.
 
@@ -183,7 +183,7 @@ These are different concepts:
 | Registration | `app.use(new MyModule())` | `app.registerModule(new MyService())` |
 | Lifecycle | Managed by `BootOrchestrator` | Managed by `ServiceBroker` |
 | Hooks | `onInit`, `onStart`, `onStop`, `onReady` | `onInit(broker)`, `onStart(broker)`, `onStop(broker)` |
-| Provides | DI providers, middleware | Tools, CRUD operations, event handlers |
+| Provides | DI providers, middleware | Tools, CRUD, Time Series, events |
 | Examples | RegistryModule, NetworkModule | SandboxService, InferService |
 
 `ServiceModule` instances are registered **through** the broker (either directly or via pending queue), and the broker calls their lifecycle hooks. `IMeshModule` instances are managed directly by the `BootOrchestrator`.

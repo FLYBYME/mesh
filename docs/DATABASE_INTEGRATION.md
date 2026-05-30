@@ -10,7 +10,8 @@ The system has three components:
 |---|---|---|
 | `Database` | [Database.ts](file:///home/ubuntu/code/mesh/src/db/Database.ts) | MongoDB connection manager, collection accessor |
 | `DomainRepository` | [DomainRepository.ts](file:///home/ubuntu/code/mesh/src/db/DomainRepository.ts) | Typed CRUD operations against a single collection |
-| `DatabaseMiddleware` | [DatabaseMiddleware.ts](file:///home/ubuntu/code/mesh/src/db/DatabaseMiddleware.ts) | Broker middleware that intercepts CRUD tools and routes to repositories |
+| `TimeSeriesRepository` | [TimeSeriesRepository.ts](file:///home/ubuntu/code/mesh/src/db/TimeSeriesRepository.ts) | Specialized repository for MongoDB Time Series collections |
+| `DatabaseMiddleware` | [DatabaseMiddleware.ts](file:///home/ubuntu/code/mesh/src/db/DatabaseMiddleware.ts) | Broker middleware that intercepts CRUD/TS tools and routes to repositories |
 
 ---
 
@@ -108,43 +109,59 @@ Returns a `ListResult<T>` with: `rows`, `total`, `page`, `pageSize`, `totalPages
 ## DatabaseMiddleware
 
 [DatabaseMiddleware.ts](file:///home/ubuntu/code/mesh/src/db/DatabaseMiddleware.ts) is installed as **local middleware** on the broker during `DatabaseModule.onStart()`:
+`db.repo(schema, domain)` creates or retrieves a `DomainRepository` for a given domain name. The collection name equals the domain name.
 
-```typescript
-const middleware = createDatabaseMiddleware(broker, this.db);
-broker.useLocal(middleware);
-```
+`db.tsRepo(schema, domain)` creates or retrieves a `TimeSeriesRepository`. It automatically ensures the collection is created with MongoDB's `timeseries` metadata (using `timestamp` as the time field and `tags` as the meta field).
 
-### Interception Logic
+---
 
-For every `broker.call()`:
+## DomainRepository
+...
+---
 
-1. Check `MeshToolSchemaRegistry` for `isCrud: true` on the tool
-2. If not CRUD, call `next()` immediately (pass through to normal handler)
-3. Look up the domain's Zod output schema from the `get` or `create` tool registration
-4. Get or create a `DomainRepository` for the domain
-5. Call `module.beforeCrud(domain, action, params, ctx)` for pre-processing hooks
-6. Execute the database operation based on the action name
-7. Call `module.afterCrud(domain, action, result, ctx)` for post-processing hooks
-8. Auto-emit lifecycle events (`data.created`, `data.updated`, `data.deleted`)
-9. Return the result
+## TimeSeriesRepository
 
-### Action Routing
+`TimeSeriesRepository<T>` is a specialized repository for time-indexed data. It leverages MongoDB's native Time Series collections for optimized storage and querying.
 
-| Action | Database Operation | Event Emitted |
-|---|---|---|
-| `find` | `repo.find(options)` | None |
-| `find_one` | `repo.findOne(query, { sort, offset })` | None |
-| `count` | `repo.count(query)` | None |
-| `get` | `repo.get(id)` | None |
-| `create` | `repo.create(params)` | `data.created` |
-| `create_many` | `repo.create(item)` for each | `data.created` per item |
-| `update` | `repo.update(id, params)` | `data.updated` |
-| `replace` | `repo.replace(id, params)` | `data.updated` |
+### Operations
+
+- `insert(points)`: Batch inserts multiple data points. Automatically sets `timestamp` if missing.
+- `query(params)`: Retrieves points within a time range (`from`, `to`) and/or matching specific `tags`.
+- `latest(tags)`: Returns the single most recent data point for the given tags.
+- `aggregate(params)`: Performs time-bucketed aggregation (e.g., `'1m'`, `'1h'`) using `$dateTrunc` and various accumulation functions (`min`, `max`, `avg`, `sum`, `count`).
+
+---
+
+## DatabaseMiddleware
+...
+1. Check `MeshToolSchemaRegistry` for `isCrud: true` or `isTimeSeries: true` on the tool
+2. If not intercepted, call `next()` immediately
+3. For CRUD:
+    - Look up the domain's Zod output schema
+    - Get a `DomainRepository`
+    - Execute the database operation
+4. For Time Series:
+    - Get a `TimeSeriesRepository`
+    - Execute `insert`, `query`, `aggregate`, or `latest`
+5. Auto-emit lifecycle events for CRUD mutations
+6. Return the result
+
+### Action Routing (CRUD)
+...
 | `delete` | `repo.delete(id)` | `data.deleted` |
 | `resolve` | `repo.resolve(params)` | None |
 
-### ServiceContext Bridge
+### Action Routing (Time Series)
 
+| Action | Repository Operation |
+|---|---|
+| `insert` | `repo.insert(points)` |
+| `query` | `repo.query(params)` |
+| `aggregate` | `repo.aggregate(params)` |
+| `latest` | `repo.latest(tags)` |
+
+### ServiceContext Bridge
+...
 The middleware constructs a `serviceCtx` object for CRUD hooks that provides fully typed `call` and `emit` methods, preventing hook implementations from needing to cast or use `any`:
 
 ```typescript

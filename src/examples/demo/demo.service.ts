@@ -1,5 +1,5 @@
 import { ServiceModule } from '../../core/ServiceModule.js';
-import { demoHelloContract, demoStatusContract, demoNotifyContract, demoCrud } from './demo.contract.js';
+import { demoHelloContract, demoStatusContract, demoNotifyContract, demoCrud, demoTimeSeries } from './demo.contract.js';
 import { demo_hello, demo_status, demo_notify } from './demo.tools.js';
 
 /**
@@ -9,7 +9,8 @@ import { demo_hello, demo_status, demo_notify } from './demo.tools.js';
  * 1. Extension of ServiceModule.
  * 2. Strict typing of handlers.
  * 3. Use of mountCrud for automated persistence routing.
- * 4. Use of mountEventHandler for declarative event handling.
+ * 4. Use of mountTimeSeries for automated time-indexed data.
+ * 5. Use of mountEventHandler for declarative event handling.
  */
 export class DemoSkill extends ServiceModule {
     public readonly domain = 'demo';
@@ -25,7 +26,10 @@ export class DemoSkill extends ServiceModule {
         // 2. Mount CRUD (Automated interception)
         this.mountCrud(demoCrud);
 
-        // 3. Mount Event Handlers (Declarative)
+        // 3. Mount Time Series (Automated interception)
+        this.mountTimeSeries(demoTimeSeries);
+
+        // 4. Mount Event Handlers (Declarative)
         this.mountEventHandler('demo.hello.sent', (payload) => {
             // Logged via context in a real app, silenced for clean tests
         });

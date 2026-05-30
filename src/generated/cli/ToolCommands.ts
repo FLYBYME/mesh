@@ -166,4 +166,53 @@ export function registerGeneratedCommands(program: Command) {
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_delete_delete, Contract_0.demoCrud['delete'].inputSchema);
+    const demometrics = program.command('demometrics').description('demometrics tools');
+    const cmd_demometrics_demoTimeSeries_insert_insert = demometrics.command('insert').description(`Time Series insert for demometrics (demoTimeSeries)`);
+    cmd_demometrics_demoTimeSeries_insert_insert.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('demometrics.insert', o, Contract_0.demoTimeSeries['insert'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_insert_insert, Contract_0.demoTimeSeries['insert'].inputSchema);
+    const cmd_demometrics_demoTimeSeries_query_query = demometrics.command('query').description(`Time Series query for demometrics (demoTimeSeries)`);
+    cmd_demometrics_demoTimeSeries_query_query.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('demometrics.query', o, Contract_0.demoTimeSeries['query'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_query_query, Contract_0.demoTimeSeries['query'].inputSchema);
+    const cmd_demometrics_demoTimeSeries_aggregate_aggregate = demometrics.command('aggregate').description(`Time Series aggregate for demometrics (demoTimeSeries)`);
+    cmd_demometrics_demoTimeSeries_aggregate_aggregate.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('demometrics.aggregate', o, Contract_0.demoTimeSeries['aggregate'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_aggregate_aggregate, Contract_0.demoTimeSeries['aggregate'].inputSchema);
+    const cmd_demometrics_demoTimeSeries_latest_latest = demometrics.command('latest').description(`Time Series latest for demometrics (demoTimeSeries)`);
+    cmd_demometrics_demoTimeSeries_latest_latest.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('demometrics.latest', o, Contract_0.demoTimeSeries['latest'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_latest_latest, Contract_0.demoTimeSeries['latest'].inputSchema);
 }

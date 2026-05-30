@@ -10,7 +10,7 @@ A Mesh node is composed of four core systems, each managed as a pluggable module
 |---|---|---|---|
 | Registry | `RegistryModule` | `registry` | Tracks all known nodes, their services, and their tools |
 | Network | `NetworkModule` | `network` | WebSocket transport, packet routing, deduplication |
-| Database | `DatabaseModule` | `database` | MongoDB connection, CRUD middleware interception |
+| Database | `DatabaseModule` | `database` | MongoDB connection, CRUD/TS middleware interception |
 | Broker | `BrokerModule` | `broker` | RPC dispatch, middleware pipelines, event bus |
 
 ---
@@ -124,8 +124,9 @@ app.use(new BrokerModule());        // 4. Broker (needs 'registry' and 'network'
 1. **A `domain` name** — a unique namespace string (e.g. `'sandbox'`, `'agent'`, `'infer'`)
 2. **Tool mounts** — via `this.mountTool(contract, handler)`
 3. **CRUD mounts** — via `this.mountCrud(crudContracts)` (handlers are intercepted by `DatabaseMiddleware`)
-4. **CRUD hooks** — via `this.mountCrudHook(domain, action, { before, after })`
-5. **Event handlers** — via `this.mountEventHandler('event.name', handler)`
+4. **Time Series mounts** — via `this.mountTimeSeries(tsContracts)`
+5. **CRUD hooks** — via `this.mountCrudHook(domain, action, { before, after })`
+6. **Event handlers** — via `this.mountEventHandler('event.name', handler)`
 
 ### Example
 

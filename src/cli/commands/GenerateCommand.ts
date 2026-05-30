@@ -393,7 +393,38 @@ export class GenerateCommand extends BaseCommand {
                 });
             }
 
-            // 3. Find defineEvent
+            // 3. Find defineTimeSeries
+            const tsMatches = content.matchAll(/export\s+const\s+(\w+)\s*=\s*defineTimeSeries\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/g);
+            for (const match of tsMatches) {
+                const exportName = match[1]!;
+                const domain = match[2]!;
+                
+                if (domain.includes('_')) throw new Error(`Domain "${domain}" cannot contain underscores (File: ${file})`);
+
+                const actions = {
+                    insert: 'insert',
+                    query: 'query',
+                    aggregate: 'aggregate',
+                    latest: 'latest'
+                };
+
+                if (!domainFiles[domain]) domainFiles[domain] = [];
+                if (!domainFiles[domain].includes(file)) domainFiles[domain].push(file);
+
+                Object.entries(actions).forEach(([key, action]) => {
+                    allContracts.push({
+                        exportName: `${exportName}.${key}`,
+                        domain,
+                        action,
+                        description: `Time Series ${key} for ${domain} (${exportName})`,
+                        method: 'POST',
+                        path: `/${domain}/${action}`,
+                        isStream: false
+                    });
+                });
+            }
+
+            // 4. Find defineEvent
             const eventMatches = content.matchAll(/export\s+const\s+(\w+)\s*=\s*defineEvent\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/g);
             for (const match of eventMatches) {
                 const exportName = match[1]!;
@@ -446,4 +477,3 @@ export class GenerateCommand extends BaseCommand {
         return map;
     }
 }
-

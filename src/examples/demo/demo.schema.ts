@@ -13,3 +13,9 @@ export const DemoCreateInputSchema = z.object({
     value: z.number().describe("Numeric value"),
 });
 export type DemoCreateInput = z.infer<typeof DemoCreateInputSchema>;
+
+export const DemoMetricSchema = z.object({
+    value: z.number().describe("The metric value"),
+    status: z.string().describe("Current status code")
+});
+export type DemoMetric = z.infer<typeof DemoMetricSchema>;

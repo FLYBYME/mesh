@@ -113,7 +113,7 @@ export function defineContract<
     TPrint = z.infer<TOutput>
 >(contract: ToolContract<TInput, TOutput, TPrint>): ToolContract<TInput, TOutput, TPrint> {
     if (contract.domain.includes('_')) {
-        throw new Error(`defineContract: domain "${contract.domain}" must not contain underscores. Use dot notation for key separation.`);
+        throw new Error(`defineContract: domain "${contract.domain}" must not contain underscores. Use squashed lowercase (e.g. 'toolcalls') for key separation.`);
     }
     if (contract.action.includes('_')) {
         // Allow underscores in action names like 'find_one', 'create_many' etc.

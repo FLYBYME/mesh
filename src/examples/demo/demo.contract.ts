@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { DemoSchema } from './demo.schema.js';
+import { DemoSchema, DemoMetricSchema } from './demo.schema.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
+import { defineTimeSeries } from '../../interfaces/ITimeSeriesContract.js';
 import { defaultPrint, defineContract } from '../../interfaces/IToolContract.js';
 import { defineEvent } from '../../interfaces/IEventContract.js';
 
@@ -27,6 +28,10 @@ export const demoHelloSentEvent = defineEvent('demo.hello.sent', DemoHelloEventS
 export const demoCrud = defineCrud('demo', DemoSchema, {
     // options
 });
+
+// ─── Time Series ─────────────────────────────────────────────────────────────
+
+export const demoTimeSeries = defineTimeSeries('demometrics', DemoMetricSchema);
 
 // ─── Contracts ───────────────────────────────────────────────────────────────
 

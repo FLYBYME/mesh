@@ -17,8 +17,15 @@ export async function demo_hello(
         timestamp: new Date()
     });
 
+    // 2. Record a metric in the time-series store
+    await ctx.call('demometrics.insert', [{
+        value: 1,
+        status: 'greeted',
+        tags: { host: 'demo-host', user: input.name }
+    }]);
+
     return {
-        message: `Hello, ${input.name}! Event dispatched!`
+        message: `Hello, ${input.name}! Event dispatched and metric recorded!`
     };
 }
 

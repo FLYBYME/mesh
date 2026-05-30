@@ -111,6 +111,7 @@ Every tool contract has these fields:
 | `rest` | `RestMeta` | Yes | HTTP method, path pattern, and stream flag. |
 | `destructive` | `boolean` | No | If `true`, marks as a state-modifying tool (used by AI agents for approval flows). |
 | `isCrud` | `boolean` | No | If `true`, the `DatabaseMiddleware` intercepts this tool. |
+| `isTimeSeries` | `boolean` | No | If `true`, the `DatabaseMiddleware` intercepts this as a time-series tool. |
 | `event` | `boolean \| string` | No | Auto-emit an event after execution. |
 | `timeout` | `number` | No | Custom RPC timeout in milliseconds. |
 | `print` | `(output) => string` | Yes | Formats output for CLI display and AI agent consumption. |
@@ -235,16 +236,32 @@ This is a global `Map<string, {...}>` in `ServiceBroker.ts` that stores runtime 
     mutates: boolean,        // Destructive flag
     timeout: number,         // Custom timeout
     isCrud: boolean,         // CRUD interception flag
+    isTimeSeries: boolean,   // TS interception flag
     domain: string           // Domain namespace
 }
 ```
 
-Both `ServiceBroker.call()` and `DatabaseMiddleware` consult this registry to determine validation schemas, timeouts, and whether CRUD interception should apply.
+Both `ServiceBroker.call()` and `DatabaseMiddleware` consult this registry to determine validation schemas, timeouts, and whether CRUD/TS interception should apply.
+
+---
+
+## Time Series Contracts
+
+[ITimeSeriesContract.ts](file:///home/ubuntu/code/mesh/src/interfaces/ITimeSeriesContract.ts) provides `defineTimeSeries()`, which generates **4 standard tools** for handling time-indexed data:
+
+| Action | Tool Key | Purpose |
+|---|---|---|
+| `insert` | `domain.insert` | Batch insertion of data points |
+| `query` | `domain.query` | Range-based retrieval with tag filtering |
+| `aggregate` | `domain.aggregate` | Time-bucketed statistics (min, max, avg, etc.) |
+| `latest` | `domain.latest` | Get the single most recent data point |
+
+The framework automatically manages a **MongoDB Time Series collection** for these tools, handling metadata mapping and aggregation pipelines transparently.
 
 ---
 
 ## Code Generation
-
+...
 The [GenerateCommand](file:///home/ubuntu/code/mesh/src/cli/commands/GenerateCommand.ts) scans all `*.contract.ts` files and generates three artifacts under `src/generated/`:
 
 1. **`api.ts`** — Module augmentation of `IServiceToolRegistry` with type-safe tool signatures

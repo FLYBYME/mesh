@@ -15,6 +15,10 @@ declare module '../interfaces/IServiceContext.js' {
         'demo.get': { params: z.input<typeof Contract_0.demoCrud['get']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['get']['outputSchema']> };
         'demo.update': { params: z.input<typeof Contract_0.demoCrud['update']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['update']['outputSchema']> };
         'demo.delete': { params: z.input<typeof Contract_0.demoCrud['delete']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['delete']['outputSchema']> };
+        'demometrics.insert': { params: z.input<typeof Contract_0.demoTimeSeries['insert']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['insert']['outputSchema']> };
+        'demometrics.query': { params: z.input<typeof Contract_0.demoTimeSeries['query']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['query']['outputSchema']> };
+        'demometrics.aggregate': { params: z.input<typeof Contract_0.demoTimeSeries['aggregate']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['aggregate']['outputSchema']> };
+        'demometrics.latest': { params: z.input<typeof Contract_0.demoTimeSeries['latest']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['latest']['outputSchema']> };
     }
 }
 
