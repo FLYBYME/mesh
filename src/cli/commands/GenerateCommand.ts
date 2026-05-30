@@ -245,12 +245,12 @@ export class GenerateCommand extends BaseCommand {
         code += `    \n`;
         code += `    // Wait briefly for discovery if bootstrap is provided\n`;
         code += `    if (bootstrapStr) {\n`;
-        code += `        await new Promise(r => setTimeout(r, 1000)); // basic wait for registry sync\n`;
+        code += `        await new Promise(r => setTimeout(r, 2000)); // wait for registry sync (PEX)\n`;
         code += `    }\n\n`;
         code += `    try {\n`;
-        code += `        app.logger.info(C.dim + \`Executing \${toolName}...\` + C.reset);\n`;
+        code += `        console.log(C.dim + \`Executing \${toolName}...\` + C.reset);\n`;
         code += `        const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any, { timeout: 300000 });\n`;
-        code += `        app.logger.info(contract.print(res));\n`;
+        code += `        console.log(contract.print(res));\n`;
         code += `    } finally {\n`;
         code += `        await app.stop();\n`;
         code += `    }\n`;

@@ -32,13 +32,13 @@ async function executeCommand(toolName: string, args: Record<string, unknown>, c
     
     // Wait briefly for discovery if bootstrap is provided
     if (bootstrapStr) {
-        await new Promise(r => setTimeout(r, 1000)); // basic wait for registry sync
+        await new Promise(r => setTimeout(r, 2000)); // wait for registry sync (PEX)
     }
 
     try {
-        app.logger.info(C.dim + `Executing ${toolName}...` + C.reset);
+        console.log(C.dim + `Executing ${toolName}...` + C.reset);
         const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any, { timeout: 300000 });
-        app.logger.info(contract.print(res));
+        console.log(contract.print(res));
     } finally {
         await app.stop();
     }
