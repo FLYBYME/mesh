@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { toolKey, parseToolKey, defineContract, defaultPrint, globalContractRegistry } from './IToolContract.js';
+import { toolKey, parseToolKey, defineContract, defaultPrint, globalContractRegistry } from '../interfaces/IToolContract.js';
 
 describe('IToolContract', () => {
     describe('toolKey()', () => {
@@ -41,7 +41,7 @@ describe('IToolContract', () => {
             };
 
             const contract = defineContract(spec);
-            
+
             expect(contract.domain).toBe('test');
             expect(contract.action).toBe('doit');
             expect(globalContractRegistry.has('test.doit')).toBe(true);

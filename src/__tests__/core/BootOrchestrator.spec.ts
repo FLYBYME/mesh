@@ -1,15 +1,16 @@
 import { BootOrchestrator } from '../../core/BootOrchestrator.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { Logger } from '../../utils/Logger.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
 import { RegistryModule } from '../../modules/RegistryModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
-import type { IMeshModule, IMeshApp } from '../../interfaces/index.js';
+import type { IMeshModule } from '../../interfaces/index.js';
 
 describe('BootOrchestrator', () => {
     let app: MeshApp;
 
     beforeEach(() => {
-        app = new MeshApp({ nodeID: 'orchestrator-test', logger: new Logger('warn' as never) });
+        app = new MeshApp({ nodeID: 'orchestrator-test', logger: new Logger(LogLevel.WARN) });
     });
 
     // ─── phase ordering ─────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { KademliaRoutingTable } from './KademliaRoutingTable.js';
+import { KademliaRoutingTable } from '../core/KademliaRoutingTable.js';
 import { NodeInfo } from '../types/registry.schema.js';
 
 describe('KademliaRoutingTable', () => {
@@ -29,7 +29,7 @@ describe('KademliaRoutingTable', () => {
         it('should add a node to the routing table', () => {
             const node = createNode('node-2');
             dht.addNode(node);
-            
+
             // It should be retrievable
             const closest = dht.findClosestNodes('node-2', 1);
             expect(closest).toHaveLength(1);
@@ -39,7 +39,7 @@ describe('KademliaRoutingTable', () => {
         it('should ignore adding the local node itself', () => {
             const localNode = createNode(localNodeID);
             dht.addNode(localNode);
-            
+
             const closest = dht.findClosestNodes(localNodeID, 1);
             expect(closest).toHaveLength(0);
         });
@@ -52,7 +52,7 @@ describe('KademliaRoutingTable', () => {
             // Add another node to the same bucket to test order
             // We just add a bunch to ensure we have elements
             dht.addNode(createNode('node-3'));
-            
+
             // Update node-2
             const updatedNode = createNode('node-2');
             updatedNode.timestamp = 200;
@@ -68,7 +68,7 @@ describe('KademliaRoutingTable', () => {
         it('should respect bucket size limit (k)', () => {
             // k is 20, let's create a table with k=2 for easier testing
             const smallDht = new KademliaRoutingTable(localNodeID, 2);
-            
+
             // To guarantee they fall in the same bucket, we need nodes with same distance MSB
             // Since distance is XOR, this is tricky to guarantee without math, but we can just add a lot
             // Let's add 5 nodes
@@ -87,11 +87,11 @@ describe('KademliaRoutingTable', () => {
         it('should remove a specific node by ID', () => {
             dht.addNode(createNode('node-to-remove'));
             dht.addNode(createNode('node-to-keep'));
-            
+
             expect(dht.findClosestNodes('node-to-remove', 10)).toHaveLength(2);
-            
+
             dht.removeNode('node-to-remove');
-            
+
             const nodes = dht.findClosestNodes('node-to-remove', 10);
             expect(nodes).toHaveLength(1);
             expect(nodes[0].nodeID).toBe('node-to-keep');
@@ -103,7 +103,7 @@ describe('KademliaRoutingTable', () => {
             for (let i = 0; i < 10; i++) {
                 dht.addNode(createNode(`node-test-${i}`));
             }
-            
+
             const closest = dht.findClosestNodes('target-node', 3);
             expect(closest).toHaveLength(3);
         });
@@ -112,7 +112,7 @@ describe('KademliaRoutingTable', () => {
             for (let i = 0; i < 3; i++) {
                 dht.addNode(createNode(`node-test-${i}`));
             }
-            
+
             const closest = dht.findClosestNodes('target-node', 10);
             expect(closest).toHaveLength(3);
         });
@@ -124,12 +124,12 @@ describe('KademliaRoutingTable', () => {
             dht.addNode(createNode('node-a', [
                 { name: 'math', tools: { 'math.add': {} } }
             ]));
-            
+
             // Node with math.add and math.sub
             dht.addNode(createNode('node-b', [
                 { name: 'math', tools: { 'math.add': {}, 'math.sub': {} } }
             ]));
-            
+
             // Node with strings.split
             dht.addNode(createNode('node-c', [
                 { name: 'strings', tools: { 'strings.split': {} } }

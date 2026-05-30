@@ -3,8 +3,26 @@ import { IContext } from '../interfaces/IContext.js';
 import { IServiceBroker } from '../interfaces/IServiceBroker.js';
 import { MeshToolSchemaRegistry } from '../core/ServiceBroker.js';
 import { Database } from './Database.js';
-import { StrictFilterQuery } from './types.js';
+import { FindOptions, StrictFilterQuery } from './types.js';
 import { z } from 'zod';
+import { IServiceModule } from '../interfaces/IServiceModule.js';
+import { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
+import { EventRegistry } from '../interfaces/IEventContract.js';
+
+interface BaseDoc {
+    id: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+    [key: string]: unknown;
+}
+
+function isRecord(obj: unknown): obj is Record<string, unknown> {
+    return typeof obj === 'object' && obj !== null && !Array.isArray(obj);
+}
+
+function isStringArray(obj: unknown): obj is string[] {
+    return Array.isArray(obj) && obj.every(i => typeof i === 'string');
+}
 
 export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): IMiddleware {
     return async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>, next) => {
@@ -25,80 +43,146 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         // Try to find the base schema from a tool that returns it
         const getToolReg = MeshToolSchemaRegistry.get(`${domain}.get`);
         const createToolReg = MeshToolSchemaRegistry.get(`${domain}.create`);
-        const schema = (getToolReg?.returns || createToolReg?.returns) as z.ZodTypeAny;
+        const possibleSchema = getToolReg?.returns || createToolReg?.returns;
 
-        if (!schema) {
+        if (!possibleSchema) {
             broker.logger.warn(`[DatabaseMiddleware] Could not find schema for domain ${domain}. Proceeding to next handler.`);
             return await next();
         }
 
+        const schema: z.ZodType<BaseDoc> = possibleSchema as z.ZodType<BaseDoc>;
         const repo = db.repo(schema, domain);
-        let params = ctx.params as Record<string, unknown>;
+        
+        let params: Record<string, unknown> = ctx.params;
         let result: unknown;
 
         const module = broker.getModule(domain);
-        let serviceCtx: any = null;
+
+        // Utility to bridge calls without 'any' where possible
+        const serviceCtx = {
+            broker,
+            correlationId: ctx.correlationID || ctx.id,
+            nodeID: broker.nodeID,
+            call: (a: string, p: Record<string, unknown>, o?: { nodeID?: string; timeout?: number }) => 
+                broker.call(a as keyof IServiceToolRegistry, p, o),
+            emit: (e: string, p: Record<string, unknown>, o?: { skipNetwork?: boolean }) => 
+                broker.emit(e as keyof EventRegistry, p, o),
+            logger: broker.logger
+        };
 
         if (module) {
-            serviceCtx = {
-                correlationId: ctx.correlationID || ctx.id,
-                nodeID: broker.nodeID,
-                call: async (a: any, p: any, o?: any) => broker.call(a, p, o),
-                emit: (e: any, p: any, o?: any) => broker.emit(e, p, o)
-            };
-            params = await module.beforeCrud(domain, action, params, serviceCtx) as Record<string, unknown>;
+            const beforeResult = await module.beforeCrud(domain, action, params, serviceCtx);
+            if (isRecord(beforeResult)) {
+                params = beforeResult;
+            }
         }
 
         try {
             switch (action) {
-                case 'find':
-                    result = await repo.find(params);
+                case 'find': {
+                    const options: FindOptions<BaseDoc> = {
+                        query: isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {},
+                        limit: typeof params.limit === 'number' ? params.limit : undefined,
+                        offset: typeof params.offset === 'number' ? params.offset : undefined,
+                    };
+                    if (typeof params.sort === 'string' || Array.isArray(params.sort) || isRecord(params.sort)) {
+                        options.sort = params.sort as FindOptions<BaseDoc>['sort'];
+                    }
+                    if (typeof params.fields === 'string' || Array.isArray(params.fields)) {
+                        options.fields = params.fields;
+                    }
+                    if (typeof params.search === 'string') {
+                        options.search = params.search;
+                    }
+                    if (typeof params.searchFields === 'string' || Array.isArray(params.searchFields)) {
+                        options.searchFields = params.searchFields;
+                    }
+                    result = await repo.find(options);
                     break;
-                case 'find_one':
-                    result = await repo.findOne(
-                        (params.query ?? {}) as StrictFilterQuery<{ id: string }>,
-                        {
-                            sort: params.sort as Partial<Record<string, 1 | -1>> | undefined,
-                            offset: typeof params.offset === 'number' ? params.offset : undefined
-                        }
-                    );
+                }
+                case 'find_one': {
+                    const query = isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {};
+                    let sort: FindOptions<BaseDoc>['sort'] = undefined;
+                    if (typeof params.sort === 'string' || Array.isArray(params.sort) || isRecord(params.sort)) {
+                        sort = params.sort as FindOptions<BaseDoc>['sort'];
+                    }
+                    const offset = typeof params.offset === 'number' ? params.offset : undefined;
+                    
+                    result = await repo.findOne(query, { sort, offset });
                     break;
-                case 'count':
-                    result = await repo.count(params.query as any);
+                }
+                case 'count': {
+                    const query = isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {};
+                    result = await repo.count(query);
                     break;
-                case 'get':
-                    result = await repo.get(params.id as string);
+                }
+                case 'get': {
+                    const id = typeof params.id === 'string' ? params.id : '';
+                    result = await repo.get(id);
                     break;
-                case 'create':
-                    result = await repo.create(params);
-                    broker.emit('data.created', { domain, id: (result as any).id, item: result as Record<string, unknown> });
+                }
+                case 'create': {
+                    const createRes = await repo.create(params as any);
+                    broker.emit('data.created', { domain, id: createRes.id, item: createRes as Record<string, unknown> });
+                    result = createRes;
                     break;
+                }
                 case 'create_many': {
                     const arr = Array.isArray(params) ? params : [params];
-                    const created = [];
+                    const created: BaseDoc[] = [];
                     for (const item of arr) {
-                        const res = await repo.create(item as any);
-                        created.push(res);
-                        broker.emit('data.created', { domain, id: (res as any).id, item: res as Record<string, unknown> });
+                        if (isRecord(item)) {
+                            const res = await repo.create(item as any);
+                            created.push(res);
+                            broker.emit('data.created', { domain, id: res.id, item: res as Record<string, unknown> });
+                        }
                     }
                     result = created;
                     break;
                 }
-                case 'update':
-                    result = await repo.update(params.id as string, params);
-                    if (result) broker.emit('data.updated', { domain, id: (result as any).id, patch: params as Record<string, unknown>, item: result as Record<string, unknown> });
+                case 'update': {
+                    const id = typeof params.id === 'string' ? params.id : '';
+                    const updateRes = await repo.update(id, params as any);
+                    if (updateRes) {
+                        broker.emit('data.updated', { 
+                            domain, 
+                            id: updateRes.id, 
+                            patch: params as Record<string, unknown>, 
+                            item: updateRes as Record<string, unknown> 
+                        });
+                    }
+                    result = updateRes;
                     break;
-                case 'replace':
-                    result = await repo.replace(params.id as string, params as any);
-                    if (result) broker.emit('data.updated', { domain, id: (result as any).id, patch: params as Record<string, unknown>, item: result as Record<string, unknown> });
+                }
+                case 'replace': {
+                    const id = typeof params.id === 'string' ? params.id : '';
+                    const replaceRes = await repo.replace(id, params as any);
+                    if (replaceRes) {
+                        broker.emit('data.updated', { 
+                            domain, 
+                            id: replaceRes.id, 
+                            patch: params as Record<string, unknown>, 
+                            item: replaceRes as Record<string, unknown> 
+                        });
+                    }
+                    result = replaceRes;
                     break;
-                case 'delete':
-                    result = { success: await repo.delete(params.id as string) };
-                    if ((result as any).success) broker.emit('data.deleted', { domain, id: params.id as string });
+                }
+                case 'delete': {
+                    const id = typeof params.id === 'string' ? params.id : '';
+                    const success = await repo.delete(id);
+                    result = { success };
+                    if (success) {
+                        broker.emit('data.deleted', { domain, id });
+                    }
                     break;
-                case 'resolve':
-                    result = await repo.resolve(params as any);
+                }
+                case 'resolve': {
+                    if (isRecord(params)) {
+                        result = await repo.resolve(params as Record<string, string | string[]>);
+                    }
                     break;
+                }
                 default:
                     return await next(); // Pass through unknown actions
             }

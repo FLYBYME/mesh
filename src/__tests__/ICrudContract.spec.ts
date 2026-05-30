@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineCrud } from './ICrudContract.js';
+import { defineCrud } from '../interfaces/ICrudContract.js';
 
 describe('ICrudContract', () => {
     const TestBaseSchema = z.object({
@@ -10,7 +10,7 @@ describe('ICrudContract', () => {
     describe('defineCrud()', () => {
         it('should generate all standard CRUD contracts', () => {
             const crud = defineCrud('user', TestBaseSchema);
-            
+
             expect(crud.domain).toBe('user');
             expect(crud.idField).toBe('id');
             expect(crud.find).toBeDefined();
@@ -27,7 +27,7 @@ describe('ICrudContract', () => {
 
         it('should ensure all generated contracts have isCrud: true and correct domain', () => {
             const crud = defineCrud('user', TestBaseSchema);
-            
+
             const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
             for (const action of actions) {
                 const contract = crud[action];
@@ -49,9 +49,9 @@ describe('ICrudContract', () => {
 
         it('should allow custom idField without conflict', () => {
             const crud = defineCrud('item', TestBaseSchema, { idField: 'uuid' });
-            
+
             expect(crud.idField).toBe('uuid');
-            
+
             // Check that output schema includes the new id field
             const testObj = { uuid: '123', name: 'test', age: 10, createdAt: new Date(), updatedAt: new Date() };
             expect(() => crud.outputSchema.parse(testObj)).not.toThrow();
@@ -69,10 +69,10 @@ describe('ICrudContract', () => {
         it('should omit auto-generated fields from CreateInputSchema', () => {
             const crud = defineCrud('user', TestBaseSchema);
             const createSchema = crud.create.inputSchema as any;
-            
+
             // Should require name and age
             expect(() => createSchema.parse({ name: 'Bob', age: 30 })).not.toThrow();
-            
+
             // Should strip or ignore id/createdAt/updatedAt
             // Zod's parse behaves differently depending on exact construction, but
             // essentially it won't *require* them.

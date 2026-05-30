@@ -33,7 +33,10 @@ export interface FindOptions<T> {
     query?: StrictFilterQuery<T>;
     limit?: number;
     offset?: number;
-    sort?: Partial<Record<keyof T, 1 | -1>>;
+    sort?: Partial<Record<keyof T, 1 | -1>> | string | string[];
+    fields?: string | string[];
+    search?: string;
+    searchFields?: string | string[];
 }
 
 /**

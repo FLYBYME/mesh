@@ -131,7 +131,7 @@ export function defineCrud<
     z.ZodType<CreateIn<z.output<TBase>, TIdField>, z.ZodTypeDef, CreateIn<z.input<TBase>, TIdField>>,
     z.ZodType<UpdateIn<z.output<TBase>, TIdField>, z.ZodTypeDef, UpdateIn<z.input<TBase>, TIdField>>,
     z.ZodType<ReplaceIn<z.output<TBase>, TIdField>, z.ZodTypeDef, ReplaceIn<z.input<TBase>, TIdField>>,
-    z.ZodType<Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>>,
+    z.ZodType<Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>>,
     typeof CrudParamsSchema,
     typeof CrudParamsSchema,
     z.ZodType<Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>, z.ZodTypeDef, Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>>,
@@ -199,10 +199,13 @@ export function defineCrud<
         IdOnlyIn<TIdField>
     >;
 
-    const GetInputSchema = (z.object({ [idField]: z.string() } as Record<string, z.ZodTypeAny>) as z.ZodObject<z.ZodRawShape>).extend(CrudParamsSchema.shape) as unknown as z.ZodType<
-        Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>,
+    const GetInputSchema = (z.object({ [idField]: z.string() } as Record<string, z.ZodTypeAny>) as z.ZodObject<z.ZodRawShape>).extend({
+        fields: CrudParamsSchema.shape.fields,
+        populate: CrudParamsSchema.shape.populate
+    }) as unknown as z.ZodType<
+        Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>,
         z.ZodTypeDef,
-        Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>
+        Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>
     >;
 
     const ResolveInputSchema = z.object({
@@ -355,7 +358,7 @@ export function defineCrud<
         z.ZodType<CreateIn<z.output<TBase>, TIdField>, z.ZodTypeDef, CreateIn<z.input<TBase>, TIdField>>,
         z.ZodType<UpdateIn<z.output<TBase>, TIdField>, z.ZodTypeDef, UpdateIn<z.input<TBase>, TIdField>>,
         z.ZodType<ReplaceIn<z.output<TBase>, TIdField>, z.ZodTypeDef, ReplaceIn<z.input<TBase>, TIdField>>,
-        z.ZodType<Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & z.input<typeof CrudParamsSchema>>>,
+        z.ZodType<Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>>,
         typeof CrudParamsSchema,
         typeof CrudParamsSchema,
         z.ZodType<Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>, z.ZodTypeDef, Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>>,

@@ -1,5 +1,6 @@
 import { Registry } from '../../core/Registry.js';
 import { Logger } from '../../utils/Logger.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
 import { DemoSkill } from '../../examples/demo/demo.service.js';
 import type { NodeInfo } from '../../interfaces/IMeshNetwork.js';
 
@@ -16,7 +17,7 @@ describe('Registry', () => {
         timestamp: Date.now(),
         nodeSeq: 1,
         hostname: 'localhost',
-        services: services as never[],
+        services: services as any,
         trustLevel: 'internal',
         metadata: {},
         capabilities: { transports: ['ws'], features: [] },
@@ -27,7 +28,7 @@ describe('Registry', () => {
     });
 
     beforeEach(() => {
-        registry = new Registry(new Logger('warn' as never), { localNodeID, preferLocal: true });
+        registry = new Registry(new Logger(LogLevel.WARN), { localNodeID, preferLocal: true });
     });
 
     afterEach(async () => {

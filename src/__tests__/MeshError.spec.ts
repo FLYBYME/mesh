@@ -1,4 +1,4 @@
-import { MeshError, ResiliencyError, ClientError, MeshErrorPayloadSchema } from './MeshError.js';
+import { MeshError, ResiliencyError, ClientError, MeshErrorPayloadSchema } from '../core/MeshError.js';
 
 describe('MeshError', () => {
     describe('MeshError constructor', () => {
@@ -19,7 +19,7 @@ describe('MeshError', () => {
                 correlationId: 'req-123'
             };
             const error = new MeshError(payload);
-            
+
             expect(error.message).toBe('Custom error message');
             expect(error.code).toBe('CUSTOM_CODE');
             expect(error.status).toBe(404);
@@ -43,7 +43,7 @@ describe('MeshError', () => {
                 correlationId: '123'
             });
             const json = error.toJSON();
-            
+
             expect(json).toHaveProperty('message', 'Error to serialize');
             expect(json).toHaveProperty('code', 'SER_ERR');
             expect(json).toHaveProperty('status', 501);
@@ -54,7 +54,7 @@ describe('MeshError', () => {
         it('should round-trip through JSON and Zod validation', () => {
             const error = new MeshError('Round trip test');
             const json = error.toJSON();
-            
+
             // Should pass zod validation
             const parsed = MeshErrorPayloadSchema.parse(json);
             expect(parsed.message).toBe('Round trip test');

@@ -346,11 +346,26 @@ export class ServiceBroker implements IServiceBroker {
             parentId,
         };
 
-        const result = await this.handlePipeline(ctx);
-        if (schema?.returns) {
-            return (schema.returns as z.ZodTypeAny).parse(result);
+        const timeoutMs = (ctx.meta?.timeout as number) || 10000;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        const resultPromise = this.handlePipeline(ctx);
+        
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
+            }, timeoutMs);
+        });
+
+        try {
+            const result = await Promise.race([resultPromise, timeoutPromise]);
+            if (schema?.returns) {
+                return (schema.returns as z.ZodTypeAny).parse(result);
+            }
+            return result;
+        } finally {
+            if (timer) SafeTimer.clearTimeout(timer);
         }
-        return result;
     }
 
     public async handleIncomingRPC(packet: IMeshPacket): Promise<unknown> {
@@ -371,12 +386,27 @@ export class ServiceBroker implements IServiceBroker {
             parentId: meta.parentId as string,
         };
 
-        const result = await this.handlePipeline(ctx);
-        const schema = MeshToolSchemaRegistry.get(packet.topic);
-        if (schema?.returns) {
-            return (schema.returns as z.ZodTypeAny).parse(result);
+        const timeoutMs = (ctx.meta?.timeout as number) || 10000;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        const resultPromise = this.handlePipeline(ctx);
+        
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
+            }, timeoutMs);
+        });
+
+        try {
+            const result = await Promise.race([resultPromise, timeoutPromise]);
+            const schema = MeshToolSchemaRegistry.get(packet.topic);
+            if (schema?.returns) {
+                return (schema.returns as z.ZodTypeAny).parse(result);
+            }
+            return result;
+        } finally {
+            if (timer) SafeTimer.clearTimeout(timer);
         }
-        return result;
     }
 
     public async handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown> {
@@ -461,7 +491,7 @@ export class ServiceBroker implements IServiceBroker {
                 this.pendingRequests.delete(requestId);
                 this.logger.info('Nodes available at timeout:', this.registry.getNodes());
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
-            }, timeoutMs) as unknown as TimerHandle;
+            }, timeoutMs);
             this.pendingRequests.set(requestId, { resolve, reject, timeout });
             this.network.send(nodeID, toolName, params, {
                 id: requestId,

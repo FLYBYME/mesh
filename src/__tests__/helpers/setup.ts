@@ -1,29 +1,40 @@
+import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
+import { 
+    destroyTestApp,
+    dropTestDatabase as genericDropTestDatabase,
+    dropTestCollection as genericDropTestCollection,
+    generateTestDbName
+} from '../../testing/index.js';
 import { MeshApp } from '../../core/MeshApp.js';
+import { Logger } from '../../utils/Logger.js';
 import { RegistryModule } from '../../modules/RegistryModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { DatabaseModule } from '../../modules/DatabaseModule.js';
-import { DemoSkill } from '../../examples/demo/demo.service.js';
-import { Database } from '../../db/Database.js';
-import { Logger } from '../../utils/Logger.js';
-import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import path from 'path';
 
+declare module '../../interfaces/IEventContract.js' {
+    interface EventRegistry {
+        'test.event': { data: string };
+        'test.foo': { a: number };
+        'test.bar': { b: number };
+        'unsub.test': { first?: boolean; second?: boolean };
+    }
+}
+
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), quiet: true } as any);
 
-// Create a unique database name for each test process (worker) to allow parallel execution
-const TEST_DB_SUFFIX = Math.random().toString(36).substring(2, 8);
-const TEST_DB_NAME = `mesh_test_${TEST_DB_SUFFIX}`;
+// The database name used by the current worker process
+const TEST_DB_NAME = generateTestDbName();
 
 /**
  * Creates a fully wired MeshApp with real Registry, Broker, Database, and DemoSkill.
- * Uses the real MongoDB connection from .env against the `mesh_test` database.
+ * Uses the real MongoDB connection from .env against an isolated test database.
  */
 export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
-    const logger = new Logger('warn' as never);
+    const logger = new Logger(LogLevel.WARN);
     const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-
-    // Strip existing DB name from URI and use test DB
     const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
 
     const app = new MeshApp({
@@ -46,44 +57,22 @@ export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
 }
 
 /**
- * Cleans up a test app: stops the app and drops the test database.
+ * Cleans up a test app.
  */
-export async function destroyTestApp(app: MeshApp): Promise<void> {
-    await app.stop();
-}
+export { destroyTestApp };
 
 /**
- * Drops the entire mesh_test database — call in afterAll.
+ * Drops the test database — call in afterAll.
  */
-export async function dropTestDatabase(): Promise<void> {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-    const client = new MongoClient(mongoUri);
-    try {
-        await client.connect();
-        await client.db(TEST_DB_NAME).dropDatabase();
-    } catch (err) {
-        // Silently ignore dropDatabase permission errors (common on Atlas)
-        // The isolation is still preserved by unique TEST_DB_NAME
-    } finally {
-        await client.close();
-    }
+export async function dropTestDatabase(name?: string): Promise<void> {
+    await genericDropTestDatabase(name || TEST_DB_NAME);
 }
 
 /**
  * Clears all documents from a specific collection within the test database.
  */
 export async function dropTestCollection(collectionName: string): Promise<void> {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-    const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
-    const client = new MongoClient(baseUri);
-    try {
-        await client.connect();
-        await client.db(TEST_DB_NAME).collection(collectionName).deleteMany({});
-    } catch (err) {
-        // Ignore errors if collection doesn't exist yet
-    } finally {
-        await client.close();
-    }
+    await genericDropTestCollection(TEST_DB_NAME, collectionName);
 }
 
 export { TEST_DB_NAME };

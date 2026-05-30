@@ -7,6 +7,7 @@ import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { IServiceRegistry } from '../../interfaces/IServiceRegistry.js';
 import { Database } from '../../db/Database.js';
 import { Logger } from '../../utils/Logger.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
 import { dropTestCollection, TEST_DB_NAME } from '../helpers/setup.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -23,19 +24,19 @@ describe('MeshApp', () => {
 
     describe('Provider DI', () => {
         it('should register and retrieve providers', () => {
-            const app = new MeshApp({ nodeID: 'di-test', logger: new Logger('warn' as never) });
+            const app = new MeshApp({ nodeID: 'di-test', logger: new Logger(LogLevel.WARN) });
             app.registerProvider<string>('custom', 'hello');
             expect(app.hasProvider('custom')).toBe(true);
             expect(app.getProvider<string>('custom')).toBe('hello');
         });
 
         it('should throw when getting non-existent provider', () => {
-            const app = new MeshApp({ nodeID: 'di-test-2', logger: new Logger('warn' as never) });
+            const app = new MeshApp({ nodeID: 'di-test-2', logger: new Logger(LogLevel.WARN) });
             expect(() => app.getProvider('nonexistent')).toThrow('Provider not found');
         });
 
         it('should report false for non-existent provider', () => {
-            const app = new MeshApp({ nodeID: 'di-test-3', logger: new Logger('warn' as never) });
+            const app = new MeshApp({ nodeID: 'di-test-3', logger: new Logger(LogLevel.WARN) });
             expect(app.hasProvider('nonexistent')).toBe(false);
         });
     });
@@ -53,7 +54,7 @@ describe('MeshApp', () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
             const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
 
-            app = new MeshApp({ nodeID: 'lifecycle-test', namespace: 'test', logger: new Logger('warn' as never) });
+            app = new MeshApp({ nodeID: 'lifecycle-test', namespace: 'test', logger: new Logger(LogLevel.WARN) });
             app.use(new RegistryModule({ preferLocal: true }));
             app.use(new BrokerModule());
             app.use(new DatabaseModule({ uri: baseUri, dbName: TEST_DB_NAME }));
@@ -75,7 +76,7 @@ describe('MeshApp', () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
             const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
 
-            app = new MeshApp({ nodeID: 'call-test', namespace: 'test', logger: new Logger('warn' as never) });
+            app = new MeshApp({ nodeID: 'call-test', namespace: 'test', logger: new Logger(LogLevel.WARN) });
             app.use(new RegistryModule({ preferLocal: true }));
             app.use(new BrokerModule());
             app.use(new DatabaseModule({ uri: baseUri, dbName: TEST_DB_NAME }));
@@ -83,7 +84,7 @@ describe('MeshApp', () => {
             await app.start();
             await app.registerModule(new DemoSkill());
 
-            const result = await app.call('demo.hello' as never, { name: 'AppTest' } as never) as Record<string, unknown>;
+            const result = await app.call('demo.hello', { name: 'AppTest' }) as Record<string, unknown>;
             expect(result.message).toBe('Hello, AppTest! Event dispatched!');
         });
     });
@@ -95,7 +96,7 @@ describe('MeshApp', () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
             const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
 
-            const app = new MeshApp({ nodeID: 'mw-queue-test', logger: new Logger('warn' as never) });
+            const app = new MeshApp({ nodeID: 'mw-queue-test', logger: new Logger(LogLevel.WARN) });
 
             const order: string[] = [];
             app.use(async (_ctx: unknown, next: () => Promise<unknown>) => {
@@ -110,7 +111,7 @@ describe('MeshApp', () => {
             await app.start();
             await app.registerModule(new DemoSkill());
 
-            await app.call('demo.hello' as never, { name: 'Queue' } as never);
+            await app.call('demo.hello', { name: 'Queue' });
             expect(order).toContain('queued-mw');
 
             await app.stop();

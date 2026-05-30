@@ -1,4 +1,4 @@
-import { SafeTimer } from './SafeTimer.js';
+import { SafeTimer } from '../utils/SafeTimer.js';
 
 describe('SafeTimer', () => {
     describe('unref()', () => {
@@ -20,7 +20,7 @@ describe('SafeTimer', () => {
     describe('clearInterval()', () => {
         it('should clear an interval', () => {
             const spy = jest.spyOn(global, 'clearInterval');
-            const timer = setInterval(() => {}, 1000);
+            const timer = setInterval(() => { }, 1000);
             SafeTimer.clearInterval(timer as any);
             expect(spy).toHaveBeenCalledWith(timer);
             spy.mockRestore();
@@ -37,7 +37,7 @@ describe('SafeTimer', () => {
     describe('clearTimeout()', () => {
         it('should clear a timeout', () => {
             const spy = jest.spyOn(global, 'clearTimeout');
-            const timer = setTimeout(() => {}, 1000);
+            const timer = setTimeout(() => { }, 1000);
             SafeTimer.clearTimeout(timer as any);
             expect(spy).toHaveBeenCalledWith(timer);
             spy.mockRestore();

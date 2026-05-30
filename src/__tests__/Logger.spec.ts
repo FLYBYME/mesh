@@ -1,4 +1,4 @@
-import { Logger } from './Logger.js';
+import { Logger } from '../utils/Logger.js';
 import { LogLevel } from '../interfaces/ILogger.js';
 
 describe('Logger', () => {
@@ -10,10 +10,10 @@ describe('Logger', () => {
 
     beforeEach(() => {
         logger = new Logger(LogLevel.DEBUG);
-        consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation(() => {});
-        consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
-        consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation(() => { });
+        consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => { });
+        consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
     });
 
     afterEach(() => {
@@ -76,7 +76,7 @@ describe('Logger', () => {
     it('should create child logger merging context', () => {
         const parent = new Logger(LogLevel.INFO, { parentId: '1' });
         const child = parent.child({ childId: '2' });
-        
+
         child.info('test');
         expect(consoleInfoSpy).toHaveBeenCalled();
         const output = consoleInfoSpy.mock.calls[0][0];

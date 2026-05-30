@@ -23,12 +23,12 @@ describe('ServiceBroker', () => {
 
     describe('call() — local tools', () => {
         it('should call demo.hello and return a greeting', async () => {
-            const result = await broker.call('demo.hello' as never, { name: 'World' } as never) as Record<string, unknown>;
+            const result = await broker.call('demo.hello', { name: 'World' }) as Record<string, unknown>;
             expect(result.message).toBe('Hello, World! Event dispatched!');
         });
 
         it('should call demo.status and return health info', async () => {
-            const result = await broker.call('demo.status' as never, { name: 'Test' } as never) as Record<string, unknown>;
+            const result = await broker.call('demo.status', { name: 'Test' }) as Record<string, unknown>;
             expect(result.message).toContain('Test');
             expect(result.message).toContain('Healthy');
         });
@@ -39,13 +39,13 @@ describe('ServiceBroker', () => {
     describe('call() — input validation', () => {
         it('should reject invalid params with Zod error', async () => {
             await expect(
-                broker.call('demo.hello' as never, { name: 123 } as never)
+                broker.call('demo.hello', { name: 123 } as any)
             ).rejects.toThrow();
         });
 
         it('should reject missing required fields', async () => {
             await expect(
-                broker.call('demo.hello' as never, {} as never)
+                broker.call('demo.hello', {} as any)
             ).rejects.toThrow();
         });
     });
@@ -63,7 +63,7 @@ describe('ServiceBroker', () => {
                 return result;
             });
 
-            await broker.call('demo.hello' as never, { name: 'MW' } as never);
+            await broker.call('demo.hello', { name: 'MW' });
 
             expect(order).toContain('global-1');
             expect(order).toContain('global-1-after');
@@ -75,27 +75,27 @@ describe('ServiceBroker', () => {
 
     describe('emit() / on()', () => {
         it('should emit and receive events', () => {
-            const received: unknown[] = [];
-            broker.on('test.event' as never, (payload: unknown) => received.push(payload));
-            broker.emit('test.event' as never, { data: 'hello' } as never);
+            const received: any[] = [];
+            broker.on('test.event', (payload) => received.push(payload));
+            broker.emit('test.event', { data: 'hello' });
             expect(received).toHaveLength(1);
             expect((received[0] as Record<string, unknown>).data).toBe('hello');
         });
 
         it('should support wildcard event patterns', () => {
-            const received: unknown[] = [];
-            broker.on('test.*' as never, (payload: unknown) => received.push(payload));
-            broker.emit('test.foo' as never, { a: 1 } as never);
-            broker.emit('test.bar' as never, { b: 2 } as never);
+            const received: any[] = [];
+            broker.on('test.*' as any, (payload) => received.push(payload));
+            broker.emit('test.foo', { a: 1 });
+            broker.emit('test.bar', { b: 2 });
             expect(received).toHaveLength(2);
         });
 
         it('should support unsubscribe via returned function', () => {
-            const received: unknown[] = [];
-            const unsub = broker.on('unsub.test' as never, (payload: unknown) => received.push(payload));
-            broker.emit('unsub.test' as never, { first: true } as never);
+            const received: any[] = [];
+            const unsub = broker.on('unsub.test', (payload) => received.push(payload));
+            broker.emit('unsub.test', { first: true });
             unsub();
-            broker.emit('unsub.test' as never, { second: true } as never);
+            broker.emit('unsub.test', { second: true });
             expect(received).toHaveLength(1);
         });
     });

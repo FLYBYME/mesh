@@ -1,5 +1,6 @@
 import { NetworkDispatcher } from '../../core/NetworkDispatcher.js';
 import { Logger } from '../../utils/Logger.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
 import type { MeshPacket } from '../../interfaces/IMeshNetwork.js';
 
 describe('NetworkDispatcher', () => {
@@ -18,7 +19,7 @@ describe('NetworkDispatcher', () => {
     });
 
     beforeEach(() => {
-        dispatcher = new NetworkDispatcher(new Logger('warn' as never));
+        dispatcher = new NetworkDispatcher(new Logger(LogLevel.WARN));
     });
 
     afterEach(() => {

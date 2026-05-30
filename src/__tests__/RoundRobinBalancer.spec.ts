@@ -1,4 +1,4 @@
-import { RoundRobinBalancer } from './RoundRobinBalancer.js';
+import { RoundRobinBalancer } from '../balancers/RoundRobinBalancer.js';
 import { NodeInfo } from '../types/registry.schema.js';
 
 describe('RoundRobinBalancer', () => {
@@ -60,14 +60,14 @@ describe('RoundRobinBalancer', () => {
 
         expect(balancer.select(nodes, { toolName: 'math.add' })!.nodeID).toBe('node-1');
         expect(balancer.select(nodes, { toolName: 'strings.split' })!.nodeID).toBe('node-1');
-        
+
         expect(balancer.select(nodes, { toolName: 'math.add' })!.nodeID).toBe('node-2');
         expect(balancer.select(nodes, { toolName: 'strings.split' })!.nodeID).toBe('node-2');
     });
 
     it('should clear counters when MAX_COUNTERS is exceeded (Memory Leak Protection)', () => {
         const nodes = [createNode('node-1'), createNode('node-2')];
-        
+
         // Populate 1001 counters to exceed MAX_COUNTERS (1000)
         for (let i = 0; i < 1001; i++) {
             balancer.select(nodes, { toolName: `tool-${i}` });
