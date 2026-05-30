@@ -1,6 +1,7 @@
 import { MongoClient, Db } from 'mongodb';
 import { z } from 'zod';
 import { DomainRepository } from './DomainRepository.js';
+import { TimeSeriesRepository } from './TimeSeriesRepository.js';
 import { ILogger } from '../interfaces/ILogger.js';
 
 /**
@@ -10,6 +11,7 @@ export class Database {
     private client: MongoClient;
     private dbInstance: Db | null = null;
     private repositories: Map<string, DomainRepository<{ id: string }>> = new Map();
+    private tsRepositories: Map<string, TimeSeriesRepository<{ timestamp: Date, tags: Record<string, string> }>> = new Map();
 
     constructor(
         private logger: ILogger,
@@ -51,6 +53,45 @@ export class Database {
 
         this.repositories.set(domain, repository as unknown as DomainRepository<{ id: string }>);
         return repository;
+    }
+
+    /**
+     * tsRepo: Dynamically retrieves or creates a strictly-typed TimeSeriesRepository.
+     */
+    public tsRepo<T extends { timestamp: Date, tags: Record<string, string> }>(
+        schema: z.ZodType<T>,
+        domain: string
+    ): TimeSeriesRepository<T> {
+        if (!this.dbInstance) throw new Error('Database not connected. Call connect() first.');
+
+        const cached = this.tsRepositories.get(domain);
+        if (cached) return cached as unknown as TimeSeriesRepository<T>;
+
+        const collection = this.dbInstance.collection(domain);
+        
+        // Asynchronously ensure TS collection (fire and forget for now, or we could await if we were in an async context)
+        this.ensureTimeSeriesCollection(domain).catch(err => {
+            this.logger.error(`[DB] Failed to ensure TS collection ${domain}: ${err.message}`);
+        });
+
+        const repository = new TimeSeriesRepository<T>(collection, schema, domain);
+        this.tsRepositories.set(domain, repository as unknown as TimeSeriesRepository<{ timestamp: Date, tags: Record<string, string> }>);
+        return repository;
+    }
+
+    private async ensureTimeSeriesCollection(name: string): Promise<void> {
+        if (!this.dbInstance) return;
+        const collections = await this.dbInstance.listCollections({ name }).toArray();
+        if (collections.length === 0) {
+            this.logger.info(`[DB] Creating Time Series collection: ${name}`);
+            await this.dbInstance.createCollection(name, {
+                timeseries: {
+                    timeField: 'timestamp',
+                    metaField: 'tags',
+                    granularity: 'seconds'
+                }
+            });
+        }
     }
 
     public async disconnect(): Promise<void> {

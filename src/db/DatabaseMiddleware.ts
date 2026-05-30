@@ -16,6 +16,12 @@ interface BaseDoc {
     [key: string]: unknown;
 }
 
+interface TSPoint {
+    timestamp: Date;
+    tags: Record<string, string>;
+    [key: string]: unknown;
+}
+
 function isRecord(obj: unknown): obj is Record<string, unknown> {
     return typeof obj === 'object' && obj !== null && !Array.isArray(obj);
 }
@@ -29,7 +35,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         const toolKey = ctx.toolName;
         const schemaReg = MeshToolSchemaRegistry.get(toolKey);
 
-        if (!schemaReg?.isCrud) {
+        if (!schemaReg?.isCrud && !schemaReg?.isTimeSeries) {
             return await next();
         }
 
@@ -39,6 +45,10 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         }
 
         const action = toolKey.substring(domain.length + 1);
+
+        if (schemaReg.isTimeSeries) {
+            return await handleTimeSeries(ctx, broker, db, domain, action);
+        }
 
         // Try to find the base schema from a tool that returns it
         const getToolReg = MeshToolSchemaRegistry.get(`${domain}.get`);
@@ -115,8 +125,9 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                         sort = params.sort as FindOptions<BaseDoc>['sort'];
                     }
                     const offset = typeof params.offset === 'number' ? params.offset : undefined;
+                    const fields = typeof params.fields === 'string' || Array.isArray(params.fields) ? params.fields : undefined;
 
-                    result = await repo.findOne(query, { sort, offset });
+                    result = await repo.findOne(query, { sort, offset, fields });
                     break;
                 }
                 case 'count': {
@@ -130,7 +141,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     break;
                 }
                 case 'create': {
-                    const createRes = await repo.create(params as any);
+                    const createRes = await repo.create(params as unknown as BaseDoc);
                     broker.emit('data.created', { domain, id: createRes.id, item: createRes as Record<string, unknown> });
                     result = createRes;
                     break;
@@ -140,7 +151,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     const created: BaseDoc[] = [];
                     for (const item of arr) {
                         if (isRecord(item)) {
-                            const res = await repo.create(item as any);
+                            const res = await repo.create(item as unknown as BaseDoc);
                             created.push(res);
                             broker.emit('data.created', { domain, id: res.id, item: res as Record<string, unknown> });
                         }
@@ -150,7 +161,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 }
                 case 'update': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const updateRes = await repo.update(id, params as any);
+                    const updateRes = await repo.update(id, params as unknown as Partial<BaseDoc>);
                     if (updateRes) {
                         broker.emit('data.updated', {
                             domain,
@@ -164,7 +175,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 }
                 case 'replace': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const replaceRes = await repo.replace(id, params as any);
+                    const replaceRes = await repo.replace(id, params as unknown as BaseDoc);
                     if (replaceRes) {
                         broker.emit('data.updated', {
                             domain,
@@ -205,4 +216,44 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             throw error;
         }
     };
+}
+
+async function handleTimeSeries(
+    ctx: IContext<Record<string, unknown>, Record<string, unknown>>,
+    broker: IServiceBroker,
+    db: Database,
+    domain: string,
+    action: string
+): Promise<unknown> {
+    const queryToolReg = MeshToolSchemaRegistry.get(`${domain}.query`);
+    const possibleSchema = queryToolReg?.returns;
+
+    if (!possibleSchema) {
+        broker.logger.warn(`[DatabaseMiddleware] Could not find schema for TS domain ${domain}.`);
+        return undefined;
+    }
+
+    // output of query is z.array(outputSchema)
+    const outputSchema = (possibleSchema as z.ZodArray<z.ZodType<TSPoint>>).element;
+    const repo = db.tsRepo(outputSchema, domain);
+    const params = ctx.params;
+
+    try {
+        switch (action) {
+            case 'insert':
+                const points = Array.isArray(params) ? params : [params];
+                return await repo.insert(points as unknown as Partial<TSPoint>[]);
+            case 'query':
+                return await repo.query(params as unknown as { from?: Date; to?: Date; tags?: Record<string, string>; limit?: number });
+            case 'aggregate':
+                return await repo.aggregate(params as unknown as { from?: Date; to?: Date; tags?: Record<string, string>; interval: string; aggregates: Record<string, 'min' | 'max' | 'avg' | 'sum' | 'count'> });
+            case 'latest':
+                return await repo.latest(params.tags as Record<string, string> | undefined);
+            default:
+                throw new Error(`Unknown TS action: ${action}`);
+        }
+    } catch (error) {
+        broker.logger.error(`[DatabaseMiddleware] TS error in ${domain}.${action}: ${error}`);
+        throw error;
+    }
 }

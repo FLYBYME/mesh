@@ -53,6 +53,8 @@ export interface ToolContract<
     readonly destructive?: boolean;
     /** Whether this tool is a CRUD operation */
     readonly isCrud?: boolean;
+    /** Whether this tool is a Time Series operation */
+    readonly isTimeSeries?: boolean;
     /** Optional event flag: true to dispatch default domain.action, or string to override action name */
     readonly event?: boolean | string;
     /** Optional custom RPC timeout in milliseconds */

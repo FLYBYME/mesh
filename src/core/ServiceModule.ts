@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolContract } from '../interfaces/IToolContract.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
+import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import type { IServiceContext, ServiceActionHandler } from '../interfaces/IServiceContext.js';
 import type { EventRegistry } from '../interfaces/IEventContract.js';
 
@@ -84,6 +85,23 @@ export abstract class ServiceModule implements IServiceModule {
         }
     }
 
+    /**
+     * mountTimeSeries: Mounts standard time-series routing for a domain.
+     * TS actions are intercepted by the engine's database layer.
+     */
+    protected mountTimeSeries(contracts: AnyTimeSeriesContracts): void {
+        const keys = ['insert', 'query', 'aggregate', 'latest'] as const;
+        for (const key of keys) {
+            const contract = contracts[key];
+            if (contract && typeof contract === 'object' && 'domain' in contract && 'action' in contract) {
+                const tool = contract as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
+                this.mountTool(tool, async () => {
+                    throw new Error(`Engine Error: Time Series action "${tool.action}" for domain "${tool.domain}" was not intercepted.`);
+                });
+            }
+        }
+    }
+
     // ─── CRUD Hooks ──────────────────────────────────────────────────────────
 
     /**
@@ -133,8 +151,8 @@ export abstract class ServiceModule implements IServiceModule {
         return !!entry?.contract.isCrud;
     }
 
-    public getEventHandlers(): Map<keyof EventRegistry, (payload: any, ctx: IServiceContext) => void | Promise<void>> {
-        return this.eventHandlerMap as Map<keyof EventRegistry, (payload: any, ctx: IServiceContext) => void | Promise<void>>;
+    public getEventHandlers(): Map<keyof EventRegistry, (payload: unknown, ctx: IServiceContext) => void | Promise<void>> {
+        return this.eventHandlerMap as unknown as Map<keyof EventRegistry, (payload: unknown, ctx: IServiceContext) => void | Promise<void>>;
     }
 
     // ─── CRUD Hook Execution ─────────────────────────────────────────────────

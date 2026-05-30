@@ -15,5 +15,6 @@ export * from './IServiceContext.js';
 export * from './IServiceModule.js';
 export * from './IServiceRegistry.js';
 export * from './ITimer.js';
+export * from './ITimeSeriesContract.js';
 export * from './IToolContract.js';
 export * from './ITransport.js';

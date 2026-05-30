@@ -19,7 +19,30 @@ export class DomainRepository<T extends { id: string }> {
      */
     public async find(options: FindOptions<T> = {}): Promise<T[]> {
         const query = this.mapQuery(options.query || {});
-        const cursor = this.collection.find(query);
+
+        const projection: Record<string, 1> = {};
+        if (options.fields) {
+            let fieldsList: string[] = [];
+            if (typeof options.fields === 'string') {
+                fieldsList = options.fields.split(/[,\s]+/).map(f => f.trim()).filter(Boolean);
+            } else if (Array.isArray(options.fields)) {
+                fieldsList = options.fields;
+            }
+            if (fieldsList.length > 0) {
+                for (const field of fieldsList) {
+                    if (field === 'id') {
+                        projection['_id'] = 1;
+                    } else {
+                        projection[field] = 1;
+                    }
+                }
+                projection['_id'] = 1;
+            }
+        }
+
+        const cursor = Object.keys(projection).length > 0
+            ? this.collection.find(query, { projection })
+            : this.collection.find(query);
 
         if (options.offset) cursor.skip(options.offset);
         if (options.limit) cursor.limit(options.limit);
@@ -29,7 +52,8 @@ export class DomainRepository<T extends { id: string }> {
         }
 
         const docs = await cursor.toArray();
-        return docs.map(doc => this.mapOutbound(doc));
+        const hasFields = Object.keys(projection).length > 0;
+        return docs.map(doc => this.mapOutbound(doc, hasFields));
     }
 
     /**
@@ -64,17 +88,42 @@ export class DomainRepository<T extends { id: string }> {
      */
     public async findOne(
         query: StrictFilterQuery<T>,
-        options: { sort?: string | string[] | Partial<Record<keyof T, 1 | -1>>; offset?: number } = {}
+        options: { sort?: string | string[] | Partial<Record<keyof T, 1 | -1>>; offset?: number; fields?: string | string[] } = {}
     ): Promise<T | undefined> {
         const mapped = this.mapQuery(query);
-        const cursor = this.collection.find(mapped);
+
+        const projection: Record<string, 1> = {};
+        if (options.fields) {
+            let fieldsList: string[] = [];
+            if (typeof options.fields === 'string') {
+                fieldsList = options.fields.split(/[,\s]+/).map(f => f.trim()).filter(Boolean);
+            } else if (Array.isArray(options.fields)) {
+                fieldsList = options.fields;
+            }
+            if (fieldsList.length > 0) {
+                for (const field of fieldsList) {
+                    if (field === 'id') {
+                        projection['_id'] = 1;
+                    } else {
+                        projection[field] = 1;
+                    }
+                }
+                projection['_id'] = 1;
+            }
+        }
+
+        const cursor = Object.keys(projection).length > 0
+            ? this.collection.find(mapped, { projection })
+            : this.collection.find(mapped);
+
         if (options.offset) cursor.skip(options.offset);
         if (options.sort) {
             cursor.sort(this.parseSort(options.sort));
         }
         cursor.limit(1);
         const docs = await cursor.toArray();
-        return docs[0] ? this.mapOutbound(docs[0]) : undefined;
+        const hasFields = Object.keys(projection).length > 0;
+        return docs[0] ? this.mapOutbound(docs[0], hasFields) : undefined;
     }
 
     private parseSort(sort: string | string[] | Partial<Record<string, 1 | -1>>): Sort {
@@ -220,12 +269,16 @@ export class DomainRepository<T extends { id: string }> {
         throw new Error('No valid ID found in resolve params');
     }
 
-    private mapOutbound(doc: Document): T {
+    private mapOutbound(doc: Document, hasFields = false): T {
         const { _id, ...rest } = doc;
         const mapped = {
-            id: (_id as ObjectId).toString(),
+            id: _id ? (_id as ObjectId).toString() : undefined,
             ...rest
         };
+
+        if (hasFields) {
+            return mapped as unknown as T;
+        }
 
         return this.schema.parse(mapped);
     }

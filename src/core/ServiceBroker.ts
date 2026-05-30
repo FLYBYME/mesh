@@ -28,6 +28,7 @@ export const MeshToolSchemaRegistry: Map<string, {
     mutates?: boolean,
     timeout?: number,
     isCrud?: boolean,
+    isTimeSeries?: boolean,
     domain?: string
 }> = new Map();
 
@@ -203,7 +204,9 @@ export class ServiceBroker implements IServiceBroker {
                 returns: contract.outputSchema as z.ZodTypeAny,
                 mutates: contract.destructive,
                 isCrud: contract.isCrud,
-                domain: contract.domain
+                isTimeSeries: contract.isTimeSeries,
+                domain: contract.domain,
+                timeout: contract.timeout
             });
 
             this.localTools.set(toolKeyStr, {
@@ -248,8 +251,19 @@ export class ServiceBroker implements IServiceBroker {
                         broker: this,
                         correlationId: packet?.id || nanoid(),
                         nodeID: this.nodeID,
-                        call: async (a: any, p: any, o?: any) => this.call(a, p, o),
-                        emit: (e: any, p: any, o?: any) => this.emit(e, p, o),
+                        call: async <K extends keyof IServiceToolRegistry>(
+                            tool: K,
+                            params: IServiceToolRegistry[K]['params'],
+                            options?: { nodeID?: string; timeout?: number }
+                        ): Promise<IServiceToolRegistry[K]['returns']> => {
+                            const result = await this.call(tool, params, options);
+                            return result as IServiceToolRegistry[K]['returns'];
+                        },
+                        emit: <K extends keyof EventRegistry>(
+                            event: K,
+                            payload: EventRegistry[K],
+                            options?: { skipNetwork?: boolean }
+                        ) => this.emit(event, payload, options),
                         logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
@@ -350,9 +364,10 @@ export class ServiceBroker implements IServiceBroker {
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             timer = setTimeout(() => {
+                console.log(ctx, schema, timeout, timeoutMs)
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
             }, timeoutMs);
         });
@@ -360,6 +375,10 @@ export class ServiceBroker implements IServiceBroker {
         try {
             const result = await Promise.race([resultPromise, timeoutPromise]);
             if (schema?.returns) {
+                const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
+                if (isCrudProjection) {
+                    return result;
+                }
                 return (schema.returns as z.ZodTypeAny).parse(result);
             }
             return result;
@@ -386,11 +405,12 @@ export class ServiceBroker implements IServiceBroker {
             parentId: meta.parentId as string,
         };
 
-        const timeoutMs = (ctx.meta?.timeout as number) || 10000;
+        const schema = MeshToolSchemaRegistry.get(packet.topic);
+        const timeoutMs = (ctx.meta?.timeout as number) || schema?.timeout || 10000;
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             timer = setTimeout(() => {
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
@@ -399,8 +419,11 @@ export class ServiceBroker implements IServiceBroker {
 
         try {
             const result = await Promise.race([resultPromise, timeoutPromise]);
-            const schema = MeshToolSchemaRegistry.get(packet.topic);
             if (schema?.returns) {
+                const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
+                if (isCrudProjection) {
+                    return result;
+                }
                 return (schema.returns as z.ZodTypeAny).parse(result);
             }
             return result;
@@ -424,13 +447,13 @@ export class ServiceBroker implements IServiceBroker {
                             });
                             throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`);
                         }
-                        
+
                         let parsedParams = ctx.params;
                         const schema = MeshToolSchemaRegistry.get(ctx.toolName);
                         if (schema?.params) {
                             parsedParams = schema.params.parse(ctx.params);
                         }
-                        
+
                         return await tool.handler({ ...ctx, params: parsedParams } as IContext<Record<string, unknown>, Record<string, unknown>>);
                     } else {
                         return await this.executeRemote(ctx.targetNodeID!, ctx.toolName, ctx.params, ctx.meta as Record<string, unknown>);
@@ -496,7 +519,7 @@ export class ServiceBroker implements IServiceBroker {
             this.network.send(nodeID, toolName, params, {
                 id: requestId,
                 type: 'REQUEST',
-                meta: { ...meta, ...tracingMeta, correlationID: requestId },
+                meta: { ...meta, ...tracingMeta, timeout: timeoutMs, correlationID: requestId },
                 senderNodeID: this.nodeID,
                 topic: toolName
             }).catch(err => {

@@ -119,4 +119,22 @@ describe('RPC Timeouts and Multi-Hop Timeouts', () => {
         const result = await broker1.call('timeout.slow', { delay: 10 }, { timeout: 500 });
         expect(result).toEqual({ success: true });
     });
+
+    it('should respect the contract-defined timeout on direct RPC call', async () => {
+        const broker3 = app3.getProvider<IServiceBroker>('broker');
+        
+        await expect(
+            // Delay 100ms, contract has timeout 50ms. No options.timeout passed.
+            broker3.call('timeout.slow', { delay: 100 })
+        ).rejects.toThrow(/Timeout/);
+    });
+
+    it('should respect the contract-defined timeout on multi-hop RPC call', async () => {
+        const broker1 = app1.getProvider<IServiceBroker>('broker');
+        
+        await expect(
+            // Delay 150ms, contract has timeout 50ms. No options.timeout passed.
+            broker1.call('timeout.slow', { delay: 150 })
+        ).rejects.toThrow(/Timeout/);
+    });
 });
