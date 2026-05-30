@@ -5,6 +5,10 @@ import { createTestApp, destroyTestApp, dropTestDatabase } from '../testing/Test
 import { IServiceBroker } from '../interfaces/IServiceBroker.js';
 import { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
 import { IMeshApp } from '../interfaces/IMeshApp.js';
+import dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env'), quiet: true } as any);
 
 interface TelemetryData {
     cpu: number;
