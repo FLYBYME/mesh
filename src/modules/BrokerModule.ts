@@ -15,13 +15,13 @@ export class BrokerModule implements IMeshModule {
         this.broker = new ServiceBroker(app.nodeID, this.logger);
 
         // 1. Link Registry and Network if available
-        const registry = app.getProvider<IServiceRegistry>('registry');
-        if (registry) {
+        if (app.hasProvider('registry')) {
+            const registry = app.getProvider<IServiceRegistry>('registry');
             this.broker.setRegistry(registry);
         }
 
-        const network = app.getProvider<IMeshNetwork>('network');
-        if (network) {
+        if (app.hasProvider('network')) {
+            const network = app.getProvider<IMeshNetwork>('network');
             this.broker.setNetwork(network);
         }
 

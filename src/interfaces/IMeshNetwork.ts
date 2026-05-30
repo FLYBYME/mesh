@@ -125,6 +125,7 @@ export interface ToolInfo {
     roles?: string[];
     matchAny?: boolean;
     metadata?: Record<string, unknown>;
+    timeout?: number;
 }
 
 export interface EventInfo {

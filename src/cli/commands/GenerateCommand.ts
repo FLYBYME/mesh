@@ -46,7 +46,7 @@ export class GenerateCommand extends BaseCommand {
             throw new Error(`Directory not found: ${scanDir}`);
         }
 
-        console.log(`--- Generating Mesh Artifacts from ${scanDir} ---`);
+        this.logger.info(`--- Generating Mesh Artifacts from ${scanDir} ---`);
         const start = Date.now();
 
         if (!fs.existsSync(this.artifactRoot)) {
@@ -69,10 +69,10 @@ export class GenerateCommand extends BaseCommand {
     private async bundleBrowser(): Promise<void> {
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
         if (pkg.name !== 'mesh') return;
-        console.log('Bundling Browser Version with esbuild...');
+        this.logger.info('Bundling Browser Version with esbuild...');
         const browserEntry = path.resolve('./src/browser.ts');
         if (!fs.existsSync(browserEntry)) {
-            console.log('Skipping browser bundle: src/browser.ts not found.');
+            this.logger.info('Skipping browser bundle: src/browser.ts not found.');
             return;
         }
 
@@ -96,15 +96,15 @@ export class GenerateCommand extends BaseCommand {
                     'direct-eval': 'silent'
                 }
             });
-            console.log(`Browser bundle written to dist/mesh.browser.js`);
+            this.logger.info(`Browser bundle written to dist/mesh.browser.js`);
         } catch (e) {
-            console.error('Failed to bundle browser version:', e);
+            this.logger.error('Failed to bundle browser version:', e);
             throw e;
         }
     }
 
     private async generateToolRegistry(discovery: ContractDiscovery[], files: Record<string, string[]>): Promise<void> {
-        console.log('Generating IServiceToolRegistry augmentation...');
+        this.logger.info('Generating IServiceToolRegistry augmentation...');
         const filePath = path.join(this.artifactRoot, 'api.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
@@ -195,7 +195,7 @@ export class GenerateCommand extends BaseCommand {
     private async generateCLI(discovery: ContractDiscovery[], files: Record<string, string[]>): Promise<void> {
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
         const isExternal = pkg.name !== 'mesh';
-        console.log('Generating CLI Command Tree...');
+        this.logger.info('Generating CLI Command Tree...');
         const outDir = path.join(this.artifactRoot, 'cli');
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
         const filePath = path.join(outDir, 'ToolCommands.ts');
@@ -248,9 +248,9 @@ export class GenerateCommand extends BaseCommand {
         code += `        await new Promise(r => setTimeout(r, 1000)); // basic wait for registry sync\n`;
         code += `    }\n\n`;
         code += `    try {\n`;
-        code += `        console.log(C.dim + \`Executing \${toolName}...\` + C.reset);\n`;
-        code += `        const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any);\n`;
-        code += `        console.log(contract.print(res));\n`;
+        code += `        app.logger.info(C.dim + \`Executing \${toolName}...\` + C.reset);\n`;
+        code += `        const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any, { timeout: 300000 });\n`;
+        code += `        app.logger.info(contract.print(res));\n`;
         code += `    } finally {\n`;
         code += `        await app.stop();\n`;
         code += `    }\n`;
@@ -446,3 +446,4 @@ export class GenerateCommand extends BaseCommand {
         return map;
     }
 }
+

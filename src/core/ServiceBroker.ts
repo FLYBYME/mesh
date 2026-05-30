@@ -449,12 +449,17 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         const schema = MeshToolSchemaRegistry.get(toolName);
-        const timeoutMs = (meta.timeout as number) || schema?.timeout || 10000;
+        let remoteTimeout: number | undefined;
+        if (!schema && this.registry) {
+            const endpoint = this.registry.getNextToolEndpoint(toolName);
+            if (endpoint?.tool?.timeout) remoteTimeout = endpoint.tool.timeout as number;
+        }
+        const timeoutMs = (meta.timeout as number) || schema?.timeout || remoteTimeout || 10000;
 
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 this.pendingRequests.delete(requestId);
-                console.log(this.registry.getNodes())
+                this.logger.info('Nodes available at timeout:', this.registry.getNodes());
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
             }, timeoutMs) as unknown as TimerHandle;
             this.pendingRequests.set(requestId, { resolve, reject, timeout });

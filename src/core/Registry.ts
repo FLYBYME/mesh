@@ -129,7 +129,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.off('changed', check);
-                console.log(this);
+                this.logger.info('Registry state on timeout:', this);
                 reject(new Error(`Timeout: Tool "${toolName}" not found after ${timeoutMs}ms`));
             }, timeoutMs);
             if (timer.unref) timer.unref();
@@ -351,7 +351,8 @@ export class Registry extends EventEmitter implements IServiceRegistry {
                             destructive: contract.destructive
                         },
                         params: zodToJsonSchema(contract.inputSchema) as Record<string, unknown>,
-                        returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>
+                        returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>,
+                        timeout: contract.timeout
                     };
                     return acc;
                 }, {} as Record<string, RegistryToolInfo>)

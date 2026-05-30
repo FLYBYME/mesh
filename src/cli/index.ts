@@ -4,6 +4,14 @@ import { Command } from 'commander';
 import { CommandRegistry } from './core/CommandRegistry.js';
 import { GenerateCommand } from './commands/GenerateCommand.js';
 import { StartCommand } from './commands/StartCommand.js';
+import { Logger } from '../utils/Logger.js';
+import { LogLevel } from '../interfaces/ILogger.js';
+
+const logger = new Logger(LogLevel.INFO, {}, (level, _fm, originalMsg, ...args) => {
+    if (level === LogLevel.ERROR) console.error(originalMsg, ...args);
+    else if (level === LogLevel.WARN) console.warn(originalMsg, ...args);
+    else console.log(originalMsg, ...args);
+});
 
 // Setup CLI Program
 const program = new Command();
@@ -130,11 +138,11 @@ try {
     }).catch((err) => {
         // Fallback if generated files don't exist yet
         if (err.code !== 'ERR_MODULE_NOT_FOUND') {
-            console.error("Failed to load generated commands:", err);
+            logger.error("Failed to load generated commands:", err);
         }
         program.parse(cleanArgs);
     });
 } catch (err) {
-    console.error("Unexpected error loading commands:", err);
+    logger.error("Unexpected error loading commands:", err);
     program.parse(cleanArgs);
 }

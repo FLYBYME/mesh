@@ -55,6 +55,8 @@ export interface ToolContract<
     readonly isCrud?: boolean;
     /** Optional event flag: true to dispatch default domain.action, or string to override action name */
     readonly event?: boolean | string;
+    /** Optional custom RPC timeout in milliseconds */
+    readonly timeout?: number;
     /** Formats the tool output as a human-readable string */
     readonly print: (output: TPrint) => string;
 }

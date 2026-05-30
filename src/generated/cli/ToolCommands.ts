@@ -36,9 +36,9 @@ async function executeCommand(toolName: string, args: Record<string, unknown>, c
     }
 
     try {
-        console.log(C.dim + `Executing ${toolName}...` + C.reset);
-        const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any);
-        console.log(contract.print(res));
+        app.logger.info(C.dim + `Executing ${toolName}...` + C.reset);
+        const res = await app.call(toolName as any, ZodToCliMapper.parseOptions(args, contract.inputSchema) as any, { timeout: 300000 });
+        app.logger.info(contract.print(res));
     } finally {
         await app.stop();
     }

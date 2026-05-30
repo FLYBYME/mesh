@@ -1,4 +1,6 @@
 import { C } from './Utils.js';
+import { Logger } from '../../utils/Logger.js';
+import { LogLevel } from '../../interfaces/ILogger.js';
 
 interface Message {
     role: string;
@@ -12,6 +14,12 @@ interface Message {
 }
 
 export class PrettyPrinter {
+    private static logger = new Logger(LogLevel.INFO, {}, (level, _fm, originalMsg, ...args) => {
+        if (level === LogLevel.ERROR) console.error(originalMsg, ...args);
+        else if (level === LogLevel.WARN) console.warn(originalMsg, ...args);
+        else console.log(originalMsg, ...args);
+    });
+
     public static printResponse(data: unknown): void {
         if (!data) return;
 
@@ -31,8 +39,8 @@ export class PrettyPrinter {
                 const meta = { ...obj };
                 delete meta[messageKey];
                 if (Object.keys(meta).length > 0) {
-                    console.dir(meta, { depth: null, colors: true });
-                    console.log('\x1b[2m' + '─'.repeat(50) + '\x1b[0m');
+                    this.logger.info('', meta);
+                    this.logger.info('\x1b[2m' + '─'.repeat(50) + '\x1b[0m');
                 }
                 this.printMessages(obj[messageKey] as Message[]);
                 return;
@@ -40,7 +48,7 @@ export class PrettyPrinter {
         }
 
         // Default fallback
-        console.dir(data, { depth: null, colors: true });
+        this.logger.info('', data);
     }
 
     private static isMessage(obj: unknown): obj is Message {
@@ -53,19 +61,19 @@ export class PrettyPrinter {
             const roleName = msg.role.toUpperCase().padEnd(10);
             const timestamp = msg.createdAt ? `\x1b[2m(${new Date(msg.createdAt).toLocaleString()})\x1b[0m` : '';
 
-            console.log(`${roleColor}${C.bold}[${roleName}]${C.reset} ${timestamp}`);
+            this.logger.info(`${roleColor}${C.bold}[${roleName}]${C.reset} ${timestamp}`);
 
             if (msg.content) {
-                console.log(msg.content.trim());
+                this.logger.info(msg.content.trim());
             }
 
             if (msg.toolCalls && msg.toolCalls.length > 0) {
                 for (const tc of msg.toolCalls) {
-                    console.log(`${C.yellow}🛠  ${tc.name}${C.reset}(${JSON.stringify(tc.arguments)})`);
+                    this.logger.info(`${C.yellow}🛠  ${tc.name}${C.reset}(${JSON.stringify(tc.arguments)})`);
                 }
             }
             
-            console.log(''); // Newline between messages
+            this.logger.info(''); // Newline between messages
         }
     }
 

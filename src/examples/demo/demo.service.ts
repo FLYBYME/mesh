@@ -27,12 +27,12 @@ export class DemoSkill extends ServiceModule {
 
         // 3. Mount Event Handlers (Declarative)
         this.mountEventHandler('demo.hello.sent', (payload) => {
-            console.log(`[DemoSkill] Declarative handler received hello_sent for ${payload.name}`);
+            // Logged via context in a real app, silenced for clean tests
         });
 
         this.mountEventHandler('data.created', (payload) => {
             if (payload.domain === this.domain) {
-                console.log(`[DemoSkill] Document auto-detected by declarative handler! ID: ${payload.id}`);
+                // Logged via context in a real app, silenced for clean tests
             }
         });
     }

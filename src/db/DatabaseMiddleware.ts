@@ -3,6 +3,7 @@ import { IContext } from '../interfaces/IContext.js';
 import { IServiceBroker } from '../interfaces/IServiceBroker.js';
 import { MeshToolSchemaRegistry } from '../core/ServiceBroker.js';
 import { Database } from './Database.js';
+import { StrictFilterQuery } from './types.js';
 import { z } from 'zod';
 
 export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): IMiddleware {
@@ -54,7 +55,13 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     result = await repo.find(params);
                     break;
                 case 'find_one':
-                    result = await repo.findOne(params.query as any, { sort: params.sort as any });
+                    result = await repo.findOne(
+                        (params.query ?? {}) as StrictFilterQuery<{ id: string }>,
+                        {
+                            sort: params.sort as Partial<Record<string, 1 | -1>> | undefined,
+                            offset: typeof params.offset === 'number' ? params.offset : undefined
+                        }
+                    );
                     break;
                 case 'count':
                     result = await repo.count(params.query as any);

@@ -59,12 +59,13 @@ export class DomainRepository<T extends { id: string }> {
      */
     public async findOne(
         query: StrictFilterQuery<T>,
-        options: { sort?: Record<string, 1 | -1> } = {}
+        options: { sort?: Partial<Record<keyof T, 1 | -1>>; offset?: number } = {}
     ): Promise<T | undefined> {
         const mapped = this.mapQuery(query);
         const cursor = this.collection.find(mapped as Filter<Document>);
+        if (options.offset) cursor.skip(options.offset);
         if (options.sort) {
-            cursor.sort(options.sort);
+            cursor.sort(options.sort as Record<string, 1 | -1>);
         }
         cursor.limit(1);
         const docs = await cursor.toArray();
@@ -110,11 +111,8 @@ export class DomainRepository<T extends { id: string }> {
 
         docToInsert._id = new ObjectId(id as string);
 
-        const result = await this.collection.insertOne(docToInsert);
-        const doc = await this.collection.findOne({ _id: result.insertedId } as Filter<Document>);
-        if (!doc) throw new Error(`Persistence Error: Failed to retrieve created document in ${this.domain}`);
-
-        return this.mapOutbound(doc);
+        await this.collection.insertOne(docToInsert);
+        return this.mapOutbound(docToInsert as WithId<Document>);
     }
 
     public async update(
@@ -146,16 +144,20 @@ export class DomainRepository<T extends { id: string }> {
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
 
+        const existing = await this.collection.findOne({ _id: new ObjectId(id) } as Filter<Document>);
+        if (!existing) return undefined;
+
         const parsed = this.schema.parse({
             ...data,
             id,
-            createdAt: new Date(),
+            createdAt: existing.createdAt || new Date(),
             updatedAt: new Date()
         });
 
         const { id: _id, createdAt, updatedAt, ...rest } = parsed as Record<string, unknown>;
         const updateDoc = {
             ...rest,
+            createdAt,
             updatedAt: new Date()
         } as Record<string, unknown>;
 

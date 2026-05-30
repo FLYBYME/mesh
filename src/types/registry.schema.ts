@@ -15,6 +15,7 @@ export const ToolInfoSchema = z.object({
     matchAny: z.boolean().optional(),
     highSecurity: z.boolean().optional(),
     metadata: z.record(z.unknown()).optional(),
+    timeout: z.number().optional(),
 });
 
 export type ToolInfo = z.infer<typeof ToolInfoSchema>;
