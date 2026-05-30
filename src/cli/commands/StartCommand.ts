@@ -17,7 +17,7 @@ interface StartOptions {
     port?: number | string;
     nodeId?: string;
     bootstrap?: string;
-    services?: string;
+    services?: string[];
     db?: string;
     logLevel?: string;
 }
@@ -34,14 +34,16 @@ export class StartCommand extends BaseCommand {
         program
             .command(this.name)
             .description(this.description)
-            .option('-p, --port <number>', 'Port for the WebSocket server', '5005')
+            .option('-p, --port <number>', 'Port for the WebSocket server')
             .option('-i, --node-id <id>', 'Unique Node ID')
             .option('-b, --bootstrap <nodes>', 'Comma-separated bootstrap URLs')
-            .option('-s, --services <dir>', 'Directory to scan for services')
+            .option('-s, --services <dirs>', 'Directory list to scan for services (can be comma-separated or specified multiple times)', (val, memo: string[]) => {
+                return memo.concat(val.split(',').map(s => s.trim()));
+            }, [])
             .option('-d, --db <uri>', 'MongoDB connection URI')
-            .option('-l, --log-level <level>', 'Logging level (debug, info, warn, error)', 'info')
-            .action(async (options: StartOptions) => {
-                await this.execute(options);
+            .option('-l, --log-level <level>', 'Logging level (debug, info, warn, error)')
+            .action(async (options: StartOptions, cmd: Command) => {
+                await this.execute({ ...cmd.optsWithGlobals(), ...options });
             });
     }
 
@@ -95,18 +97,18 @@ export class StartCommand extends BaseCommand {
             app.use(new DatabaseModule(dbConfig));
             app.use(new BrokerModule());
 
-            // If services directory is provided, scan and load them dynamically
-            let servicesDir = options.services;
-            if (!servicesDir) {
+            // If services directories are provided, scan and load them dynamically
+            let servicesDirs: string[] = options.services || [];
+            if (servicesDirs.length === 0) {
                 if (fs.existsSync(path.resolve('src/addons'))) {
-                    servicesDir = 'src/addons';
+                    servicesDirs = ['src/addons'];
                 } else if (fs.existsSync(path.resolve('src/services'))) {
-                    servicesDir = 'src/services';
+                    servicesDirs = ['src/services'];
                 }
             }
 
-            if (servicesDir) {
-                await this.loadServicesFromDirectory(app, servicesDir);
+            for (const dir of servicesDirs) {
+                await this.loadServicesFromDirectory(app, dir);
             }
 
             // Start the application
