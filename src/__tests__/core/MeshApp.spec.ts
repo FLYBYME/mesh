@@ -84,8 +84,8 @@ describe('MeshApp', () => {
             await app.start();
             await app.registerModule(new DemoSkill());
 
-            const result = await app.call('demo.hello', { name: 'AppTest' }) as Record<string, unknown>;
-            expect(result.message).toBe('Hello, AppTest! Event dispatched!');
+            const result = await app.call('demo.hello', { name: 'AppTest' });
+            expect(result.message).toBe('Hello, AppTest! Event dispatched and metric recorded!');
         });
     });
 

@@ -39,13 +39,13 @@ describe('ServiceModule', () => {
             const ctx = {
                 correlationId: 'test-123',
                 nodeID: 'test-node',
-                call: async () => {},
-                emit: () => {},
-                logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
+                call: async () => { },
+                emit: () => { },
+                logger: { info: () => { }, warn: () => { }, error: () => { }, debug: () => { } }
             } as unknown as IServiceContext;
 
             const result = await demoSkill.execute('demo', 'hello', { name: 'Execute' }, ctx);
-            expect((result as Record<string, unknown>).message).toBe('Hello, Execute! Event dispatched!');
+            expect((result as Record<string, unknown>).message).toBe('Hello, Execute! Event dispatched and metric recorded!');
         });
 
         it('should throw for unknown action', async () => {

@@ -23,12 +23,12 @@ describe('ServiceBroker', () => {
 
     describe('call() — local tools', () => {
         it('should call demo.hello and return a greeting', async () => {
-            const result = await broker.call('demo.hello', { name: 'World' }) as Record<string, unknown>;
-            expect(result.message).toBe('Hello, World! Event dispatched!');
+            const result = await broker.call('demo.hello', { name: 'World' });
+            expect(result.message).toBe('Hello, World! Event dispatched and metric recorded!');
         });
 
         it('should call demo.status and return health info', async () => {
-            const result = await broker.call('demo.status', { name: 'Test' }) as Record<string, unknown>;
+            const result = await broker.call('demo.status', { name: 'Test' });
             expect(result.message).toContain('Test');
             expect(result.message).toContain('Healthy');
         });

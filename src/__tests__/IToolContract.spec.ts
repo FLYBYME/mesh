@@ -59,7 +59,7 @@ describe('IToolContract', () => {
                 print: defaultPrint
             };
 
-            expect(() => defineContract(spec as any)).toThrow('defineContract: domain "invalid_domain" must not contain underscores. Use dot notation for key separation.');
+            expect(() => defineContract(spec as any)).toThrow("defineContract: domain \"invalid_domain\" must not contain underscores. Use squashed lowercase (e.g. 'toolcalls') for key separation.");
         });
 
         it('should allow setting a custom timeout in defineContract', () => {
