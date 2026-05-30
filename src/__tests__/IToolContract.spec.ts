@@ -61,6 +61,23 @@ describe('IToolContract', () => {
 
             expect(() => defineContract(spec as any)).toThrow('defineContract: domain "invalid_domain" must not contain underscores. Use dot notation for key separation.');
         });
+
+        it('should allow setting a custom timeout in defineContract', () => {
+            const spec = {
+                domain: 'test',
+                action: 'doit',
+                description: 'test desc',
+                inputSchema: z.object({}),
+                outputSchema: z.object({}),
+                rest: { method: 'GET' as const, path: '/' },
+                destructive: false,
+                timeout: 5000,
+                print: defaultPrint
+            };
+
+            const contract = defineContract(spec);
+            expect(contract.timeout).toBe(5000);
+        });
     });
 
     describe('defaultPrint()', () => {

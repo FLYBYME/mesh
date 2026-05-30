@@ -78,5 +78,14 @@ describe('ICrudContract', () => {
             // essentially it won't *require* them.
             expect(() => createSchema.parse({ name: 'Bob' })).toThrow(); // missing age
         });
+
+        it('should allow custom timeouts via options.timeout', () => {
+            const crud = defineCrud('user', TestBaseSchema, {
+                timeout: { create: 5000 }
+            });
+
+            expect(crud.create.timeout).toBe(5000);
+            expect(crud.find.timeout).toBeUndefined();
+        });
     });
 });

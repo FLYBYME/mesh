@@ -34,7 +34,10 @@ const TEST_DB_NAME = generateTestDbName();
  */
 export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
     const logger = new Logger(LogLevel.WARN);
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const mongoUri = process.env.MONGODB_URI;
+    if (!mongoUri) {
+        throw new Error('[setup.ts] MONGODB_URI environment variable must be configured.');
+    }
     const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
 
     const app = new MeshApp({

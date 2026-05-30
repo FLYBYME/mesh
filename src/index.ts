@@ -18,6 +18,7 @@ export * from './interfaces/ICrudContract.js';
 export * from './interfaces/IEventContract.js';
 export * from './interfaces/IServiceContext.js';
 export * from './interfaces/IServiceModule.js';
+export * from './interfaces/IServiceBroker.js';
 
 // Core Framework
 export * from './core/ServiceModule.js';

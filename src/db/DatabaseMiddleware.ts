@@ -52,7 +52,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
 
         const schema: z.ZodType<BaseDoc> = possibleSchema as z.ZodType<BaseDoc>;
         const repo = db.repo(schema, domain);
-        
+
         let params: Record<string, unknown> = ctx.params;
         let result: unknown;
 
@@ -63,10 +63,18 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             broker,
             correlationId: ctx.correlationID || ctx.id,
             nodeID: broker.nodeID,
-            call: (a: string, p: Record<string, unknown>, o?: { nodeID?: string; timeout?: number }) => 
-                broker.call(a as keyof IServiceToolRegistry, p, o),
-            emit: (e: string, p: Record<string, unknown>, o?: { skipNetwork?: boolean }) => 
-                broker.emit(e as keyof EventRegistry, p, o),
+
+            // NEVER CHANGE THIS EVER. PERIOD.
+            call: <K extends keyof IServiceToolRegistry>(
+                a: K,
+                p: IServiceToolRegistry[K]['params'],
+                o?: { nodeID?: string; timeout?: number }
+            ) => broker.call(a, p, o),
+            emit: <K extends keyof EventRegistry>(
+                e: K,
+                p: EventRegistry[K],
+                o?: { skipNetwork?: boolean }
+            ) => broker.emit(e, p, o),
             logger: broker.logger
         };
 
@@ -107,7 +115,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                         sort = params.sort as FindOptions<BaseDoc>['sort'];
                     }
                     const offset = typeof params.offset === 'number' ? params.offset : undefined;
-                    
+
                     result = await repo.findOne(query, { sort, offset });
                     break;
                 }
@@ -144,11 +152,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     const id = typeof params.id === 'string' ? params.id : '';
                     const updateRes = await repo.update(id, params as any);
                     if (updateRes) {
-                        broker.emit('data.updated', { 
-                            domain, 
-                            id: updateRes.id, 
-                            patch: params as Record<string, unknown>, 
-                            item: updateRes as Record<string, unknown> 
+                        broker.emit('data.updated', {
+                            domain,
+                            id: updateRes.id,
+                            patch: params as Record<string, unknown>,
+                            item: updateRes as Record<string, unknown>
                         });
                     }
                     result = updateRes;
@@ -158,11 +166,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     const id = typeof params.id === 'string' ? params.id : '';
                     const replaceRes = await repo.replace(id, params as any);
                     if (replaceRes) {
-                        broker.emit('data.updated', { 
-                            domain, 
-                            id: replaceRes.id, 
-                            patch: params as Record<string, unknown>, 
-                            item: replaceRes as Record<string, unknown> 
+                        broker.emit('data.updated', {
+                            domain,
+                            id: replaceRes.id,
+                            patch: params as Record<string, unknown>,
+                            item: replaceRes as Record<string, unknown>
                         });
                     }
                     result = replaceRes;

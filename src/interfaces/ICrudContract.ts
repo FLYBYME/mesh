@@ -122,7 +122,8 @@ export function defineCrud<
         relations?: RelationDefinition[];
         actions?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, string>>,
         events?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, string | boolean>>,
-        destructive?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, boolean>>
+        destructive?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, boolean>>,
+        timeout?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, number>>
     } = {}
 ): CrudContracts<
     TBase,
@@ -164,6 +165,12 @@ export function defineCrud<
         find: false, findOne: false, count: false, get: false, resolve: false,
         create: true, createMany: true, update: true, replace: true, delete: true,
         ...options.destructive
+    };
+
+    const timeouts = {
+        find: undefined, findOne: undefined, count: undefined, get: undefined, resolve: undefined,
+        create: undefined, createMany: undefined, update: undefined, replace: undefined, delete: undefined,
+        ...options.timeout
     };
 
     // --- Input Schemas ---
@@ -235,6 +242,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}` },
         destructive: destructive.find, event: eventNames.find,
         isCrud: true,
+        timeout: timeouts.find,
         print: defaultPrint
     });
 
@@ -246,6 +254,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/one` },
         destructive: destructive.findOne, event: eventNames.findOne,
         isCrud: true,
+        timeout: timeouts.findOne,
         print: defaultPrint
     });
 
@@ -257,6 +266,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/count` },
         destructive: destructive.count, event: eventNames.count,
         isCrud: true,
+        timeout: timeouts.count,
         print: defaultPrint
     });
 
@@ -268,6 +278,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/:${idField}` },
         destructive: destructive.get, event: eventNames.get,
         isCrud: true,
+        timeout: timeouts.get,
         print: defaultPrint
     });
 
@@ -279,6 +290,7 @@ export function defineCrud<
         rest: { method: 'POST', path: `/${plural}/resolve` },
         destructive: destructive.resolve, event: eventNames.resolve,
         isCrud: true,
+        timeout: timeouts.resolve,
         print: defaultPrint
     });
 
@@ -290,6 +302,7 @@ export function defineCrud<
         rest: { method: 'POST', path: `/${plural}` },
         destructive: destructive.create, event: eventNames.create || true,
         isCrud: true,
+        timeout: timeouts.create,
         print: defaultPrint
     });
 
@@ -301,6 +314,7 @@ export function defineCrud<
         rest: { method: 'POST', path: `/${plural}/create-many` },
         destructive: destructive.createMany, event: eventNames.createMany || true,
         isCrud: true,
+        timeout: timeouts.createMany,
         print: defaultPrint
     });
 
@@ -312,6 +326,7 @@ export function defineCrud<
         rest: { method: 'PATCH', path: `/${plural}/:${idField}` },
         destructive: destructive.update, event: eventNames.update || true,
         isCrud: true,
+        timeout: timeouts.update,
         print: defaultPrint
     });
 
@@ -323,6 +338,7 @@ export function defineCrud<
         rest: { method: 'PUT', path: `/${plural}/:${idField}` },
         destructive: destructive.replace, event: eventNames.replace || true,
         isCrud: true,
+        timeout: timeouts.replace,
         print: defaultPrint
     });
 
@@ -334,6 +350,7 @@ export function defineCrud<
         rest: { method: 'DELETE', path: `/${plural}/:${idField}` },
         destructive: destructive.delete, event: eventNames.delete || true,
         isCrud: true,
+        timeout: timeouts.delete,
         print: defaultPrint
     });
 

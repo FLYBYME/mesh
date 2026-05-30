@@ -34,7 +34,11 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<{ app
     const nodeID = options.nodeID || 'test-node-1';
     const namespace = options.namespace || 'test';
     const logger = new Logger(options.logLevel ?? LogLevel.WARN);
-    const mongoUri = options.mongoUri || process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const mongoUri = options.mongoUri || process.env.MONGODB_URI;
+    
+    if (!mongoUri) {
+        throw new Error('[TestHelpers] MONGODB_URI environment variable or options.mongoUri must be configured.');
+    }
     
     const dbName = generateTestDbName();
     
@@ -75,7 +79,10 @@ export async function destroyTestApp(app: MeshApp): Promise<void> {
  * Drops an entire test database.
  */
 export async function dropTestDatabase(dbName: string, mongoUri?: string): Promise<void> {
-    const uri = mongoUri || process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const uri = mongoUri || process.env.MONGODB_URI;
+    if (!uri) {
+        throw new Error('[TestHelpers] MONGODB_URI environment variable or mongoUri must be configured.');
+    }
     const client = new MongoClient(uri);
     try {
         await client.connect();
@@ -92,7 +99,10 @@ export async function dropTestDatabase(dbName: string, mongoUri?: string): Promi
  * Clears all documents from a specific collection within a test database.
  */
 export async function dropTestCollection(dbName: string, collectionName: string, mongoUri?: string): Promise<void> {
-    const uri = mongoUri || process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const uri = mongoUri || process.env.MONGODB_URI;
+    if (!uri) {
+        throw new Error('[TestHelpers] MONGODB_URI environment variable or mongoUri must be configured.');
+    }
     const baseUri = uri.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
     const client = new MongoClient(baseUri);
     try {
