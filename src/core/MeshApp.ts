@@ -11,7 +11,7 @@ import type {
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
-import type { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
+import type { IServiceToolRegistry } from '../interfaces/index.js';
 
 /**
  * MeshApp — The "Motherboard" shell that provides DI and lifecycle management.

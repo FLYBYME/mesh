@@ -1,3 +1,6 @@
+import { z } from 'zod';
+export { z };
+
 // Core
 export * from './core/MeshNetwork.js';
 export * from './core/Registry.js';
@@ -34,5 +37,10 @@ export * from './transports/browser/BrowserWebSocketTransport.js';
 // Serializers
 export * from './serializers/BaseSerializer.js';
 export * from './serializers/JSONSerializer.js';
+
+// Modules
+export * from './modules/BrokerModule.js';
+export * from './modules/NetworkModule.js';
+export * from './modules/RegistryModule.js';
 
 // (Note: Database modules, Node.js transports, and CLI generators are explicitly excluded from this bundle)

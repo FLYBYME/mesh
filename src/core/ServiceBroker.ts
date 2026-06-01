@@ -189,8 +189,8 @@ export class ServiceBroker implements IServiceBroker {
         this.logger.info(`[ServiceBroker] Registering module: ${domain} (Node: ${this.nodeID})`);
         this.modules.push(module);
 
-        if ('onInit' in module && typeof (module as Record<string, unknown>).onInit === 'function') {
-            await (module as Record<string, unknown> & { onInit: (broker: IServiceBroker) => Promise<void> }).onInit(this);
+        if (module.onInit) {
+            await module.onInit(this);
         }
 
         const contracts = module.getContracts();
@@ -273,8 +273,8 @@ export class ServiceBroker implements IServiceBroker {
             }
         }
 
-        if (this.isStarted && 'onStart' in module && typeof (module as Record<string, unknown>).onStart === 'function') {
-            await (module as Record<string, unknown> & { onStart: (broker: IServiceBroker) => Promise<void> }).onStart(this);
+        if (this.isStarted && module.onStart) {
+            await module.onStart(this);
         }
     }
 
@@ -538,8 +538,8 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         for (const module of this.modules) {
-            if ('onStart' in module && typeof (module as Record<string, unknown>).onStart === 'function') {
-                await (module as Record<string, unknown> & { onStart: (broker: IServiceBroker) => Promise<void> }).onStart(this);
+            if (module.onStart) {
+                await module.onStart(this);
             }
         }
     }
@@ -548,8 +548,8 @@ export class ServiceBroker implements IServiceBroker {
         this.isStarted = false;
 
         for (const module of this.modules) {
-            if ('onStop' in module && typeof (module as Record<string, unknown>).onStop === 'function') {
-                await (module as Record<string, unknown> & { onStop: (broker: IServiceBroker) => Promise<void> }).onStop(this);
+            if (module.onStop) {
+                await module.onStop(this);
             }
         }
 

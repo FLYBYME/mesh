@@ -54,10 +54,8 @@ export interface IMeshApp extends IMeshNode {
     stop(): Promise<void>;
 
     call<K extends keyof IServiceToolRegistry>(
-        action: K,
-        params: IServiceToolRegistry[K] extends { params: infer P } ? P : Record<string, unknown>,
+        tool: K,
+        params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
-    ): Promise<IServiceToolRegistry[K] extends { returns: infer R } ? R : unknown>;
-
-    call<TResult = unknown>(action: string, params: unknown, options?: { nodeID?: string; timeout?: number }): Promise<TResult>;
+    ): Promise<IServiceToolRegistry[K]['returns']>
 }

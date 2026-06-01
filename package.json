@@ -3,6 +3,13 @@
   "version": "1.0.0",
   "description": "Mesh Network Library",
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts",
+    "./src/*": "./src/*.ts",
+    "./src/interfaces": "./src/interfaces/index.ts",
+    "./src/interfaces/*": "./src/interfaces/*.ts"
+  },
   "type": "module",
   "browser": "./dist/mesh.browser.js",
   "bin": {

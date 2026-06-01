@@ -176,7 +176,7 @@ export interface IServiceNode {
     metadata?: Record<string, unknown>;
 }
 
-export interface IMeshNode {
+export interface IMeshBaseNode {
     nodeID: string;
     namespace: string;
 }
@@ -189,7 +189,7 @@ export interface IMeshOrchestrator {
     handlePeerDisconnect(nodeID: string): Promise<void>;
 }
 
-export interface IMeshNetworkNode extends IMeshNode {
+export interface IMeshNetworkNode extends IMeshBaseNode {
     logger: ILogger;
     registry: IServiceRegistry;
     orchestrator?: IMeshOrchestrator;

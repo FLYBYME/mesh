@@ -7,7 +7,7 @@ export * from './ILogger.js';
 export * from './IMeshApp.js';
 export * from './IMeshMeta.js';
 export * from './IMeshModule.js';
-export { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode } from './IMeshNetwork.js';
+export type { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode } from './IMeshNetwork.js';
 export * from './IMeshStream.js';
 export * from './IProviderToken.js';
 export * from './IServiceBroker.js';

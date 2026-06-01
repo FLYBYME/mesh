@@ -1,3 +1,6 @@
+import { z } from 'zod';
+export { z };
+
 // Core
 export * from './core/MeshNetwork.js';
 export * from './core/Registry.js';
@@ -19,6 +22,7 @@ export * from './interfaces/IEventContract.js';
 export * from './interfaces/IServiceContext.js';
 export * from './interfaces/IServiceModule.js';
 export * from './interfaces/IServiceBroker.js';
+export * from './interfaces/IMeshApp.js';
 
 // Core Framework
 export * from './core/ServiceModule.js';
