@@ -35,9 +35,8 @@ export * from './core/BootOrchestrator.js';
 // Interceptors
 export * from './interceptors/index.js';
 
-// Transports (Base & Node)
+// Transports (Base)
 export * from './transports/BaseTransport.js';
-export * from './transports/node/WSTransport.js';
 
 // Serializers
 export * from './serializers/BaseSerializer.js';

@@ -244,7 +244,8 @@ export class GenerateCommand extends BaseCommand {
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { Command } from 'commander';\n`;
         if (isExternal) {
-            code += `import { MeshApp, ZodToCliMapper, C, RegistryModule, NetworkModule, BrokerModule, WSTransport, JSONSerializer, Logger } from 'mesh';\n`;
+            code += `import { MeshApp, C, RegistryModule, NetworkModule, BrokerModule, JSONSerializer, Logger } from 'mesh';\n`;
+            code += `import { WSTransport, ZodToCliMapper } from 'mesh/node';\n`;
         } else {
             code += `import { MeshApp } from '../../core/MeshApp.js';\n`;
             code += `import { ZodToCliMapper } from '../../cli/core/ZodToCliMapper.js';\n`;
