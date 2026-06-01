@@ -59,7 +59,7 @@ export class GenerateCommand extends BaseCommand {
         await this.generateToolRegistry(discovery, files, options.include || []);
         await this.generateCLI(discovery, files);
         await this.generateEvents(events, files, options.include || []);
-        
+
         await this.bundleBrowser();
 
         console.log('\n--- Generation Complete ---');
@@ -115,7 +115,7 @@ export class GenerateCommand extends BaseCommand {
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
         code += `import type { IServiceToolRegistry } from '${interfaceImport}';\n`;
-        
+
         // --- External Imports ---
         if (includes.length > 0) {
             code += `\n// External Type Includes\n`;
@@ -181,7 +181,7 @@ export class GenerateCommand extends BaseCommand {
                 if (includePath.endsWith('api.ts') || includePath.endsWith('api.js')) {
                     target = includePath.replace(/api\.(ts|js)$/, 'events.$1');
                 }
-                
+
                 if (fs.existsSync(path.resolve(target))) {
                     const absoluteInclude = path.resolve(target);
                     let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
@@ -244,8 +244,8 @@ export class GenerateCommand extends BaseCommand {
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { Command } from 'commander';\n`;
         if (isExternal) {
-            code += `import { MeshApp, C, RegistryModule, NetworkModule, BrokerModule, JSONSerializer, Logger } from 'mesh';\n`;
-            code += `import { WSTransport, ZodToCliMapper } from 'mesh/node';\n`;
+            code += `import { MeshApp, C, RegistryModule, NetworkModule, BrokerModule, JSONSerializer, Logger } from '@flybyme/mesh';\n`;
+            code += `import { WSTransport, ZodToCliMapper } from '@flybyme/mesh/node';\n`;
         } else {
             code += `import { MeshApp } from '../../core/MeshApp.js';\n`;
             code += `import { ZodToCliMapper } from '../../cli/core/ZodToCliMapper.js';\n`;
@@ -376,7 +376,7 @@ export class GenerateCommand extends BaseCommand {
                 if (domainMatch && actionMatch) {
                     const domain = domainMatch[1]!;
                     const action = actionMatch[1]!;
-                    
+
                     if (domain.includes('_')) throw new Error(`Domain "${domain}" cannot contain underscores (File: ${file})`);
 
                     if (!domainFiles[domain]) domainFiles[domain] = [];
@@ -399,7 +399,7 @@ export class GenerateCommand extends BaseCommand {
             for (const match of crudMatches) {
                 const exportName = match[1]!;
                 const domain = match[2]!;
-                
+
                 if (domain.includes('_')) throw new Error(`Domain "${domain}" cannot contain underscores (File: ${file})`);
 
                 const actions = {
@@ -433,7 +433,7 @@ export class GenerateCommand extends BaseCommand {
             for (const match of tsMatches) {
                 const exportName = match[1]!;
                 const domain = match[2]!;
-                
+
                 if (domain.includes('_')) throw new Error(`Domain "${domain}" cannot contain underscores (File: ${file})`);
 
                 const actions = {
@@ -465,7 +465,7 @@ export class GenerateCommand extends BaseCommand {
                 const exportName = match[1]!;
                 const eventName = match[2]!;
                 const schemaRef = match[3]!;
-                
+
                 // Add this file to a 'global_events' domain pseudo-bucket so we get an alias for it
                 if (!domainFiles['global_events']) domainFiles['global_events'] = [];
                 if (!domainFiles['global_events'].includes(file)) domainFiles['global_events'].push(file);
