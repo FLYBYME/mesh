@@ -1,26 +1,24 @@
 // GENERATED FILE - DO NOT EDIT
 import { z } from 'zod';
 import type { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
-import * as Contract_0 from '../../../mesh-ui/src/services/uiservice/ui.contract.js';
+import * as Contract_0 from '../examples/demo/demo.contract.js';
 
 declare module '../interfaces/IServiceContext.js' {
     interface IServiceToolRegistry {
-        'ui.get_status': { params: z.input<typeof Contract_0.uiStatusContract['inputSchema']>, returns: z.infer<typeof Contract_0.uiStatusContract['outputSchema']> };
-        'ui.build': { params: z.input<typeof Contract_0.uiBuildContract['inputSchema']>, returns: z.infer<typeof Contract_0.uiBuildContract['outputSchema']> };
-        'uimanifest.create': { params: z.input<typeof Contract_0.uiManifestCrud['create']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['create']['outputSchema']> };
-        'uimanifest.find': { params: z.input<typeof Contract_0.uiManifestCrud['find']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['find']['outputSchema']> };
-        'uimanifest.find_one': { params: z.input<typeof Contract_0.uiManifestCrud['findOne']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['findOne']['outputSchema']> };
-        'uimanifest.count': { params: z.input<typeof Contract_0.uiManifestCrud['count']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['count']['outputSchema']> };
-        'uimanifest.get': { params: z.input<typeof Contract_0.uiManifestCrud['get']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['get']['outputSchema']> };
-        'uimanifest.update': { params: z.input<typeof Contract_0.uiManifestCrud['update']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['update']['outputSchema']> };
-        'uimanifest.delete': { params: z.input<typeof Contract_0.uiManifestCrud['delete']['inputSchema']>, returns: z.infer<typeof Contract_0.uiManifestCrud['delete']['outputSchema']> };
-        'uiartifact.create': { params: z.input<typeof Contract_0.uiArtifactCrud['create']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['create']['outputSchema']> };
-        'uiartifact.find': { params: z.input<typeof Contract_0.uiArtifactCrud['find']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['find']['outputSchema']> };
-        'uiartifact.find_one': { params: z.input<typeof Contract_0.uiArtifactCrud['findOne']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['findOne']['outputSchema']> };
-        'uiartifact.count': { params: z.input<typeof Contract_0.uiArtifactCrud['count']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['count']['outputSchema']> };
-        'uiartifact.get': { params: z.input<typeof Contract_0.uiArtifactCrud['get']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['get']['outputSchema']> };
-        'uiartifact.update': { params: z.input<typeof Contract_0.uiArtifactCrud['update']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['update']['outputSchema']> };
-        'uiartifact.delete': { params: z.input<typeof Contract_0.uiArtifactCrud['delete']['inputSchema']>, returns: z.infer<typeof Contract_0.uiArtifactCrud['delete']['outputSchema']> };
+        'demo.hello': { params: z.input<typeof Contract_0.demoHelloContract['inputSchema']>, returns: z.infer<typeof Contract_0.demoHelloContract['outputSchema']> };
+        'demo.status': { params: z.input<typeof Contract_0.demoStatusContract['inputSchema']>, returns: z.infer<typeof Contract_0.demoStatusContract['outputSchema']> };
+        'demo.notify': { params: z.input<typeof Contract_0.demoNotifyContract['inputSchema']>, returns: z.infer<typeof Contract_0.demoNotifyContract['outputSchema']> };
+        'demo.create': { params: z.input<typeof Contract_0.demoCrud['create']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['create']['outputSchema']> };
+        'demo.find': { params: z.input<typeof Contract_0.demoCrud['find']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['find']['outputSchema']> };
+        'demo.find_one': { params: z.input<typeof Contract_0.demoCrud['findOne']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['findOne']['outputSchema']> };
+        'demo.count': { params: z.input<typeof Contract_0.demoCrud['count']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['count']['outputSchema']> };
+        'demo.get': { params: z.input<typeof Contract_0.demoCrud['get']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['get']['outputSchema']> };
+        'demo.update': { params: z.input<typeof Contract_0.demoCrud['update']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['update']['outputSchema']> };
+        'demo.delete': { params: z.input<typeof Contract_0.demoCrud['delete']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['delete']['outputSchema']> };
+        'demometrics.insert': { params: z.input<typeof Contract_0.demoTimeSeries['insert']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['insert']['outputSchema']> };
+        'demometrics.query': { params: z.input<typeof Contract_0.demoTimeSeries['query']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['query']['outputSchema']> };
+        'demometrics.aggregate': { params: z.input<typeof Contract_0.demoTimeSeries['aggregate']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['aggregate']['outputSchema']> };
+        'demometrics.latest': { params: z.input<typeof Contract_0.demoTimeSeries['latest']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['latest']['outputSchema']> };
     }
 }
 
