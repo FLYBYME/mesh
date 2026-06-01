@@ -35,12 +35,13 @@ export class GenerateCommand extends BaseCommand {
             .command(this.name)
             .description(this.description)
             .option('--dir <dir>', 'Directory to scan for contracts', './src')
-            .action(async (options: { dir?: string }) => {
+            .option('-i, --include <paths...>', 'Relative paths to external generated api.ts files to include in this project\'s types')
+            .action(async (options: { dir?: string, include?: string[] }) => {
                 await this.execute(options);
             });
     }
 
-    protected async execute(options: { dir?: string } = {}): Promise<void> {
+    protected async execute(options: { dir?: string, include?: string[] } = {}): Promise<void> {
         const scanDir = path.resolve(options.dir || './src');
         if (!fs.existsSync(scanDir)) {
             throw new Error(`Directory not found: ${scanDir}`);
@@ -55,9 +56,9 @@ export class GenerateCommand extends BaseCommand {
 
         const { discovery, events, files } = this.discoverContractsAndEvents([scanDir]);
 
-        await this.generateToolRegistry(discovery, files);
+        await this.generateToolRegistry(discovery, files, options.include || []);
         await this.generateCLI(discovery, files);
-        await this.generateEvents(events, files);
+        await this.generateEvents(events, files, options.include || []);
         
         await this.bundleBrowser();
 
@@ -103,7 +104,7 @@ export class GenerateCommand extends BaseCommand {
         }
     }
 
-    private async generateToolRegistry(discovery: ContractDiscovery[], files: Record<string, string[]>): Promise<void> {
+    private async generateToolRegistry(discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
         this.logger.info('Generating IServiceToolRegistry augmentation...');
         const filePath = path.join(this.artifactRoot, 'api.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
@@ -114,6 +115,19 @@ export class GenerateCommand extends BaseCommand {
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
         code += `import type { IServiceToolRegistry } from '${interfaceImport}';\n`;
+        
+        // --- External Imports ---
+        if (includes.length > 0) {
+            code += `\n// External Type Includes\n`;
+            for (const includePath of includes) {
+                // Determine relative path from artifact root to the included file
+                const absoluteInclude = path.resolve(includePath);
+                let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
+                if (!rel.startsWith('.')) rel = './' + rel;
+                code += `import '${rel}';\n`;
+            }
+        }
+
         Object.values(aliasMap).forEach(m => {
             code += `import * as ${m.alias} from '${m.path}';\n`;
         });
@@ -146,7 +160,7 @@ export class GenerateCommand extends BaseCommand {
         fs.writeFileSync(filePath, code);
     }
 
-    private async generateEvents(events: EventDiscovery[], files: Record<string, string[]>): Promise<void> {
+    private async generateEvents(events: EventDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
         console.log('Generating EventRegistry augmentation...');
         const filePath = path.join(this.artifactRoot, 'events.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
@@ -157,6 +171,26 @@ export class GenerateCommand extends BaseCommand {
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
         code += `import type { EventRegistry } from '${interfaceImport}';\n`;
+
+        // --- External Imports ---
+        if (includes.length > 0) {
+            code += `\n// External Type Includes\n`;
+            for (const includePath of includes) {
+                // Target the events.ts file if it exists, otherwise assume api.ts handles it or it's a direct path
+                let target = includePath;
+                if (includePath.endsWith('api.ts') || includePath.endsWith('api.js')) {
+                    target = includePath.replace(/api\.(ts|js)$/, 'events.$1');
+                }
+                
+                if (fs.existsSync(path.resolve(target))) {
+                    const absoluteInclude = path.resolve(target);
+                    let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
+                    if (!rel.startsWith('.')) rel = './' + rel;
+                    code += `import '${rel}';\n`;
+                }
+            }
+        }
+
         Object.values(aliasMap).forEach(m => {
             code += `import * as ${m.alias} from '${m.path}';\n`;
         });
