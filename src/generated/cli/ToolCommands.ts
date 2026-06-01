@@ -9,7 +9,7 @@ import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
 import { Logger } from '../../utils/Logger.js';
-import * as Contract_0 from '../../examples/demo/demo.contract.js';
+import * as Contract_0 from '../../../../mesh-ui/src/services/uiservice/ui.contract.js';
 
 async function executeCommand(toolName: string, args: Record<string, unknown>, contract: any, options: any) {
     const logger = new Logger(3); // Error level to avoid cluttering CLI output
@@ -45,11 +45,11 @@ async function executeCommand(toolName: string, args: Record<string, unknown>, c
 }
 
 export function registerGeneratedCommands(program: Command) {
-    const demo = program.command('demo').description('demo tools');
-    const cmd_demo_demoHelloContract_hello = demo.command('hello').description(`A simple hello world tool for demonstration.`);
-    cmd_demo_demoHelloContract_hello.action(async (o: Record<string, unknown>, cmd: Command) => {
+    const ui = program.command('ui').description('ui tools');
+    const cmd_ui_uiStatusContract_get_status = ui.command('get_status').description(`Retrieve the current health and build status of the UI service.`);
+    cmd_ui_uiStatusContract_get_status.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.hello', o, Contract_0.demoHelloContract, cmd.optsWithGlobals());
+            await executeCommand('ui.get_status', o, Contract_0.uiStatusContract, cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -57,11 +57,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoHelloContract_hello, Contract_0.demoHelloContract.inputSchema);
-    const cmd_demo_demoStatusContract_status = demo.command('status').description(`Check the status of the demo environment.`);
-    cmd_demo_demoStatusContract_status.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_ui_uiStatusContract_get_status, Contract_0.uiStatusContract.inputSchema);
+    const cmd_ui_uiBuildContract_build = ui.command('build').description(`Trigger a fresh build for a UI manifest.`);
+    cmd_ui_uiBuildContract_build.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.status', o, Contract_0.demoStatusContract, cmd.optsWithGlobals());
+            await executeCommand('ui.build', o, Contract_0.uiBuildContract, cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -69,11 +69,12 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoStatusContract_status, Contract_0.demoStatusContract.inputSchema);
-    const cmd_demo_demoNotifyContract_notify = demo.command('notify').description(`Send a notification via the system notifications service.`);
-    cmd_demo_demoNotifyContract_notify.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_ui_uiBuildContract_build, Contract_0.uiBuildContract.inputSchema);
+    const uimanifest = program.command('uimanifest').description('uimanifest tools');
+    const cmd_uimanifest_uiManifestCrud_create_create = uimanifest.command('create').description(`CRUD create for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_create_create.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.notify', o, Contract_0.demoNotifyContract, cmd.optsWithGlobals());
+            await executeCommand('uimanifest.create', o, Contract_0.uiManifestCrud['create'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -81,11 +82,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoNotifyContract_notify, Contract_0.demoNotifyContract.inputSchema);
-    const cmd_demo_demoCrud_create_create = demo.command('create').description(`CRUD create for demo (demoCrud)`);
-    cmd_demo_demoCrud_create_create.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_create_create, Contract_0.uiManifestCrud['create'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_find_find = uimanifest.command('find').description(`CRUD find for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_find_find.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.create', o, Contract_0.demoCrud['create'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.find', o, Contract_0.uiManifestCrud['find'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -93,11 +94,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_create_create, Contract_0.demoCrud['create'].inputSchema);
-    const cmd_demo_demoCrud_find_find = demo.command('find').description(`CRUD find for demo (demoCrud)`);
-    cmd_demo_demoCrud_find_find.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_find_find, Contract_0.uiManifestCrud['find'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_findOne_find_one = uimanifest.command('find_one').description(`CRUD findOne for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_findOne_find_one.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.find', o, Contract_0.demoCrud['find'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.find_one', o, Contract_0.uiManifestCrud['findOne'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -105,11 +106,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_find_find, Contract_0.demoCrud['find'].inputSchema);
-    const cmd_demo_demoCrud_findOne_find_one = demo.command('find_one').description(`CRUD findOne for demo (demoCrud)`);
-    cmd_demo_demoCrud_findOne_find_one.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_findOne_find_one, Contract_0.uiManifestCrud['findOne'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_count_count = uimanifest.command('count').description(`CRUD count for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_count_count.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.find_one', o, Contract_0.demoCrud['findOne'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.count', o, Contract_0.uiManifestCrud['count'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -117,11 +118,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_findOne_find_one, Contract_0.demoCrud['findOne'].inputSchema);
-    const cmd_demo_demoCrud_count_count = demo.command('count').description(`CRUD count for demo (demoCrud)`);
-    cmd_demo_demoCrud_count_count.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_count_count, Contract_0.uiManifestCrud['count'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_get_get = uimanifest.command('get').description(`CRUD get for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_get_get.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.count', o, Contract_0.demoCrud['count'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.get', o, Contract_0.uiManifestCrud['get'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -129,11 +130,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_count_count, Contract_0.demoCrud['count'].inputSchema);
-    const cmd_demo_demoCrud_get_get = demo.command('get').description(`CRUD get for demo (demoCrud)`);
-    cmd_demo_demoCrud_get_get.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_get_get, Contract_0.uiManifestCrud['get'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_update_update = uimanifest.command('update').description(`CRUD update for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_update_update.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.get', o, Contract_0.demoCrud['get'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.update', o, Contract_0.uiManifestCrud['update'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -141,11 +142,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_get_get, Contract_0.demoCrud['get'].inputSchema);
-    const cmd_demo_demoCrud_update_update = demo.command('update').description(`CRUD update for demo (demoCrud)`);
-    cmd_demo_demoCrud_update_update.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_update_update, Contract_0.uiManifestCrud['update'].inputSchema);
+    const cmd_uimanifest_uiManifestCrud_delete_delete = uimanifest.command('delete').description(`CRUD delete for uimanifest (uiManifestCrud)`);
+    cmd_uimanifest_uiManifestCrud_delete_delete.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.update', o, Contract_0.demoCrud['update'], cmd.optsWithGlobals());
+            await executeCommand('uimanifest.delete', o, Contract_0.uiManifestCrud['delete'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -153,11 +154,12 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_update_update, Contract_0.demoCrud['update'].inputSchema);
-    const cmd_demo_demoCrud_delete_delete = demo.command('delete').description(`CRUD delete for demo (demoCrud)`);
-    cmd_demo_demoCrud_delete_delete.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uimanifest_uiManifestCrud_delete_delete, Contract_0.uiManifestCrud['delete'].inputSchema);
+    const uiartifact = program.command('uiartifact').description('uiartifact tools');
+    const cmd_uiartifact_uiArtifactCrud_create_create = uiartifact.command('create').description(`CRUD create for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_create_create.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demo.delete', o, Contract_0.demoCrud['delete'], cmd.optsWithGlobals());
+            await executeCommand('uiartifact.create', o, Contract_0.uiArtifactCrud['create'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -165,12 +167,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_delete_delete, Contract_0.demoCrud['delete'].inputSchema);
-    const demometrics = program.command('demometrics').description('demometrics tools');
-    const cmd_demometrics_demoTimeSeries_insert_insert = demometrics.command('insert').description(`Time Series insert for demometrics (demoTimeSeries)`);
-    cmd_demometrics_demoTimeSeries_insert_insert.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_create_create, Contract_0.uiArtifactCrud['create'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_find_find = uiartifact.command('find').description(`CRUD find for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_find_find.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demometrics.insert', o, Contract_0.demoTimeSeries['insert'], cmd.optsWithGlobals());
+            await executeCommand('uiartifact.find', o, Contract_0.uiArtifactCrud['find'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -178,11 +179,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_insert_insert, Contract_0.demoTimeSeries['insert'].inputSchema);
-    const cmd_demometrics_demoTimeSeries_query_query = demometrics.command('query').description(`Time Series query for demometrics (demoTimeSeries)`);
-    cmd_demometrics_demoTimeSeries_query_query.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_find_find, Contract_0.uiArtifactCrud['find'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_findOne_find_one = uiartifact.command('find_one').description(`CRUD findOne for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_findOne_find_one.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demometrics.query', o, Contract_0.demoTimeSeries['query'], cmd.optsWithGlobals());
+            await executeCommand('uiartifact.find_one', o, Contract_0.uiArtifactCrud['findOne'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -190,11 +191,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_query_query, Contract_0.demoTimeSeries['query'].inputSchema);
-    const cmd_demometrics_demoTimeSeries_aggregate_aggregate = demometrics.command('aggregate').description(`Time Series aggregate for demometrics (demoTimeSeries)`);
-    cmd_demometrics_demoTimeSeries_aggregate_aggregate.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_findOne_find_one, Contract_0.uiArtifactCrud['findOne'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_count_count = uiartifact.command('count').description(`CRUD count for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_count_count.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demometrics.aggregate', o, Contract_0.demoTimeSeries['aggregate'], cmd.optsWithGlobals());
+            await executeCommand('uiartifact.count', o, Contract_0.uiArtifactCrud['count'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -202,11 +203,11 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_aggregate_aggregate, Contract_0.demoTimeSeries['aggregate'].inputSchema);
-    const cmd_demometrics_demoTimeSeries_latest_latest = demometrics.command('latest').description(`Time Series latest for demometrics (demoTimeSeries)`);
-    cmd_demometrics_demoTimeSeries_latest_latest.action(async (o: Record<string, unknown>, cmd: Command) => {
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_count_count, Contract_0.uiArtifactCrud['count'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_get_get = uiartifact.command('get').description(`CRUD get for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_get_get.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
-            await executeCommand('demometrics.latest', o, Contract_0.demoTimeSeries['latest'], cmd.optsWithGlobals());
+            await executeCommand('uiartifact.get', o, Contract_0.uiArtifactCrud['get'], cmd.optsWithGlobals());
             process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -214,5 +215,29 @@ export function registerGeneratedCommands(program: Command) {
             process.exit(1);
         }
     });
-    ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_latest_latest, Contract_0.demoTimeSeries['latest'].inputSchema);
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_get_get, Contract_0.uiArtifactCrud['get'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_update_update = uiartifact.command('update').description(`CRUD update for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_update_update.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('uiartifact.update', o, Contract_0.uiArtifactCrud['update'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_update_update, Contract_0.uiArtifactCrud['update'].inputSchema);
+    const cmd_uiartifact_uiArtifactCrud_delete_delete = uiartifact.command('delete').description(`CRUD delete for uiartifact (uiArtifactCrud)`);
+    cmd_uiartifact_uiArtifactCrud_delete_delete.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('uiartifact.delete', o, Contract_0.uiArtifactCrud['delete'], cmd.optsWithGlobals());
+            process.exit(0);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+            process.exit(1);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_uiartifact_uiArtifactCrud_delete_delete, Contract_0.uiArtifactCrud['delete'].inputSchema);
 }

@@ -109,8 +109,8 @@ export class GenerateCommand extends BaseCommand {
         const filePath = path.join(this.artifactRoot, 'api.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
-        const isExternal = pkg.name !== 'mesh';
-        const interfaceImport = isExternal ? 'mesh' : '../interfaces/IServiceContext.js';
+        const isExternal = pkg.name !== '@flybyme/mesh';
+        const interfaceImport = isExternal ? '@flybyme/mesh' : '../interfaces/IServiceContext.js';
 
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
@@ -165,8 +165,8 @@ export class GenerateCommand extends BaseCommand {
         const filePath = path.join(this.artifactRoot, 'events.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
-        const isExternal = pkg.name !== 'mesh';
-        const interfaceImport = isExternal ? 'mesh' : '../interfaces/IEventContract.js';
+        const isExternal = pkg.name !== '@flybyme/mesh';
+        const interfaceImport = isExternal ? '@flybyme/mesh' : '../interfaces/IEventContract.js';
 
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
@@ -228,7 +228,7 @@ export class GenerateCommand extends BaseCommand {
 
     private async generateCLI(discovery: ContractDiscovery[], files: Record<string, string[]>): Promise<void> {
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
-        const isExternal = pkg.name !== 'mesh';
+        const isExternal = pkg.name !== '@flybyme/mesh';
         this.logger.info('Generating CLI Command Tree...');
         const outDir = path.join(this.artifactRoot, 'cli');
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
