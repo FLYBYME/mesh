@@ -35,7 +35,7 @@ export class GenerateCommand extends BaseCommand {
             .command(this.name)
             .description(this.description)
             .option('--dir <dir>', 'Directory to scan for contracts', './src')
-            .option('-i, --include <paths...>', 'Relative paths to external generated api.ts files to include in this project\'s types')
+            .option('-I, --include <paths...>', 'Paths or Package Names of external generated api.ts files to include in this project\'s types')
             .action(async (options: { dir?: string, include?: string[] }) => {
                 await this.execute(options);
             });
@@ -120,11 +120,16 @@ export class GenerateCommand extends BaseCommand {
         if (includes.length > 0) {
             code += `\n// External Type Includes\n`;
             for (const includePath of includes) {
-                // Determine relative path from artifact root to the included file
-                const absoluteInclude = path.resolve(includePath);
-                let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
-                if (!rel.startsWith('.')) rel = './' + rel;
-                code += `import '${rel}';\n`;
+                // If it doesn't start with . or / and doesn't have a backslash, treat it as a package name
+                if (!includePath.startsWith('.') && !includePath.startsWith('/') && !includePath.includes('\\')) {
+                    code += `import '${includePath}';\n`;
+                } else {
+                    // Determine relative path from artifact root to the included file
+                    const absoluteInclude = path.resolve(includePath);
+                    let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
+                    if (!rel.startsWith('.')) rel = './' + rel;
+                    code += `import '${rel}';\n`;
+                }
             }
         }
 
@@ -132,7 +137,7 @@ export class GenerateCommand extends BaseCommand {
             code += `import * as ${m.alias} from '${m.path}';\n`;
         });
 
-        code += `\ndeclare module '${interfaceImport}' {\n`;
+        code += `\ndeclare global {\n`;
         code += `    interface IServiceToolRegistry {\n`;
 
         for (const m of discovery) {
@@ -176,6 +181,12 @@ export class GenerateCommand extends BaseCommand {
         if (includes.length > 0) {
             code += `\n// External Type Includes\n`;
             for (const includePath of includes) {
+                // If it's a package name, import it directly
+                if (!includePath.startsWith('.') && !includePath.startsWith('/') && !includePath.includes('\\')) {
+                    code += `import '${includePath}';\n`;
+                    continue;
+                }
+
                 // Target the events.ts file if it exists, otherwise assume api.ts handles it or it's a direct path
                 let target = includePath;
                 if (includePath.endsWith('api.ts') || includePath.endsWith('api.js')) {
@@ -195,7 +206,7 @@ export class GenerateCommand extends BaseCommand {
             code += `import * as ${m.alias} from '${m.path}';\n`;
         });
 
-        code += `\ndeclare module '${interfaceImport}' {\n`;
+        code += `\ndeclare global {\n`;
         code += `    interface EventRegistry {\n`;
 
         for (const e of events) {

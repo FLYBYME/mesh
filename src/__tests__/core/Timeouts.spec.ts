@@ -12,7 +12,7 @@ import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js'
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 
 // --- Interface Augmentation for Strict Typing in Tests ---
-declare module '../../interfaces/IServiceContext.js' {
+declare global {
     interface IServiceToolRegistry {
         'timeout.slow': {
             params: { delay: number };

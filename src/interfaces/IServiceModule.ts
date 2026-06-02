@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { ToolContract } from './IToolContract.js';
 import type { IServiceContext } from './IServiceContext.js';
-import type { EventRegistry } from './IEventContract.js';
 import type { IServiceBroker } from './IServiceBroker.js';
 
 /**

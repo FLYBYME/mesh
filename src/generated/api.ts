@@ -1,9 +1,8 @@
 // GENERATED FILE - DO NOT EDIT
 import { z } from 'zod';
-import type { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
 import * as Contract_0 from '../examples/demo/demo.contract.js';
 
-declare module '../interfaces/IServiceContext.js' {
+declare global {
     interface IServiceToolRegistry {
         'demo.hello': { params: z.input<typeof Contract_0.demoHelloContract['inputSchema']>, returns: z.infer<typeof Contract_0.demoHelloContract['outputSchema']> };
         'demo.status': { params: z.input<typeof Contract_0.demoStatusContract['inputSchema']>, returns: z.infer<typeof Contract_0.demoStatusContract['outputSchema']> };

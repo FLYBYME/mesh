@@ -14,7 +14,7 @@ import { DatabaseModule } from '../../modules/DatabaseModule.js';
 import dotenv from 'dotenv';
 import path from 'path';
 
-declare module '../../interfaces/IEventContract.js' {
+declare global {
     interface EventRegistry {
         'test.event': { data: string };
         'test.foo': { a: number };

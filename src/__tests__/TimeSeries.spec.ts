@@ -18,7 +18,7 @@ interface TelemetryData {
 }
 
 // --- Type Augmentation for Tests ---
-declare module '../interfaces/IServiceContext.js' {
+declare global {
     interface IServiceToolRegistry {
         'telemetry.insert': {
             params: { cpu: number; temp: number; timestamp?: Date; tags?: Record<string, string> }[];

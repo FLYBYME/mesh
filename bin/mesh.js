@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 import path from 'path';
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import "dotenv/config";
+import { fork } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const cliPath = path.join(__dirname, '../src/cli/index.ts');
+// Target the compiled entry point
+const cliPath = path.resolve(__dirname, '../dist/cli/index.js');
 
-const result = spawnSync('npx', ['tsx', cliPath, ...process.argv.slice(2)], {
+const cp = fork(cliPath, process.argv.slice(2), {
     stdio: 'inherit'
 });
 
-process.exit(result.status ?? 0);
+cp.on('exit', (code) => {
+    process.exit(code ?? 0);
+});

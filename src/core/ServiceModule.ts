@@ -4,8 +4,6 @@ import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import type { IServiceContext, ServiceActionHandler } from '../interfaces/IServiceContext.js';
-import type { EventRegistry } from '../interfaces/IEventContract.js';
-
 /**
  * EventHandler: Signature for a strictly-typed event subscriber.
  */

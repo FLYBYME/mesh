@@ -21,23 +21,17 @@ export function defineEvent<T extends z.ZodTypeAny>(name: string, schema: T): Ev
 
 // ─── Event Registry ──────────────────────────────────────────────────────────
 
-/**
- * EventRegistry: A global interface for all events in the mesh.
- * Services use Module Augmentation to register their specific events here.
- * The code generator also augments this interface from `defineEvent()` calls.
- *
- * Mandate: No index signatures. All keys must be explicitly added via augmentation.
- */
- 
-export interface EventRegistry {
-    // Core lifecycle events
-    'mesh.started': MeshStarted;
-    'mesh.stopped': MeshStopped;
+declare global {
+    interface EventRegistry {
+        // Core lifecycle events
+        'mesh.started': MeshStarted;
+        'mesh.stopped': MeshStopped;
 
-    // Core persistence events
-    'data.created': DataCreated;
-    'data.updated': DataUpdated;
-    'data.deleted': DataDeleted;
+        // Core persistence events
+        'data.created': DataCreated;
+        'data.updated': DataUpdated;
+        'data.deleted': DataDeleted;
+    }
 }
 
 // ─── Event Bus ───────────────────────────────────────────────────────────────

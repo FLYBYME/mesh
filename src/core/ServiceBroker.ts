@@ -9,8 +9,7 @@ import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
-import type { EventRegistry } from '../interfaces/IEventContract.js';
-import type { IServiceToolRegistry, IServiceContext } from '../interfaces/IServiceContext.js';
+import type { IServiceContext } from '../interfaces/IServiceContext.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
@@ -147,30 +146,32 @@ export class ServiceBroker implements IServiceBroker {
         return ContextStack.getContext() as IContext<Record<string, unknown>, Record<string, unknown>> | undefined;
     }
 
-    public on<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): (() => void) {
+    public on<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): (() => void) {
+        const topic = String(event);
         if (topic.includes('*')) {
             const regex = new RegExp('^' + topic
                 .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
                 .replace(/\\\*/g, '.*')
                 + '$');
-            const wrapper = (payload: T, packet?: IMeshPacket<T>) => {
+            const wrapper = (payload: any, packet?: IMeshPacket<any>) => {
                 const topicToTest = packet?.topic || topic;
                 if (regex.test(topicToTest)) {
                     handler(payload, packet);
                 }
             };
-            this.patternWrappers.set(handler, wrapper as (...args: unknown[]) => void);
+            this.patternWrappers.set(handler as Function, wrapper as (...args: unknown[]) => void);
             this.localEvents.on('__pattern_event', wrapper);
         } else {
             this.localEvents.on(topic, handler);
         }
 
-        return () => this.off(topic, handler);
+        return () => this.off(event, handler);
     }
 
-    public off<T = unknown>(topic: string, handler: (payload: T, packet?: IMeshPacket<T>) => void): void {
+    public off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void {
+        const topic = String(event);
         if (topic.includes('*')) {
-            const wrapper = this.patternWrappers.get(handler);
+            const wrapper = this.patternWrappers.get(handler as Function);
             if (wrapper) this.localEvents.off('__pattern_event', wrapper);
         } else {
             this.localEvents.off(topic, handler);
@@ -245,7 +246,7 @@ export class ServiceBroker implements IServiceBroker {
         if (typeof module.getEventHandlers === 'function') {
             const eventHandlers = module.getEventHandlers();
             for (const [name, handler] of eventHandlers.entries()) {
-                this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${name}`);
+                this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${String(name)}`);
                 this.localEvents.on(name as string, (data: unknown, packet?: IMeshPacket) => {
                     const ctx = {
                         broker: this,
@@ -267,7 +268,7 @@ export class ServiceBroker implements IServiceBroker {
                         logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
-                        this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
+                        this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
                     });
                 });
             }
@@ -283,7 +284,7 @@ export class ServiceBroker implements IServiceBroker {
         params: IServiceToolRegistry[K]['params'],
         options?: { nodeID?: string; timeout?: number }
     ): Promise<IServiceToolRegistry[K]['returns']> {
-        return this.internalCall(tool, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
+        return this.internalCall(tool as string, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {

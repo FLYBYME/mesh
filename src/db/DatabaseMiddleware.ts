@@ -6,9 +6,6 @@ import { Database } from './Database.js';
 import { FindOptions, StrictFilterQuery } from './types.js';
 import { z } from 'zod';
 import { IServiceModule } from '../interfaces/IServiceModule.js';
-import { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
-import { EventRegistry } from '../interfaces/IEventContract.js';
-
 interface BaseDoc {
     id: string;
     createdAt?: Date;

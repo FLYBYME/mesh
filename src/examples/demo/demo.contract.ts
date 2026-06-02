@@ -8,7 +8,7 @@ import { defineEvent } from '../../interfaces/IEventContract.js';
 // ─── Event Augmentation ──────────────────────────────────────────────────────
 // We augment the EventRegistry to register our domain-specific events.
 
-declare module '../../interfaces/IEventContract.js' {
+declare global {
     interface EventRegistry {
         'demo.hello.sent': DemoHelloEvent;
     }

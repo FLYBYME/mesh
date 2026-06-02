@@ -3,9 +3,6 @@ import type { ILogger } from './ILogger.js';
 import type { IServiceModule } from './IServiceModule.js';
 import type { IProviderToken } from './IProviderToken.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
-import type { IServiceToolRegistry } from './IServiceContext.js';
-import { EventRegistry } from './IEventContract.js';
-
 export interface AppConfig extends Record<string, unknown> {
     nodeID: string;
     namespace?: string;

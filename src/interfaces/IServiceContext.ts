@@ -1,15 +1,30 @@
-import type { EventRegistry } from './IEventContract.js';
-import { ILogger } from './ILogger.js';
+import type { ILogger } from './ILogger.js';
 import type { IServiceBroker } from './IServiceBroker.js';
 
 /**
- * IServiceToolRegistry: The global registry mapping tool keys to their parameter and return types.
- * Populated by generated code.
+ * Global Registry Declarations:
+ * We use a global namespace so that multiple physical copies of the @flybyme/mesh package
+ * (common in multi-repo/multi-package environments) can all contribute to the same
+ * strictly-typed registries.
  */
+declare global {
+    /**
+     * IServiceToolRegistry: The global registry mapping tool keys to their parameter and return types.
+     * Populated by generated code.
+     */
+    interface IServiceToolRegistry {
+        // Generated tools will appear here like:
+        // 'demo.hello': { params: z.infer<...>, returns: z.infer<...> }
+    }
 
-export interface IServiceToolRegistry {
-    // Generated tools will appear here like:
-    // 'demo.hello': { params: z.infer<...>, returns: z.infer<...> }
+    /**
+     * EventRegistry: The global registry for strictly-typed events.
+     * Populated by generated code.
+     */
+    interface EventRegistry {
+        // Generated events will appear here like:
+        // 'demo.hello.sent': { ... }
+    }
 }
 
 /**

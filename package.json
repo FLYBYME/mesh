@@ -1,6 +1,6 @@
 {
   "name": "@flybyme/mesh",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Mesh network framework",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,10 +20,11 @@
     }
   },
   "bin": {
-    "mesh": "./dist/cli/index.js"
+    "mesh": "./bin/mesh.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsc",
@@ -39,6 +40,7 @@
   },
   "dependencies": {
     "commander": "latest",
+    "dotenv": "latest",
     "esbuild": "latest",
     "eventemitter3": "latest",
     "express": "latest",

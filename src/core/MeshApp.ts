@@ -5,13 +5,11 @@ import type {
     IProviderToken,
     ILogger,
     IServiceBroker,
-    IServiceRegistry,
-    EventRegistry
+    IServiceRegistry
 } from '../interfaces/index.js';
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
-import type { IServiceToolRegistry } from '../interfaces/index.js';
 
 /**
  * MeshApp — The "Motherboard" shell that provides DI and lifecycle management.
@@ -127,6 +125,7 @@ export class MeshApp implements IMeshApp {
     }
 
     public async start(): Promise<void> {
+        // Test change
         this.logger.info('MeshApp starting...');
         await this.orchestrator.executeBootSequence(this.modules);
         this.logger.info('MeshApp started successfully.');
@@ -152,7 +151,7 @@ export class MeshApp implements IMeshApp {
             const broker = this.getProvider<IServiceBroker>('broker');
             broker.emit(event, payload, options);
         } else {
-            this.logger.warn(`[MeshApp] Cannot publish to ${event}, broker not initialized.`);
+            this.logger.warn(`[MeshApp] Cannot publish to ${String(event)}, broker not initialized.`);
         }
     }
 }
