@@ -67,3 +67,5 @@ export type ServiceActionHandler<TInput, TOutput> = (
     args: TInput,
     context: IServiceContext
 ) => Promise<TOutput>;
+
+export type { IServiceToolRegistry };

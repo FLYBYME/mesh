@@ -92,3 +92,5 @@ export const DataDeletedSchema = z.object({
     id: z.string().describe('The deleted document ID')
 });
 export type DataDeleted = z.infer<typeof DataDeletedSchema>;
+
+export type { EventRegistry };

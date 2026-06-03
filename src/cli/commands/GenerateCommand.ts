@@ -114,7 +114,6 @@ export class GenerateCommand extends BaseCommand {
 
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
-        code += `import type { IServiceToolRegistry } from '${interfaceImport}';\n`;
 
         // --- External Imports ---
         if (includes.length > 0) {
@@ -175,7 +174,6 @@ export class GenerateCommand extends BaseCommand {
 
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
-        code += `import type { EventRegistry } from '${interfaceImport}';\n`;
 
         // --- External Imports ---
         if (includes.length > 0) {
