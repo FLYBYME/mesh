@@ -127,12 +127,12 @@ const cleanArgs = [
 try {
     const isExternal = path.resolve(process.cwd()) !== path.resolve(__dirname, '../../..');
     const targetDir = isExternal ? process.cwd() : path.resolve(__dirname, '../..');
-    const generatedCommandsPath = path.resolve(targetDir, 'src/generated/cli/ToolCommands.js');
-    
+    const generatedCommandsPath = path.resolve(targetDir, 'dist/generated/cli/ToolCommands.js');
+
     // @ts-ignore - Generated files might not exist during first compile
     import(generatedCommandsPath).then((mod) => {
         mod.registerGeneratedCommands(program);
-        
+
         // Parse args after async load
         program.parseAsync(cleanArgs);
     }).catch((err) => {
