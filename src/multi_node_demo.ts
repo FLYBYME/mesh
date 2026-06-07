@@ -9,7 +9,7 @@ import { DemoSkill } from './examples/demo/demo.service.js';
 import { LogLevel } from './browser.js';
 
 async function main() {
-    const logger = new Logger(LogLevel.WARN);
+    const logger = new Logger(LogLevel.INFO);
     const serializer = new JSONSerializer();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,6 @@ async function main() {
 
     app1.use(new RegistryModule());
     app1.use(new NetworkModule({
-        port: 6005,
         transports: [transport1]
     }));
     app1.use(new BrokerModule());
@@ -48,7 +47,6 @@ async function main() {
 
     app2.use(new RegistryModule());
     app2.use(new NetworkModule({
-        port: 6006,
         transports: [transport2],
         bootstrapNodes: ['ws://127.0.0.1:6005']
     }));
@@ -68,7 +66,6 @@ async function main() {
 
     app3.use(new RegistryModule());
     app3.use(new NetworkModule({
-        port: 6007,
         transports: [transport3],
         // Node 3 ONLY connects to Node 2, forcing a hop to reach Node 1
         bootstrapNodes: ['ws://127.0.0.1:6006']

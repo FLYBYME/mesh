@@ -22,6 +22,7 @@ export class WSTransport extends BaseTransport {
     private wss: IWSServer | null = null;
     private server: http.Server | null = null;
     private port: number;
+    private host: string;
     private peers = new Map<string, IWS>();
     public logger?: ILogger;
 
@@ -32,13 +33,23 @@ export class WSTransport extends BaseTransport {
     private heartbeatTimer?: NodeJS.Timeout;
     private reconnectionTimers = new Set<NodeJS.Timeout>();
 
-    constructor(serializer: BaseSerializer, port = 0) {
+    constructor(serializer: BaseSerializer, port = 0, host: string = '0.0.0.0') {
         super(serializer);
         this.port = port;
+        this.host = host;
     }
 
     async start(): Promise<void> {
         this.proactiveReplay();
+    }
+
+    public getPort(): number {
+        if (!this.server || typeof this.server.address !== 'function') throw new Error("Server not started yet.");
+        const addr = this.server.address();
+        if (addr && typeof addr === 'object' && 'port' in addr) {
+            return (addr as { port: number }).port;
+        }
+        throw new Error("Server port not available");
     }
 
     private proactiveReplay(): void {
@@ -77,7 +88,7 @@ export class WSTransport extends BaseTransport {
 
         return new Promise((resolve, reject) => {
             if (!this.server) return reject(new Error('Server not initialized'));
-            this.server.listen(this.port, () => {
+            this.server.listen(this.port, this.host, () => {
                 const addr = this.server!.address();
                 if (addr && typeof addr === 'object' && 'port' in addr) {
                     this.port = (addr as { port: number }).port;
@@ -228,7 +239,7 @@ export class WSTransport extends BaseTransport {
             // If target is not directly connected, route through a connected peer
             if (this.peers.size > 0 && packet.targetNodeID && packet.targetNodeID !== this.nodeID) {
                 const path = Array.isArray(packet.meta?.path) ? packet.meta.path as string[] : [];
-                const peerEntry = Array.from(this.peers.entries()).find(([peerId, p]) => 
+                const peerEntry = Array.from(this.peers.entries()).find(([peerId, p]) =>
                     p.readyState === 1 && !path.includes(peerId)
                 );
                 if (peerEntry) {

@@ -97,7 +97,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 case 'find': {
                     const options: FindOptions<BaseDoc> = {
                         query: isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {},
-                        limit: typeof params.limit === 'number' ? params.limit : undefined,
+                        limit: typeof params.limit === 'number' ? params.limit : 100,
                         offset: typeof params.offset === 'number' ? params.offset : undefined,
                     };
                     if (typeof params.sort === 'string' || Array.isArray(params.sort) || isRecord(params.sort)) {

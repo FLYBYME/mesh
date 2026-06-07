@@ -22,8 +22,8 @@ export interface RelationDefinition {
  * CrudParamsSchema: Standard parameters for queries.
  */
 export const CrudParamsSchema = z.object({
-    limit: z.number().optional().describe("Max count of rows."),
-    offset: z.number().optional().describe("Number of skipped rows."),
+    limit: z.number().optional().default(100).describe("Max count of rows."),
+    offset: z.number().optional().default(0).describe("Number of skipped rows."),
     fields: z.union([z.string(), z.array(z.string())]).optional().describe("Fields to return."),
     sort: z.union([z.string(), z.array(z.string())]).optional().describe("Sorted fields. Use '-' prefix for descending."),
     search: z.string().optional().describe("Search text."),
