@@ -56,11 +56,12 @@ export class TransportManager extends EventEmitter {
                 namespace: this.node.namespace,
                 logger: this.node.logger,
                 port: opts.port,
-                registry: opts.registry,
+                registry: opts.registry || this.node.registry,
                 sharedServer: opts.sharedServer,
                 sharedApp: opts.sharedApp,
                 host: opts.host,
-                authToken: opts.authToken
+                authToken: opts.authToken,
+                privateKey: opts.privateKey
             });
 
             await t.start();

@@ -35,6 +35,8 @@ npx mesh start --port 5005 --bootstrap ws://127.0.0.1:5005 --services src/
 **Options**:
 - `--services <paths...>` or `-s`: Directories containing service modules (e.g. `src/`, `../mesh-sandbox/src`). The startup sequence recursively scans these directories for `*.service.ts` or `*.service.js` files, instantiates the default export, and registers it.
 - `--log-level <level>` or `-l`: `debug`, `info`, `warn`, `error` (default: `info`)
+- `--private-key <key>`: Ed25519 private key in Base64 format. Enables mutual authentication.
+- `--public-key <key>`: Ed25519 public key in Base64 format. Used for identity verification.
 
 **Multi-Service Loading**:
 The `--services` flag accepts multiple paths, either comma-separated or by providing the flag multiple times.

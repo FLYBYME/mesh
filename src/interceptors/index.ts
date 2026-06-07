@@ -1,11 +1,15 @@
 import { IInterceptor } from '../interfaces/IInterceptor.js';
 import { IMeshNetwork, MeshPacket } from '../interfaces/IMeshNetwork.js';
+import { AuthInterceptor } from './AuthInterceptor.js';
+
+export * from './AuthInterceptor.js';
 
 export type InterceptorFactory = (app: any, network: IMeshNetwork, options?: Record<string, unknown>) => IInterceptor<MeshPacket, MeshPacket>;
 
-export const DefaultInterceptorRegistry: Record<string, InterceptorFactory> = {
-    'log': (app, network) => ({
-        name: 'log-interceptor',
+export const interceptors: Record<string, InterceptorFactory> = {
+    auth: (app, _network) => new AuthInterceptor(app.logger),
+    logging: (_app, network) => ({
+        name: 'logging',
         onInbound: (packet: MeshPacket) => {
             network.logger.debug(`[Inbound] ${packet.topic}`, { id: packet.id });
             return packet;
@@ -16,3 +20,4 @@ export const DefaultInterceptorRegistry: Record<string, InterceptorFactory> = {
         }
     })
 };
+

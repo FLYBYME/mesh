@@ -11,6 +11,7 @@ import { NetworkController } from './NetworkController.js';
 import { MeshOrchestrator } from './MeshOrchestrator.js';
 import { UnifiedServer } from './UnifiedServer.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
+import { AuthInterceptor } from '../interceptors/AuthInterceptor.js';
 
 export interface MeshNetworkOptions {
     nodeId?: string;
@@ -18,6 +19,7 @@ export interface MeshNetworkOptions {
     bootstrapNodes?: string[];
     transports: BaseTransport[];
     port?: number;
+    privateKey?: string;
 }
 
 /**
@@ -69,6 +71,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         this.controller = new NetworkController(this, this.logger);
 
         this.controller.registerHandlers(this.dispatcher);
+
+        // Automatically register AuthInterceptor if privateKey is provided
+        if (options.privateKey) {
+            this.use(new AuthInterceptor(this.logger));
+        }
 
         // Start deduplication cleanup loop
         this.cleanupTimer = setInterval(() => {
@@ -125,6 +132,10 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
                 }
             }
 
+            if (processedData.topic === '__auth_failed') {
+                return;
+            }
+
             // 3. Dispatch to generic handlers (Broker bridge)
             for (const handler of this.anyPacketHandlers) {
                 try {
@@ -168,6 +179,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
             url: this.options.bootstrapNodes?.[0], // Use primary bootstrap node as connection URL
             port: port,
             registry: this.registry,
+            privateKey: this.options.privateKey,
             sharedServer: this.server?.getServer() ?? undefined
         });
 

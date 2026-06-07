@@ -55,6 +55,8 @@ export type ServiceInfo = z.infer<typeof ServiceInfoSchema>;
  */
 export const NodeInfoSchema = z.object({
     nodeID: z.string(),
+    publicKey: z.string().optional(),
+    privateKey: z.string().optional(), // Optional, usually only present for local node
     type: z.string(),
     nodeType: z.string().optional(),
     trustLevel: z.enum(['internal', 'user', 'public']).default('public'),

@@ -85,7 +85,7 @@ The orchestrator proactively checks for the broker provider after each module's 
 Each module's `onStart(app)` is called in registration order. This is where:
 - `RegistryModule` starts its pruning timer (every 5s) and metrics timer (every 10s)
 - `NetworkModule` starts the WebSocket server, connects to bootstrap peers, and begins gossip
-- `DatabaseModule` connects to MongoDB and installs the CRUD middleware onto the broker
+- `DatabaseModule` connects to MongoDB and installs the CRUD middleware onto the broker (only if the broker is already initialized).
 - `BrokerModule` calls `onStart` on every registered service module
 
 ### Phase 3: `onReady` — Final State

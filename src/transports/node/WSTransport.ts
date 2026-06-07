@@ -5,11 +5,20 @@ import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { nanoid } from 'nanoid';
 import { ILogger } from '../../interfaces/ILogger.js';
+import { AuthHandshakeManager } from '../../core/AuthHandshakeManager.js';
+import { IServiceRegistry } from '../../interfaces/IServiceRegistry.js';
 
 interface PendingRPC {
     resolve: (value: unknown) => void;
     reject: (reason: unknown) => void;
     timeout: NodeJS.Timeout;
+}
+
+interface WSPeerState {
+    ws: IWS;
+    nodeID: string | null;
+    isAuthenticated: boolean;
+    challenge?: string;
 }
 
 /**
@@ -23,7 +32,10 @@ export class WSTransport extends BaseTransport {
     private server: http.Server | null = null;
     private port: number;
     private peers = new Map<string, IWS>();
+    private peerStates = new Set<WSPeerState>();
     public logger?: ILogger;
+    public registry?: IServiceRegistry;
+    public privateKey?: string;
 
     private pendingRPCs = new Map<string, PendingRPC>();
     private static readonly RPC_TIMEOUT_MS = 10000;
@@ -43,15 +55,13 @@ export class WSTransport extends BaseTransport {
 
     private proactiveReplay(): void {
         this.logger?.info('[WSTransport] Initializing proactive offline queue replay...');
-        // Proactive Replay Implementation:
-        // 1. Query all targets with pending RPCs from local storage
-        // 2. For each target, check if nodeID is in registry
-        // 3. If found, call this.connectToPeer(nodeID, node.address)
     }
 
     async connect(opts: TransportConnectOptions): Promise<void> {
         this.nodeID = opts.nodeID || this.nodeID;
         this.logger = opts.logger;
+        this.registry = opts.registry;
+        this.privateKey = opts.privateKey;
 
         if (opts.sharedServer) {
             this.logger?.debug(`[WSTransport] Attaching to shared server...`);
@@ -94,22 +104,43 @@ export class WSTransport extends BaseTransport {
     private setupWSSHandlers() {
         if (!this.wss) return;
         this.wss.on('connection', (ws: IWS) => {
-            let peerId: string | null = null;
+            const peerState: WSPeerState = {
+                ws,
+                nodeID: null,
+                isAuthenticated: false
+            };
+            this.peerStates.add(peerState);
+
+            // Initiate challenge
+            const challenge = AuthHandshakeManager.generateChallenge();
+            peerState.challenge = challenge;
+
+            const authPacket: MeshPacket = {
+                id: nanoid(),
+                topic: '$auth.challenge',
+                type: 'AUTH',
+                senderNodeID: this.nodeID,
+                timestamp: Date.now(),
+                data: { type: 'challenge', challenge }
+            } as MeshPacket;
+
+            ws.send(new TextDecoder().decode(this.serializer.serialize(authPacket)));
 
             ws.on('message', (raw: unknown) => {
-                this.handleIncomingMessage(raw, ws, (id) => {
+                this.handleIncomingMessage(raw, peerState, (id) => {
                     if (!this.peers.has(id)) {
                         this.peers.set(id, ws);
                         this.emit('peer:connect', id);
                     }
-                    peerId = id;
+                    peerState.nodeID = id;
                 });
             });
 
             ws.on('close', () => {
-                if (peerId) {
-                    this.peers.delete(peerId);
-                    this.emit('peer:disconnect', peerId);
+                this.peerStates.delete(peerState);
+                if (peerState.nodeID) {
+                    this.peers.delete(peerState.nodeID);
+                    this.emit('peer:disconnect', peerState.nodeID);
                 }
             });
 
@@ -117,7 +148,7 @@ export class WSTransport extends BaseTransport {
         });
     }
 
-    private handleIncomingMessage(raw: unknown, socket: IWS, onIdentify?: (id: string) => void) {
+    private async handleIncomingMessage(raw: unknown, peerState: WSPeerState, onIdentify?: (id: string) => void) {
         try {
             const payloadString = this.decodePayload(raw);
             const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
@@ -129,6 +160,98 @@ export class WSTransport extends BaseTransport {
 
             const { topic, data, id, type, senderNodeID } = envelope;
             const senderId = senderNodeID;
+
+            // Authentication Handshake
+            if (type === 'AUTH') {
+                const authData = data as { type: string; challenge?: string; response?: string; nodeID?: string };
+                
+                if (authData.type === 'challenge' && authData.challenge) {
+                    if (!this.privateKey) {
+                        this.logger?.error('[WSTransport] Cannot respond to auth challenge: private key missing');
+                        return;
+                    }
+                    const response = await AuthHandshakeManager.createResponse(authData.challenge, this.privateKey);
+                    
+                    // Get our public key to include in response for first-contact discovery
+                    const myNode = this.registry?.getNode(this.nodeID);
+                    const publicKey = myNode?.publicKey;
+
+                    const responsePacket: MeshPacket = {
+                        id: nanoid(),
+                        topic: '$auth.response',
+                        type: 'AUTH',
+                        senderNodeID: this.nodeID,
+                        timestamp: Date.now(),
+                        data: { 
+                            type: 'response', 
+                            response, 
+                            nodeID: this.nodeID, 
+                            challenge: authData.challenge,
+                            publicKey // Include public key for verification
+                        }
+                    } as MeshPacket;
+                    peerState.ws.send(new TextDecoder().decode(this.serializer.serialize(responsePacket)));
+                    return;
+                }
+
+                if (authData.type === 'response' && authData.response && authData.nodeID && authData.challenge) {
+                    if (authData.challenge !== peerState.challenge) {
+                        this.logger?.warn(`[WSTransport] Auth failed: challenge mismatch for node ${authData.nodeID}`);
+                        peerState.ws.close();
+                        return;
+                    }
+
+                    let publicKey = this.registry?.getNode(authData.nodeID)?.publicKey;
+                    
+                    // If not in registry, try to use the one provided in the auth packet
+                    if (!publicKey && (authData as any).publicKey) {
+                        publicKey = (authData as any).publicKey;
+                        this.logger?.debug(`[WSTransport] Using provided public key for new node ${authData.nodeID}`);
+                        
+                        // Optionally: verify if this public key is trusted/allowed
+                        // For now, we trust discovery but verify the signature
+                        this.registry?.registerNode({
+                            nodeID: authData.nodeID,
+                            publicKey: publicKey as string,
+                            type: 'node',
+                            namespace: 'default',
+                            addresses: [],
+                            services: [],
+                            nodeSeq: 0,
+                            hostname: 'unknown',
+                            timestamp: Date.now(),
+                            available: true,
+                            trustLevel: 'public',
+                            capabilities: {},
+                            metadata: {},
+                            pid: 0
+                        });
+                    }
+
+                    if (!publicKey) {
+                        this.logger?.warn(`[WSTransport] Auth failed: public key not found for node ${authData.nodeID}`);
+                        peerState.ws.close();
+                        return;
+                    }
+
+                    const isValid = await AuthHandshakeManager.verifyResponse(authData.response, authData.challenge, publicKey);
+                    if (isValid) {
+                        peerState.isAuthenticated = true;
+                        peerState.nodeID = authData.nodeID;
+                        if (onIdentify) onIdentify(authData.nodeID);
+                        this.logger?.info(`[WSTransport] Node ${authData.nodeID} authenticated successfully`);
+                    } else {
+                        this.logger?.warn(`[WSTransport] Auth failed: invalid signature from node ${authData.nodeID}`);
+                        peerState.ws.close();
+                    }
+                    return;
+                }
+            }
+
+            // Drop non-AUTH packets from unauthenticated peers
+            if (!peerState.isAuthenticated) {
+                return;
+            }
 
             // Phase 3: Drop packets from self (Loopback suppression for uncontrolled transport echoes)
             if (senderId === this.nodeID) {
@@ -158,6 +281,10 @@ export class WSTransport extends BaseTransport {
             for (const handler of handlers) {
                 handler(data);
             }
+
+            // Enrich packet with auth metadata for interceptors
+            envelope.meta = { ...envelope.meta, authenticatedNodeID: peerState.nodeID };
+
             this.emit('packet', envelope);
         } catch (err: unknown) {
             this.emit('error', err instanceof Error ? err : new Error(String(err)));
@@ -203,6 +330,7 @@ export class WSTransport extends BaseTransport {
             else ws.close();
         }
         this.peers.clear();
+        this.peerStates.clear();
 
         if (this.wss) {
             this.wss.close();
@@ -325,10 +453,31 @@ export class WSTransport extends BaseTransport {
         return new Promise((resolve, reject) => {
             const ws = new WebSocket(url) as IWS;
 
+            const peerState: WSPeerState = {
+                ws,
+                nodeID: nodeID,
+                isAuthenticated: false
+            };
+            this.peerStates.add(peerState);
+
             ws.on('open', () => {
                 this.reconnectAttempts = 0;
-                this.peers.set(nodeID, ws);
-                this.emit('peer:connect', nodeID);
+
+                // Initiate mutual auth: Client also challenges the Server
+                const challenge = AuthHandshakeManager.generateChallenge();
+                peerState.challenge = challenge;
+
+                const authPacket: MeshPacket = {
+                    id: nanoid(),
+                    topic: '$auth.challenge',
+                    type: 'AUTH',
+                    senderNodeID: this.nodeID,
+                    timestamp: Date.now(),
+                    data: { type: 'challenge', challenge }
+                } as MeshPacket;
+
+                ws.send(new TextDecoder().decode(this.serializer.serialize(authPacket)));
+
                 resolve();
             });
 
@@ -337,14 +486,18 @@ export class WSTransport extends BaseTransport {
             });
 
             ws.on('message', (data: unknown) => {
-                this.handleIncomingMessage(data, ws, (id) => {
+                this.handleIncomingMessage(data, peerState, (id) => {
                     this.peers.set(id, ws);
+                    this.emit('peer:connect', id);
                 });
             });
 
             ws.on('close', () => {
-                this.peers.delete(nodeID);
-                this.emit('peer:disconnect', nodeID);
+                this.peerStates.delete(peerState);
+                if (peerState.nodeID) {
+                    this.peers.delete(peerState.nodeID);
+                    this.emit('peer:disconnect', peerState.nodeID);
+                }
                 this.handleReconnection(nodeID, url);
             });
         });

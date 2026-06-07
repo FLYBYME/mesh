@@ -6,6 +6,7 @@ import { RegistryModule } from '../../modules/RegistryModule.js';
 import { NetworkModule } from '../../modules/NetworkModule.js';
 import { DatabaseModule } from '../../modules/DatabaseModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
+import { SecurityModule } from '../../modules/SecurityModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -20,6 +21,8 @@ interface StartOptions {
     services?: string[];
     db?: string;
     logLevel?: string;
+    privateKey?: string;
+    publicKey?: string;
 }
 
 /**
@@ -42,6 +45,8 @@ export class StartCommand extends BaseCommand {
             }, [])
             .option('-d, --db <uri>', 'MongoDB connection URI')
             .option('-l, --log-level <level>', 'Logging level (debug, info, warn, error)')
+            .option('--private-key <key>', 'Ed25519 private key (Base64)')
+            .option('--public-key <key>', 'Ed25519 public key (Base64)')
             .action(async (options: StartOptions, cmd: Command) => {
                 await this.execute({ ...cmd.optsWithGlobals(), ...options });
             });
@@ -84,6 +89,14 @@ export class StartCommand extends BaseCommand {
                 nodeID: nodeId,
                 logger
             });
+
+            // Use security module if keys are provided
+            if (options.privateKey || options.publicKey) {
+                app.use(new SecurityModule({
+                    privateKey: options.privateKey,
+                    publicKey: options.publicKey
+                }));
+            }
 
             // Use core modules
             app.use(new RegistryModule());

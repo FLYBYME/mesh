@@ -2,7 +2,7 @@ import { PeerState, WirePacketType } from '../../interfaces/IMeshNetwork.js';
 import { TCPTransport } from '../node/TCPTransport.js';
 import { Env } from '../../utils/Env.js';
 import { TCPFrameCodec } from './TCPFrameCodec.js';
-import { IsomorphicCrypto } from '../../utils/Crypto.js';
+import { AuthHandshakeManager } from '../../core/AuthHandshakeManager.js';
 
 /**
  * TCPAuthHandler — handles strictly typed Ed25519 handshake for Zero-Trust TCP.
@@ -32,9 +32,7 @@ export class TCPAuthHandler {
                     throw new Error(`Public key not found for node: ${data.nodeID}`);
                 }
 
-                // Verify that the client signed the nonce we sent (or they sent back)
-                // For simplicity, we'll verify the signature of the nonce
-                const isValid = await IsomorphicCrypto.verifyEd25519(
+                const isValid = await AuthHandshakeManager.verifyResponse(
                     data.signature,
                     data.nonce,
                     nodeInfo.publicKey
@@ -60,7 +58,7 @@ export class TCPAuthHandler {
                     throw new Error('No private key available to sign auth challenge');
                 }
 
-                const signature = await IsomorphicCrypto.signEd25519(
+                const signature = await AuthHandshakeManager.createResponse(
                     data.nonce!,
                     this.transport.privateKey
                 );

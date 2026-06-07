@@ -303,6 +303,9 @@ export class TCPTransport extends BaseTransport {
                         return;
                     }
 
+                    // Enrich packet with auth metadata for interceptors
+                    packet.meta = { ...packet.meta, authenticatedNodeID: peer.nodeID };
+
                     this.emit('packet', packet);
                 } catch (err) {
                     this.logger?.error(`[TCPTransport] Deserialization error: ${err instanceof Error ? err.message : String(err)}`);

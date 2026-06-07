@@ -31,6 +31,7 @@ export * from './core/ServiceBroker.js';
 export * from './core/ContextStack.js';
 export * from './core/MeshError.js';
 export * from './core/BootOrchestrator.js';
+export * from './core/AuthHandshakeManager.js';
 
 // Interceptors
 export * from './interceptors/index.js';
@@ -53,6 +54,7 @@ export * from './modules/DatabaseModule.js';
 export * from './modules/RegistryModule.js';
 export * from './modules/NetworkModule.js';
 export * from './modules/BrokerModule.js';
+export * from './modules/SecurityModule.js';
 
 // CLI Core Tools
 export * from './cli/core/ZodToCliMapper.js';
