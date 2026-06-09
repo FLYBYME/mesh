@@ -291,11 +291,16 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     public registerNode(node: CoreNodeInfo): void {
         const existing = this.nodes.get(node.nodeID);
 
+        // Normalize addresses for better matching (e.g. localhost -> 127.0.0.1)
+        const normalizeAddr = (addr: string) => addr.replace('//localhost:', '//127.0.0.1:');
+        const nodeAddresses = (node.addresses || []).map(normalizeAddr);
+
         // 1. Ghost of Self Protection
-        if (node.nodeID !== this.localNodeID && node.addresses && node.addresses.length > 0) {
+        if (node.nodeID !== this.localNodeID && nodeAddresses.length > 0) {
             const localNode = this.nodes.get(this.localNodeID);
             if (localNode && localNode.addresses && localNode.addresses.length > 0) {
-                const hasOverlap = node.addresses.some(addr => localNode.addresses.includes(addr));
+                const localAddresses = localNode.addresses.map(normalizeAddr);
+                const hasOverlap = nodeAddresses.some(addr => localAddresses.includes(addr));
                 if (hasOverlap) {
                     this.logger.debug(`Ignoring ghost of self: ${node.nodeID} at ${node.addresses.join(', ')}`);
                     return;
@@ -304,25 +309,34 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         }
 
         // 2. Conflict Resolution (Node Rebirth)
-        // If an incoming node has the same address as an existing DIFFERENT node,
-        // it's likely a restart with a new ID.
-        if (node.addresses && node.addresses.length > 0) {
+        if (nodeAddresses.length > 0) {
             for (const [id, entry] of this.nodes.entries()) {
                 if (id === node.nodeID) continue;
-                if (entry.addresses && entry.addresses.some(addr => node.addresses!.includes(addr))) {
-                    this.logger.info(`Address conflict detected: ${node.nodeID} replacing stale ${id} at ${node.addresses.join(', ')}`);
-                    this.nodes.delete(id);
-                    if (this.dht) this.dht.removeNode(id);
+                if (entry.addresses && entry.addresses.length > 0) {
+                    const entryAddresses = entry.addresses.map(normalizeAddr);
+                    if (entryAddresses.some(addr => nodeAddresses.includes(addr))) {
+                        this.logger.info(`Address conflict detected: ${node.nodeID} replacing stale ${id} at ${node.addresses.join(', ')}`);
+                        this.nodes.delete(id);
+                        if (this.dht) this.dht.removeNode(id);
+                    }
                 }
             }
         }
 
+        // If node exists and seq is lower, ignore incoming (stale info)
         if (existing && (existing.nodeSeq ?? 0) > (node.nodeSeq ?? 0)) {
             return;
         }
 
+        // If node exists and seq is same, DO NOT refresh timestamp.
+        // Timestamp refresh should only happen via direct heartbeat() or seq update.
+        // This prevents PEX (gossip) from keeping dead nodes alive indefinitely.
         if (existing && (existing.nodeSeq ?? 0) === (node.nodeSeq ?? 0)) {
-            existing.timestamp = Date.now();
+            // Only update metadata/metrics if needed, but NOT the lease timestamp
+            existing.available = node.available ?? existing.available;
+            if (node.cpu !== undefined) existing.cpu = node.cpu;
+            if (node.activeRequests !== undefined) existing.activeRequests = node.activeRequests;
+            
             this.emit('changed', node.nodeID);
             return;
         }

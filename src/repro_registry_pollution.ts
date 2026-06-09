@@ -20,7 +20,7 @@ async function main() {
     // Node 1 (Initial Provider)
     const app1 = new MeshApp({ nodeID: 'node-1-old', logger });
     const transport1 = new WSTransport(serializer, 6005);
-    app1.use(new RegistryModule({ ttl: 60000 })); // Long TTL to ensure persistence
+    app1.use(new RegistryModule({ ttl: 5000 })); // Short TTL
     app1.use(new NetworkModule({ transports: [transport1] }));
     app1.use(new BrokerModule());
     await app1.registerModule(new DemoSkill());
@@ -29,7 +29,7 @@ async function main() {
     // Node 2 (Relay)
     const app2 = new MeshApp({ nodeID: 'node-2', logger });
     const transport2 = new WSTransport(serializer, 6006);
-    app2.use(new RegistryModule({ ttl: 60000 }));
+    app2.use(new RegistryModule({ ttl: 5000 }));
     app2.use(new NetworkModule({
         transports: [transport2],
         bootstrapNodes: ['ws://127.0.0.1:6005']
@@ -40,7 +40,7 @@ async function main() {
     // Node 3 (Client)
     const app3 = new MeshApp({ nodeID: 'node-3', logger });
     const transport3 = new WSTransport(serializer, 6007);
-    app3.use(new RegistryModule({ ttl: 60000 }));
+    app3.use(new RegistryModule({ ttl: 5000 }));
     app3.use(new NetworkModule({
         transports: [transport3],
         bootstrapNodes: ['ws://127.0.0.1:6006']
@@ -61,7 +61,7 @@ async function main() {
 
     const app1New = new MeshApp({ nodeID: 'node-1-new', logger });
     const transport1New = new WSTransport(serializer, 6005); // Same port
-    app1New.use(new RegistryModule({ ttl: 60000 }));
+    app1New.use(new RegistryModule({ ttl: 5000 }));
     app1New.use(new NetworkModule({
         transports: [transport1New],
         bootstrapNodes: ['ws://127.0.0.1:6006'] // Connect back to relay
@@ -71,18 +71,21 @@ async function main() {
     await app1New.start();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. WAIT FOR PEX POLLUTION
+    // 3. WAIT FOR TTL TO CLEAN UP GHOSTS
     // ─────────────────────────────────────────────────────────────────────────
-    logger.info('[Repro] Phase 3: Waiting for PEX to spread the "ghost" of node-1-old...');
-    // We wait for some gossip rounds
-    for (let i = 0; i < 10; i++) {
+    logger.info('[Repro] Phase 3: Waiting for TTL (12s) to clean up ghosts if PEX doesn\'t refresh them...');
+    // Pruning happens every 5s, checks for age > TTL*2 (10s)
+    for (let i = 0; i < 15; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
-        const nodes = app1New.registry.getNodes();
+        const nodes = app3.registry.getNodes();
         const hasGhost = nodes.some(n => n.nodeID === 'node-1-old');
-        if (hasGhost) {
-            logger.warn(`[Repro] POLLUTION DETECTED at T+${i+1}s! Node 1-new has "node-1-old" in its registry.`);
-            logger.warn(`[Repro] Node 1-new Registry: ${nodes.map(n => n.nodeID).join(', ')}`);
+        if (!hasGhost) {
+            logger.info(`[Repro] SUCCESS: Ghost "node-1-old" disappeared at T+${i+1}s!`);
             break;
+        }
+        if (i === 14) {
+            logger.error(`[Repro] FAILURE: Ghost "node-1-old" still present after ${i+1}s.`);
+            logger.error(`[Repro] Node 3 Registry: ${nodes.map(n => n.nodeID).join(', ')}`);
         }
     }
 

@@ -116,12 +116,34 @@ export class TransportManager extends EventEmitter {
 
     public getAddresses(): string[] {
         const addresses: string[] = [];
+        let localIPs: string[] = ['127.0.0.1'];
+
+        // Try to get all local network interface IPs if in Node.js
+        try {
+            if (typeof process !== 'undefined' && process.release?.name === 'node') {
+                const os = eval('require')('os');
+                const interfaces = os.networkInterfaces();
+                for (const name of Object.keys(interfaces)) {
+                    for (const iface of interfaces[name]!) {
+                        if (iface.family === 'IPv4' || (iface.family as unknown) === 4) {
+                            localIPs.push(iface.address);
+                        }
+                    }
+                }
+                localIPs = [...new Set(localIPs)];
+            }
+        } catch {
+            // Fallback to 127.0.0.1
+        }
+
         for (const t of this.transports.values()) {
             if (t.getPort) {
                 try {
                     const port = t.getPort();
                     if (port > 0) {
-                        addresses.push(`${t.protocol}://127.0.0.1:${port}`);
+                        for (const ip of localIPs) {
+                            addresses.push(`${t.protocol}://${ip}:${port}`);
+                        }
                     }
                 } catch {
                     // Ignore if port not available
