@@ -113,4 +113,21 @@ export class TransportManager extends EventEmitter {
     isConnected(): boolean {
         return Array.from(this.transports.values()).some(t => t.isConnected());
     }
+
+    public getAddresses(): string[] {
+        const addresses: string[] = [];
+        for (const t of this.transports.values()) {
+            if (t.getPort) {
+                try {
+                    const port = t.getPort();
+                    if (port > 0) {
+                        addresses.push(`${t.protocol}://127.0.0.1:${port}`);
+                    }
+                } catch {
+                    // Ignore if port not available
+                }
+            }
+        }
+        return addresses;
+    }
 }

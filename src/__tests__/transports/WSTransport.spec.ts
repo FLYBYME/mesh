@@ -31,7 +31,10 @@ describe('WSTransport', () => {
     });
 
     const createMockServer = () => ({
-        listen: jest.fn((_p: number, cb: () => void) => cb && cb()),
+        listen: jest.fn((...args: any[]) => {
+            const cb = args[args.length - 1];
+            if (typeof cb === 'function') cb();
+        }),
         address: jest.fn(() => ({ port: 5005 })),
         on: jest.fn(),
         close: jest.fn((cb: () => void) => cb && cb())
@@ -67,7 +70,7 @@ describe('WSTransport', () => {
             });
 
             expect(MockedHttp.createServer).toHaveBeenCalled();
-            expect(mockServer.listen).toHaveBeenCalledWith(5005, expect.any(Function));
+            expect(mockServer.listen).toHaveBeenCalledWith(5005, '0.0.0.0', expect.any(Function));
             expect(transport.isConnected()).toBe(true);
         });
 

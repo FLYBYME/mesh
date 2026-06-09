@@ -290,6 +290,33 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
     public registerNode(node: CoreNodeInfo): void {
         const existing = this.nodes.get(node.nodeID);
+
+        // 1. Ghost of Self Protection
+        if (node.nodeID !== this.localNodeID && node.addresses && node.addresses.length > 0) {
+            const localNode = this.nodes.get(this.localNodeID);
+            if (localNode && localNode.addresses && localNode.addresses.length > 0) {
+                const hasOverlap = node.addresses.some(addr => localNode.addresses.includes(addr));
+                if (hasOverlap) {
+                    this.logger.debug(`Ignoring ghost of self: ${node.nodeID} at ${node.addresses.join(', ')}`);
+                    return;
+                }
+            }
+        }
+
+        // 2. Conflict Resolution (Node Rebirth)
+        // If an incoming node has the same address as an existing DIFFERENT node,
+        // it's likely a restart with a new ID.
+        if (node.addresses && node.addresses.length > 0) {
+            for (const [id, entry] of this.nodes.entries()) {
+                if (id === node.nodeID) continue;
+                if (entry.addresses && entry.addresses.some(addr => node.addresses!.includes(addr))) {
+                    this.logger.info(`Address conflict detected: ${node.nodeID} replacing stale ${id} at ${node.addresses.join(', ')}`);
+                    this.nodes.delete(id);
+                    if (this.dht) this.dht.removeNode(id);
+                }
+            }
+        }
+
         if (existing && (existing.nodeSeq ?? 0) > (node.nodeSeq ?? 0)) {
             return;
         }

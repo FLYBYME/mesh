@@ -171,6 +171,16 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
             sharedServer: this.server?.getServer() ?? undefined
         });
 
+        // --- ADDED: Populate addresses from transports ---
+        const localNode = this.registry.getNode(this.nodeID);
+        if (localNode) {
+            const transportAddresses = this.transport.getAddresses();
+            if (transportAddresses.length > 0) {
+                localNode.addresses = [...new Set([...(localNode.addresses || []), ...transportAddresses])];
+                this.registry.registerNode(localNode);
+            }
+        }
+
         await this.orchestrator.start();
     }
 

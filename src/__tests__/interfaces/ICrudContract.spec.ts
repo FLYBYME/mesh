@@ -119,10 +119,10 @@ describe('ICrudContract — defineCrud', () => {
             expect(params.search).toBe('test');
         });
 
-        it('should make all params optional', () => {
+        it('should make all params optional and use defaults', () => {
             const params = CrudParamsSchema.parse({});
-            expect(params.limit).toBeUndefined();
-            expect(params.offset).toBeUndefined();
+            expect(params.limit).toBe(100);
+            expect(params.offset).toBe(0);
         });
     });
 

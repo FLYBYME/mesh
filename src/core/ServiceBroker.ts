@@ -513,7 +513,7 @@ export class ServiceBroker implements IServiceBroker {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 this.pendingRequests.delete(requestId);
-                this.logger.info('Nodes available at timeout:', this.registry.getNodes());
+                this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
                 reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
             }, timeoutMs);
             this.pendingRequests.set(requestId, { resolve, reject, timeout });

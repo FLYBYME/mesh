@@ -76,7 +76,7 @@ export class NetworkController {
     }
 
     private async handlePresence(data: PresenceData): Promise<void> {
-        this.logger.info(`HandlePresence called for node`, {
+        this.logger.debug(`HandlePresence called for node`, {
             hasOrchestrator: !!this.node.orchestrator,
             hasDataNode: !!data?.node,
             internal: true

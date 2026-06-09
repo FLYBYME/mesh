@@ -110,7 +110,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         if (!localNode) return;
 
         try {
-            this.logger.info(`Broadcasting presence for ${this.node.nodeID}${targetNodeID ? ` to ${targetNodeID}` : ''}...`);
+            this.logger.debug(`Broadcasting presence for ${this.node.nodeID}${targetNodeID ? ` to ${targetNodeID}` : ''}...`);
             await this.node.send(targetNodeID || '*', '$node.presence', {
                 node: localNode
             });
