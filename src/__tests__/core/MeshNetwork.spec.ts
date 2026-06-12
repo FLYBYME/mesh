@@ -261,6 +261,22 @@ describe('MeshNetwork', () => {
     // ─── miscellaneous ───────────────────────────────────────────────────────
 
     describe('Miscellaneous', () => {
+        // --- ADDED: Test address population ---
+        it('should populate local node addresses into registry on start', async () => {
+            const registryWithGet = registry as any;
+            registryWithGet.getNode.mockReturnValue({ nodeID, addresses: [] });
+            
+            // Mock transport address
+            transport.getPort = jest.fn().mockReturnValue(6005);
+            transport.protocol = 'ws';
+            
+            await network.start();
+            
+            expect(registry.registerNode).toHaveBeenCalledWith(expect.objectContaining({
+                addresses: expect.arrayContaining(['ws://127.0.0.1:6005'])
+            }));
+        });
+
         it('should support generic onMessage(*) handlers', async () => {
             const handler = jest.fn();
             network.onMessage('*', handler);

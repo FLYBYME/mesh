@@ -81,6 +81,58 @@ describe('Registry', () => {
         });
     });
 
+    // ─── Conflict Resolution ────────────────────────────────────────────────
+
+    describe('registerNode conflict resolution', () => {
+        beforeEach(() => {
+            // Setup local node with an address
+            const local = registry.getNode(localNodeID)!;
+            local.addresses = ['ws://127.0.0.1:5000'];
+            registry.registerNode(local);
+        });
+
+        it('should ignore ghost of self (same address, different ID)', () => {
+            const ghost = createNodeInfo('ghost-node');
+            ghost.addresses = ['ws://127.0.0.1:5000'];
+            
+            registry.registerNode(ghost);
+            
+            expect(registry.getNode('ghost-node')).toBeUndefined();
+        });
+
+        it('should replace stale node (same address, different ID)', () => {
+            const staleNode = createNodeInfo('stale-node');
+            staleNode.addresses = ['ws://127.0.0.1:6000'];
+            registry.registerNode(staleNode);
+            expect(registry.getNode('stale-node')).toBeDefined();
+
+            const newNode = createNodeInfo('new-node');
+            newNode.addresses = ['ws://127.0.0.1:6000'];
+            
+            registry.registerNode(newNode);
+            
+            expect(registry.getNode('stale-node')).toBeUndefined();
+            expect(registry.getNode('new-node')).toBeDefined();
+        });
+        
+        it('should NOT refresh timestamp on gossip if seq is unchanged', async () => {
+            const remoteNode = createNodeInfo('remote-node');
+            registry.registerNode(remoteNode);
+            
+            const originalNode = registry.getNode('remote-node')!;
+            const originalTimestamp = originalNode.timestamp;
+            
+            // Wait to ensure time passes
+            await new Promise(r => setTimeout(r, 50));
+            
+            // Register same node again via gossip
+            registry.registerNode(remoteNode);
+            
+            const updatedNode = registry.getNode('remote-node')!;
+            expect(updatedNode.timestamp).toBe(originalTimestamp);
+        });
+    });
+
     // ─── unregister / available ──────────────────────────────────────────────
 
     describe('unregisterNode / getAvailableNodes', () => {
