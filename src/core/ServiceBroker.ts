@@ -224,6 +224,7 @@ export class ServiceBroker implements IServiceBroker {
                 handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
                     const serviceCtx = {
                         broker: this,
+                        meta: ctx.meta,
                         correlationId: ctx.correlationID || nanoid(),
                         nodeID: this.nodeID,
                         call: async <K extends keyof IServiceToolRegistry>(
