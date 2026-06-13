@@ -6,6 +6,7 @@ import type { IContext } from './IContext.js';
 import type { IMeshMeta } from './IMeshMeta.js';
 import type { IBrokerPlugin } from './IBrokerPlugin.js';
 import type { IMiddleware } from './IInterceptor.js';
+import type { ICallOptions } from './IServiceContext.js';
 /**
  * IServiceBroker — Interface for the central communication kernel.
  */
@@ -27,7 +28,7 @@ export interface IServiceBroker {
     call<K extends keyof IServiceToolRegistry>(
         tool: K,
         params: IServiceToolRegistry[K]['params'],
-        options?: { nodeID?: string; timeout?: number }
+        options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /** Typed event emit. */

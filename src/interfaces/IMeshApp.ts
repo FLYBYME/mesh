@@ -3,6 +3,8 @@ import type { ILogger } from './ILogger.js';
 import type { IServiceModule } from './IServiceModule.js';
 import type { IProviderToken } from './IProviderToken.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
+import type { IMeshMeta } from './IMeshMeta.js';
+import type { ICallOptions } from './IServiceContext.js';
 export interface AppConfig extends Record<string, unknown> {
     nodeID: string;
     namespace?: string;
@@ -53,6 +55,6 @@ export interface IMeshApp extends IMeshNode {
     call<K extends keyof IServiceToolRegistry>(
         tool: K,
         params: IServiceToolRegistry[K]['params'],
-        options?: { nodeID?: string; timeout?: number }
+        options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>
 }

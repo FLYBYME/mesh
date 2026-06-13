@@ -9,7 +9,7 @@ import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
-import type { IServiceContext } from '../interfaces/IServiceContext.js';
+import type { IServiceContext, ICallOptions } from '../interfaces/IServiceContext.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
@@ -262,10 +262,11 @@ export class ServiceBroker implements IServiceBroker {
                         broker: this,
                         correlationId: packet?.id || nanoid(),
                         nodeID: this.nodeID,
+                        meta: packet?.meta,
                         call: async <K extends keyof IServiceToolRegistry>(
                             tool: K,
                             params: IServiceToolRegistry[K]['params'],
-                            options?: { nodeID?: string; timeout?: number }
+                            options?: ICallOptions<IMeshMeta>
                         ): Promise<IServiceToolRegistry[K]['returns']> => {
                             const result = await this.call(tool, params, options);
                             return result as IServiceToolRegistry[K]['returns'];
@@ -292,7 +293,7 @@ export class ServiceBroker implements IServiceBroker {
     public async call<K extends keyof IServiceToolRegistry>(
         tool: K,
         params: IServiceToolRegistry[K]['params'],
-        options?: { nodeID?: string; timeout?: number }
+        options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']> {
         return this.internalCall(tool as string, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
     }
@@ -320,7 +321,7 @@ export class ServiceBroker implements IServiceBroker {
     private async internalCall(
         toolName: string,
         params: Record<string, unknown>,
-        options?: { nodeID?: string; timeout?: number },
+        options?: ICallOptions<IMeshMeta>,
         parentCtx?: IContext<Record<string, unknown>, Record<string, unknown>>
     ): Promise<unknown> {
         const schema = MeshToolSchemaRegistry.get(toolName);
@@ -362,7 +363,7 @@ export class ServiceBroker implements IServiceBroker {
             correlationID: activeCtx?.correlationID || nanoid(),
             toolName,
             params: params,
-            meta: { ...activeCtx?.meta as IMeshMeta, timeout },
+            meta: { ...(activeCtx?.meta as IMeshMeta), ...(options?.meta as IMeshMeta), timeout },
             targetNodeID: targetNodeID,
             callerID: activeCtx?.id || null,
             nodeID: this.nodeID,

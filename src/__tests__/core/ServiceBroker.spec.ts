@@ -32,6 +32,23 @@ describe('ServiceBroker', () => {
             expect(result.message).toContain('Test');
             expect(result.message).toContain('Healthy');
         });
+
+        it('should propagate metadata from options to context', async () => {
+            let capturedMeta: any = null;
+            broker.use(async (ctx, next) => {
+                if (ctx.toolName === 'demo.status') {
+                    capturedMeta = ctx.meta;
+                }
+                return next();
+            });
+
+            await broker.call('demo.status', { name: 'MetaTest' }, {
+                meta: { customValue: '123' } as any
+            });
+
+            expect(capturedMeta).toBeDefined();
+            expect(capturedMeta.customValue).toBe('123');
+        });
     });
 
     // ─── Zod validation ─────────────────────────────────────────────────────

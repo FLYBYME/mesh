@@ -5,7 +5,9 @@ import type {
     IProviderToken,
     ILogger,
     IServiceBroker,
-    IServiceRegistry
+    IServiceRegistry,
+    ICallOptions,
+    IMeshMeta
 } from '../interfaces/index.js';
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
@@ -140,7 +142,7 @@ export class MeshApp implements IMeshApp {
     public async call<K extends keyof IServiceToolRegistry>(
         tool: K,
         params: IServiceToolRegistry[K]['params'],
-        options?: { nodeID?: string; timeout?: number }
+        options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']> {
         const broker = this.getProvider<IServiceBroker>('broker');
         return broker.call(tool, params, options);

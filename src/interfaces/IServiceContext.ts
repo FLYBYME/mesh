@@ -1,5 +1,12 @@
 import type { ILogger } from './ILogger.js';
 import type { IServiceBroker } from './IServiceBroker.js';
+import type { IMeshMeta } from './IMeshMeta.js';
+
+export interface ICallOptions<TMeta = IMeshMeta> {
+    nodeID?: string;
+    timeout?: number;
+    meta?: TMeta;
+}
 
 /**
  * Global Registry Declarations:
@@ -30,7 +37,7 @@ declare global {
 /**
  * IServiceContext: The strictly-typed execution context injected into every tool handler.
  */
-export interface IServiceContext {
+export interface IServiceContext<TMeta = IMeshMeta> {
     /** The service broker instance handling this execution context. */
     readonly broker: IServiceBroker;
 
@@ -43,11 +50,14 @@ export interface IServiceContext {
     /** Optional abort signal for cancellation. */
     readonly signal?: AbortSignal;
 
+    /** Context metadata. */
+    readonly meta?: TMeta;
+
     /** Strictly typed tool call. */
     call<K extends keyof IServiceToolRegistry>(
         tool: K,
         params: IServiceToolRegistry[K]['params'],
-        options?: { nodeID?: string; timeout?: number }
+        options?: ICallOptions<TMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /** Strictly typed event dispatch. */
