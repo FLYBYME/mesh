@@ -168,6 +168,7 @@ export interface NodeInfo {
     healthScore?: number;
     lastHeartbeatTime?: number;
     publicKey?: string;
+    bootedAt?: number;
 }
 
 export interface IServiceNode {

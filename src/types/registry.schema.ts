@@ -73,6 +73,7 @@ export const NodeInfoSchema = z.object({
     lastHeartbeatTime: z.number().optional(),
     parentID: z.string().optional(),
     hidden: z.boolean().optional(),
+    bootedAt: z.number().optional(),
 
     // Telemetry / Health
     cpu: z.number().optional(),

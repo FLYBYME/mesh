@@ -61,6 +61,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             addresses: [],
             available: true,
             timestamp: Date.now(),
+            bootedAt: Date.now(),
             nodeSeq: 1,
             hostname: getHostname(),
             services: [],
@@ -356,6 +357,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             hostname: node.hostname || 'unknown',
             pid: node.pid || 0,
             timestamp: Date.now(),
+            bootedAt: node.bootedAt || existing?.bootedAt || Date.now(),
             available: node.available ?? true,
             lastHeartbeatTime: node.lastHeartbeatTime,
             parentID: node.parentID,
@@ -396,7 +398,11 @@ export class Registry extends EventEmitter implements IServiceRegistry {
                         timeout: contract.timeout
                     };
                     return acc;
-                }, {} as Record<string, RegistryToolInfo>)
+                }, {} as Record<string, RegistryToolInfo>),
+                events: Array.from(module.getEventHandlers().keys()).reduce((acc: Record<string, any>, name: string) => {
+                    acc[name] = { name };
+                    return acc;
+                }, {})
             };
 
             localNode.services = localNode.services || [];

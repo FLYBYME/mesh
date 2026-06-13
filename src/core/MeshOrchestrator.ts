@@ -97,6 +97,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             services: n.services,
             available: n.available,
             timestamp: n.timestamp,
+            bootedAt: n.bootedAt,
             nodeSeq: n.nodeSeq,
             nodeType: n.nodeType,
             parentID: n.parentID
