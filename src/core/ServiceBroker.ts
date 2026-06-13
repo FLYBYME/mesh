@@ -345,7 +345,7 @@ export class ServiceBroker implements IServiceBroker {
         const parentId = activeCtx?.spanId;
         const spanId = nanoid();
 
-        const timeout = options?.timeout || schema?.timeout;
+        const timeout = options?.timeout !== undefined ? options.timeout : schema?.timeout;
 
         const ctx: IContext<Record<string, unknown>, IMeshMeta> = {
             id: nanoid(),
@@ -361,31 +361,36 @@ export class ServiceBroker implements IServiceBroker {
             parentId,
         };
 
-        const timeoutMs = (ctx.meta?.timeout as number) || 10000;
+        const timeoutMs = ctx.meta?.timeout !== undefined ? (ctx.meta.timeout as number) : 10000;
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
+        let result: unknown;
 
-        const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => {
-                console.log(ctx, schema, timeout, timeoutMs)
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
-            }, timeoutMs);
-        });
+        if (timeoutMs > 0) {
+            const timeoutPromise = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
+                }, timeoutMs);
+            });
 
-        try {
-            const result = await Promise.race([resultPromise, timeoutPromise]);
-            if (schema?.returns) {
-                const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
-                if (isCrudProjection) {
-                    return result;
-                }
-                return (schema.returns as z.ZodTypeAny).parse(result);
+            try {
+                result = await Promise.race([resultPromise, timeoutPromise]);
+            } finally {
+                if (timer) SafeTimer.clearTimeout(timer);
             }
-            return result;
-        } finally {
-            if (timer) SafeTimer.clearTimeout(timer);
+        } else {
+            result = await resultPromise;
         }
+
+        if (schema?.returns) {
+            const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
+            if (isCrudProjection) {
+                return result;
+            }
+            return (schema.returns as z.ZodTypeAny).parse(result);
+        }
+        return result;
     }
 
     public async handleIncomingRPC(packet: IMeshPacket): Promise<unknown> {
@@ -407,30 +412,36 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         const schema = MeshToolSchemaRegistry.get(packet.topic);
-        const timeoutMs = (ctx.meta?.timeout as number) || schema?.timeout || 10000;
+        const timeoutMs = ctx.meta?.timeout !== undefined ? (ctx.meta.timeout as number) : (schema?.timeout !== undefined ? schema.timeout : 10000);
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
+        let result: unknown;
 
-        const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => {
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
-            }, timeoutMs);
-        });
+        if (timeoutMs > 0) {
+            const timeoutPromise = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
+                }, timeoutMs);
+            });
 
-        try {
-            const result = await Promise.race([resultPromise, timeoutPromise]);
-            if (schema?.returns) {
-                const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
-                if (isCrudProjection) {
-                    return result;
-                }
-                return (schema.returns as z.ZodTypeAny).parse(result);
+            try {
+                result = await Promise.race([resultPromise, timeoutPromise]);
+            } finally {
+                if (timer) SafeTimer.clearTimeout(timer);
             }
-            return result;
-        } finally {
-            if (timer) SafeTimer.clearTimeout(timer);
+        } else {
+            result = await resultPromise;
         }
+
+        if (schema?.returns) {
+            const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
+            if (isCrudProjection) {
+                return result;
+            }
+            return (schema.returns as z.ZodTypeAny).parse(result);
+        }
+        return result;
     }
 
     public async handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown> {
@@ -506,17 +517,28 @@ export class ServiceBroker implements IServiceBroker {
         let remoteTimeout: number | undefined;
         if (!schema && this.registry) {
             const endpoint = this.registry.getNextToolEndpoint(toolName);
-            if (endpoint?.tool?.timeout) remoteTimeout = endpoint.tool.timeout as number;
+            if (endpoint?.tool?.timeout !== undefined) remoteTimeout = endpoint.tool.timeout as number;
         }
-        const timeoutMs = (meta.timeout as number) || schema?.timeout || remoteTimeout || 10000;
+
+        const timeoutMs = meta.timeout !== undefined ? (meta.timeout as number) : (schema?.timeout !== undefined ? schema.timeout : (remoteTimeout !== undefined ? remoteTimeout : 10000));
 
         return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                this.pendingRequests.delete(requestId);
-                this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
-            }, timeoutMs);
-            this.pendingRequests.set(requestId, { resolve, reject, timeout });
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+
+            if (timeoutMs > 0) {
+                timeout = setTimeout(() => {
+                    this.pendingRequests.delete(requestId);
+                    this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
+                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
+                }, timeoutMs);
+            }
+
+            this.pendingRequests.set(requestId, {
+                resolve,
+                reject,
+                timeout: timeout as any // SafeTimer.clearTimeout handles undefined
+            });
+
             this.network.send(nodeID, toolName, params, {
                 id: requestId,
                 type: 'REQUEST',
@@ -524,7 +546,7 @@ export class ServiceBroker implements IServiceBroker {
                 senderNodeID: this.nodeID,
                 topic: toolName
             }).catch(err => {
-                SafeTimer.clearTimeout(timeout);
+                if (timeout) SafeTimer.clearTimeout(timeout);
                 this.pendingRequests.delete(requestId);
                 reject(err instanceof Error ? err : new Error(String(err)));
             });
