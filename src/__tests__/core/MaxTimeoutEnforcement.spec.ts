@@ -43,7 +43,7 @@ class InfiniteService extends ServiceModule {
     }
 }
 
-describe('Infinite RPC Timeouts (timeout: 0)', () => {
+describe('Max RPC Timeout Enforcement (1 Hour)', () => {
     let app: MeshApp;
 
     beforeAll(async () => {
@@ -61,12 +61,32 @@ describe('Infinite RPC Timeouts (timeout: 0)', () => {
         await app?.stop();
     });
 
-    it('should NOT timeout when timeout is set to 0, even if the call is slow', async () => {
+    it('should still allow slow calls that are under the 1-hour limit when using timeout: 0', async () => {
         const broker = app.getProvider<IServiceBroker>('broker');
         
-        // We set a delay of 100ms, which is > contract's 50ms default.
-        // With timeout: 0, it should wait indefinitely (or at least 100ms in this test).
+        // 100ms is well under 1 hour.
         const result = await broker.call('timeout.infinite', { delay: 100 }, { timeout: 0 });
         expect(result).toEqual({ success: true });
+    });
+
+    it('should enforce a 1-hour timeout even when timeout is set to 0', async () => {
+        const broker = app.getProvider<IServiceBroker>('broker');
+        
+        // We can't easily wait 1 hour in a real test without fake timers,
+        // but we can check if the promise rejects after we advance time.
+        // Note: Mesh uses SafeTimer which might interact with jest fake timers in complex ways,
+        // but standard setTimeout should be caught.
+        
+        jest.useFakeTimers();
+        
+        // Call a tool that never resolves (infinite delay)
+        const callPromise = broker.call('timeout.infinite', { delay: 4000000 }, { timeout: 0 });
+        
+        // Advance time by 1 hour + 1ms
+        jest.advanceTimersByTime(3600000 + 1);
+        
+        await expect(callPromise).rejects.toThrow('RPC Timeout');
+        
+        jest.useRealTimers();
     });
 });

@@ -31,6 +31,8 @@ export const MeshToolSchemaRegistry: Map<string, {
     domain?: string
 }> = new Map();
 
+const MAX_RPC_TIMEOUT = 3600000; // 1 hour
+
 export class ServiceBroker implements IServiceBroker {
     private localTools = new Map<string, LocalTool>();
     private modules: IServiceModule[] = [];
@@ -59,6 +61,14 @@ export class ServiceBroker implements IServiceBroker {
         public readonly nodeID: string,
         public readonly logger: ILogger
     ) { }
+
+    private evaluateTimeout(requestedTimeout?: number, schemaTimeout?: number, remoteTimeout?: number): number {
+        const timeout = requestedTimeout !== undefined ? requestedTimeout : (schemaTimeout !== undefined ? schemaTimeout : (remoteTimeout !== undefined ? remoteTimeout : 10000));
+        if (timeout === 0 || timeout > MAX_RPC_TIMEOUT) {
+            return MAX_RPC_TIMEOUT;
+        }
+        return timeout;
+    }
 
     public registerProvider(name: string, provider: unknown): void {
         this.providers.set(name, provider);
@@ -361,26 +371,22 @@ export class ServiceBroker implements IServiceBroker {
             parentId,
         };
 
-        const timeoutMs = ctx.meta?.timeout !== undefined ? (ctx.meta.timeout as number) : 10000;
+        const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
         let result: unknown;
 
-        if (timeoutMs > 0) {
-            const timeoutPromise = new Promise((_, reject) => {
-                timer = setTimeout(() => {
-                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
-                }, timeoutMs);
-            });
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
+            }, timeoutMs);
+        });
 
-            try {
-                result = await Promise.race([resultPromise, timeoutPromise]);
-            } finally {
-                if (timer) SafeTimer.clearTimeout(timer);
-            }
-        } else {
-            result = await resultPromise;
+        try {
+            result = await Promise.race([resultPromise, timeoutPromise]);
+        } finally {
+            if (timer) SafeTimer.clearTimeout(timer);
         }
 
         if (schema?.returns) {
@@ -412,26 +418,22 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         const schema = MeshToolSchemaRegistry.get(packet.topic);
-        const timeoutMs = ctx.meta?.timeout !== undefined ? (ctx.meta.timeout as number) : (schema?.timeout !== undefined ? schema.timeout : 10000);
+        const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const resultPromise = this.handlePipeline(ctx);
         let result: unknown;
 
-        if (timeoutMs > 0) {
-            const timeoutPromise = new Promise((_, reject) => {
-                timer = setTimeout(() => {
-                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
-                }, timeoutMs);
-            });
+        const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
+            }, timeoutMs);
+        });
 
-            try {
-                result = await Promise.race([resultPromise, timeoutPromise]);
-            } finally {
-                if (timer) SafeTimer.clearTimeout(timer);
-            }
-        } else {
-            result = await resultPromise;
+        try {
+            result = await Promise.race([resultPromise, timeoutPromise]);
+        } finally {
+            if (timer) SafeTimer.clearTimeout(timer);
         }
 
         if (schema?.returns) {
@@ -520,23 +522,19 @@ export class ServiceBroker implements IServiceBroker {
             if (endpoint?.tool?.timeout !== undefined) remoteTimeout = endpoint.tool.timeout as number;
         }
 
-        const timeoutMs = meta.timeout !== undefined ? (meta.timeout as number) : (schema?.timeout !== undefined ? schema.timeout : (remoteTimeout !== undefined ? remoteTimeout : 10000));
+        const timeoutMs = this.evaluateTimeout(meta.timeout as number, schema?.timeout, remoteTimeout);
 
         return new Promise((resolve, reject) => {
-            let timeout: ReturnType<typeof setTimeout> | undefined;
-
-            if (timeoutMs > 0) {
-                timeout = setTimeout(() => {
-                    this.pendingRequests.delete(requestId);
-                    this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
-                    reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
-                }, timeoutMs);
-            }
+            const timeout = setTimeout(() => {
+                this.pendingRequests.delete(requestId);
+                this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
+                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
+            }, timeoutMs);
 
             this.pendingRequests.set(requestId, {
                 resolve,
                 reject,
-                timeout: timeout as any // SafeTimer.clearTimeout handles undefined
+                timeout
             });
 
             this.network.send(nodeID, toolName, params, {
@@ -546,7 +544,7 @@ export class ServiceBroker implements IServiceBroker {
                 senderNodeID: this.nodeID,
                 topic: toolName
             }).catch(err => {
-                if (timeout) SafeTimer.clearTimeout(timeout);
+                SafeTimer.clearTimeout(timeout);
                 this.pendingRequests.delete(requestId);
                 reject(err instanceof Error ? err : new Error(String(err)));
             });
