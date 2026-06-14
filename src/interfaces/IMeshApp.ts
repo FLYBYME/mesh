@@ -5,6 +5,7 @@ import type { IProviderToken } from './IProviderToken.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
 import type { IMeshMeta } from './IMeshMeta.js';
 import type { ICallOptions } from './IServiceContext.js';
+import { IMeshPacket } from './IMeshNetwork.js';
 export interface AppConfig extends Record<string, unknown> {
     nodeID: string;
     namespace?: string;
@@ -57,4 +58,10 @@ export interface IMeshApp extends IMeshNode {
         params: IServiceToolRegistry[K]['params'],
         options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>
+    /** Typed event emit. */
+    emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
+
+    on<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): (() => void);
+    off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void;
+
 }

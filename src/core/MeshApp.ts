@@ -7,7 +7,8 @@ import type {
     IServiceBroker,
     IServiceRegistry,
     ICallOptions,
-    IMeshMeta
+    IMeshMeta,
+    IMeshPacket
 } from '../interfaces/index.js';
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
@@ -154,6 +155,34 @@ export class MeshApp implements IMeshApp {
             broker.emit(event, payload, options);
         } else {
             this.logger.warn(`[MeshApp] Cannot publish to ${String(event)}, broker not initialized.`);
+        }
+    }
+
+    public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
+        if (this.hasProvider('broker')) {
+            const broker = this.getProvider<IServiceBroker>('broker');
+            broker.emit(event, payload, options);
+        } else {
+            this.logger.warn(`[MeshApp] Cannot publish to ${String(event)}, broker not initialized.`);
+        }
+    }
+
+    public on<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): (() => void) {
+        if (this.hasProvider('broker')) {
+            const broker = this.getProvider<IServiceBroker>('broker');
+            return broker.on(event, handler);
+        } else {
+            this.logger.warn(`[MeshApp] Cannot subscribe to ${String(event)}, broker not initialized.`);
+            return () => { };
+        }
+    }
+
+    public off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void {
+        if (this.hasProvider('broker')) {
+            const broker = this.getProvider<IServiceBroker>('broker');
+            broker.off(event, handler);
+        } else {
+            this.logger.warn(`[MeshApp] Cannot unsubscribe from ${String(event)}, broker not initialized.`);
         }
     }
 }
