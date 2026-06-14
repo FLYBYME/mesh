@@ -31,10 +31,11 @@ export async function demo_hello(
 
 export async function demo_status(
     input: z.infer<typeof demoStatusContract.inputSchema>,
-    _ctx: IServiceContext
-): Promise<z.infer<typeof demoStatusContract.outputSchema>> {
+    ctx: IServiceContext
+): Promise<z.infer<typeof demoStatusContract.outputSchema> & { meta?: any }> {
     return {
-        message: `Status check for ${input.name}: Engine is Healthy.`
+        message: `Status check for ${input.name}: Engine is Healthy.`,
+        meta: ctx.meta
     };
 }
 
