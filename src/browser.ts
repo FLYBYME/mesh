@@ -23,6 +23,7 @@ export * from './interfaces/IServiceRegistry.js';
 export * from './interfaces/ITransport.js';
 export * from './interfaces/IInterceptor.js';
 export * from './interfaces/IToolContract.js';
+export * from './interfaces/ICrudContract.js';
 export * from './interfaces/IEventContract.js';
 export * from './interfaces/IServiceContext.js';
 export * from './interfaces/IServiceModule.js';
