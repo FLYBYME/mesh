@@ -8,12 +8,6 @@ import { defineEvent } from '../../interfaces/IEventContract.js';
 // ─── Event Augmentation ──────────────────────────────────────────────────────
 // We augment the EventRegistry to register our domain-specific events.
 
-declare global {
-    interface EventRegistry {
-        'demo.hello.sent': DemoHelloEvent;
-    }
-}
-
 export const DemoHelloEventSchema = z.object({
     name: z.string().describe("Name of the person greeted"),
     timestamp: z.date()
