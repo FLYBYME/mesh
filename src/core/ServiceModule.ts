@@ -141,7 +141,7 @@ export abstract class ServiceModule implements IServiceModule {
         if (!entry) {
             throw new Error(`[ServiceModule] No handler for ${key} in domain '${this.domain}'.`);
         }
-        return entry.handler(input, ctx);
+        return entry.handler.call(this, input, ctx);
     }
 
     public isCrud(domain: string, action: string): boolean {
