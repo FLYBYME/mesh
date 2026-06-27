@@ -96,11 +96,11 @@ export class StartCommand extends BaseCommand {
             });
 
             const network = networkModule.getNetwork();
-            network.use(AuthInterceptorHMAC({
-                secret: 'secret',
-                maxAgeMs: 60 * 60 * 1000,
-                allowUnsigned: true
-            }));
+            // network.use(AuthInterceptorHMAC({
+            //     secret: 'secret',
+            //     maxAgeMs: 60 * 60 * 1000,
+            //     allowUnsigned: true
+            // }));
 
             app.use(networkModule);
             const dbConfig: { uri?: string } = {};
