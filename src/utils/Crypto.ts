@@ -86,6 +86,38 @@ export class IsomorphicCrypto {
         }
     }
 
+    /** Sign data using HMAC-SHA256 (Base64) */
+    static async signHMAC(payload: string | Uint8Array, secret: string): Promise<string> {
+        const crypto = await this.getCrypto();
+        if (!crypto) throw new Error('WebCrypto not available');
+
+        const enc = new TextEncoder();
+        const keyData = enc.encode(secret);
+        const data = typeof payload === 'string' ? enc.encode(payload) : payload;
+
+        const key = await crypto.subtle.importKey(
+            'raw',
+            keyData,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+
+        const signature = await crypto.subtle.sign(
+            'HMAC',
+            key,
+            data
+        );
+
+        return this.toBase64(new Uint8Array(signature));
+    }
+
+    /** Verify HMAC-SHA256 signature */
+    static async verifyHMAC(signatureB64: string, payload: string | Uint8Array, secret: string): Promise<boolean> {
+        const expectedSignature = await this.signHMAC(payload, secret);
+        return expectedSignature === signatureB64;
+    }
+
     /** Helper: bytes to Base64 (isomorphic) */
     static toBase64(bytes: Uint8Array): string {
         // Prefer globalThis.btoa if available (browser or modern node)

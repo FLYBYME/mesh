@@ -12,6 +12,7 @@ import { LogLevel } from '../../interfaces/ILogger.js';
 import { Logger } from '../../utils/Logger.js';
 import fs from 'fs';
 import path from 'path';
+import { AuthInterceptorHMAC } from '../../browser.js';
 
 interface StartOptions {
     port?: number | string;
@@ -87,11 +88,21 @@ export class StartCommand extends BaseCommand {
 
             // Use core modules
             app.use(new RegistryModule());
-            app.use(new NetworkModule({
+
+            const networkModule = new NetworkModule({
                 port,
                 transports: [wsTransport],
                 bootstrapNodes
+            });
+
+            const network = networkModule.getNetwork();
+            network.use(AuthInterceptorHMAC({
+                secret: 'secret',
+                maxAgeMs: 60 * 60 * 1000,
+                allowUnsigned: true
             }));
+
+            app.use(networkModule);
             const dbConfig: { uri?: string } = {};
             if (options.db) dbConfig.uri = options.db;
             app.use(new DatabaseModule(dbConfig));
