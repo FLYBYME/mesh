@@ -106,7 +106,7 @@ export class IsomorphicCrypto {
         const signature = await crypto.subtle.sign(
             'HMAC',
             key,
-            data
+            data as unknown as BufferSource
         );
 
         return this.toBase64(new Uint8Array(signature));
