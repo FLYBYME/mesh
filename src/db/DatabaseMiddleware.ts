@@ -28,6 +28,24 @@ function isStringArray(obj: unknown): obj is string[] {
     return Array.isArray(obj) && obj.every(i => typeof i === 'string');
 }
 
+/**
+ * emitNamed: additive, backward-compatible companion to the generic
+ * `data.created`/`data.updated`/`data.deleted` events every CRUD write already
+ * fires. Emits `<domain>.<created|updated|deleted>` with the same payload
+ * shape minus the now-redundant `domain` field, so a subscriber can mount a
+ * strongly-typed handler for one specific domain's writes instead of
+ * subscribing to the whole-mesh `data.*` firehose and filtering by domain at
+ * runtime. The event name is dynamic (not a static `keyof EventRegistry` --
+ * that interface is augmented per-project by `mesh generate`, see
+ * GenerateCommand.ts's `generateEvents`), so this is the one place in the
+ * framework that deliberately bypasses that compile-time key check; every
+ * subscriber-side `mountEventHandler` call still gets full typing from the
+ * generated registry entry.
+ */
+function emitNamed(broker: IServiceBroker, domain: string, suffix: string, payload: Record<string, unknown>): void {
+    broker.emit(`${domain}.${suffix}` as never, payload as never);
+}
+
 export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): IMiddleware {
     return async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>, next) => {
         const toolKey = ctx.toolName;
@@ -145,6 +163,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 case 'create': {
                     const createRes = await repo.create(params as unknown as BaseDoc);
                     broker.emit('data.created', { domain, id: createRes.id, item: createRes as Record<string, unknown> });
+                    emitNamed(broker, domain, 'created', createRes as Record<string, unknown>);
                     result = createRes;
                     break;
                 }
@@ -156,6 +175,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                             const res = await repo.create(item as unknown as BaseDoc);
                             created.push(res);
                             broker.emit('data.created', { domain, id: res.id, item: res as Record<string, unknown> });
+                            emitNamed(broker, domain, 'created', res as Record<string, unknown>);
                         }
                     }
                     result = created;
@@ -167,6 +187,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     if (updateRes) {
                         broker.emit('data.updated', {
                             domain,
+                            id: updateRes.id,
+                            patch: params as Record<string, unknown>,
+                            item: updateRes as Record<string, unknown>
+                        });
+                        emitNamed(broker, domain, 'updated', {
                             id: updateRes.id,
                             patch: params as Record<string, unknown>,
                             item: updateRes as Record<string, unknown>
@@ -185,6 +210,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                             patch: params as Record<string, unknown>,
                             item: replaceRes as Record<string, unknown>
                         });
+                        emitNamed(broker, domain, 'updated', {
+                            id: replaceRes.id,
+                            patch: params as Record<string, unknown>,
+                            item: replaceRes as Record<string, unknown>
+                        });
                     }
                     result = replaceRes;
                     break;
@@ -195,6 +225,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     result = { success };
                     if (success) {
                         broker.emit('data.deleted', { domain, id });
+                        emitNamed(broker, domain, 'deleted', { id });
                     }
                     break;
                 }

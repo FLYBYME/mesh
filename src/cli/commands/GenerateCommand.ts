@@ -58,7 +58,7 @@ export class GenerateCommand extends BaseCommand {
 
         await this.generateToolRegistry(discovery, files, options.include || []);
         await this.generateCLI(discovery, files);
-        await this.generateEvents(events, files, options.include || []);
+        await this.generateEvents(events, discovery, files, options.include || []);
 
         await this.bundleBrowser();
 
@@ -165,7 +165,7 @@ export class GenerateCommand extends BaseCommand {
         fs.writeFileSync(filePath, code);
     }
 
-    private async generateEvents(events: EventDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
+    private async generateEvents(events: EventDiscovery[], discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
         this.logger.info('Generating EventRegistry augmentation...');
         const filePath = path.join(this.artifactRoot, 'events.ts');
         const aliasMap = this.getAliasMap(files, this.artifactRoot);
@@ -208,6 +208,33 @@ export class GenerateCommand extends BaseCommand {
                 const schemaType = `typeof ${fileMapping.alias}.${e.exportName}['schema']`;
                 code += `        '${e.name}': z.infer<${schemaType}>;\n`;
             }
+        }
+
+        // Additive, backward-compatible companions to the generic `data.created`/
+        // `data.updated`/`data.deleted` events every CRUD write already fires (see
+        // DatabaseMiddleware.ts's `emitNamed`) -- one `<domain>.created`/`.updated`/
+        // `.deleted` entry per CRUD-mounted domain, typed off that domain's own
+        // create/update contract schemas rather than the generic `data.*` shape.
+        const namedCrudEvents = new Set<string>();
+        for (const m of discovery) {
+            if (!['create', 'update', 'delete'].includes(m.action)) continue;
+            if (!m.exportName.includes('.')) continue; // only CRUD-derived entries are dotted
+            if (namedCrudEvents.has(m.domain)) continue;
+
+            const domainFiles = files[m.domain];
+            if (!domainFiles || domainFiles.length === 0) continue;
+            const alias = aliasMap[domainFiles[0]!]?.alias;
+            if (!alias) continue;
+
+            const [crudExport] = m.exportName.split('.');
+            namedCrudEvents.add(m.domain);
+
+            const createdType = `z.infer<typeof ${alias}.${crudExport}['create']['outputSchema']>`;
+            const updatedItemType = `z.infer<typeof ${alias}.${crudExport}['update']['outputSchema']>`;
+
+            code += `        '${m.domain}.created': ${createdType};\n`;
+            code += `        '${m.domain}.updated': { id: string; patch: Record<string, unknown>; item: ${updatedItemType} };\n`;
+            code += `        '${m.domain}.deleted': { id: string };\n`;
         }
 
         code += `    }\n}\n`;
