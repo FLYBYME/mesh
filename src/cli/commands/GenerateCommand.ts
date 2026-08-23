@@ -386,7 +386,7 @@ export class GenerateCommand extends BaseCommand {
 
                 if (domain.includes('_')) throw new Error(`Domain "${domain}" cannot contain underscores (File: ${file})`);
 
-                const actions = { create: 'create', find: 'find', findOne: 'find_one', count: 'count', get: 'get', update: 'update', delete: 'delete' };
+                const actions = { create: 'create', find: 'find', findOne: 'find_one', count: 'count', get: 'get', resolve: 'resolve', update: 'update', delete: 'delete' };
 
                 if (!domainFiles[domain]) domainFiles[domain] = [];
                 if (!domainFiles[domain].includes(file)) domainFiles[domain].push(file);
