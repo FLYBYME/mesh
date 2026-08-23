@@ -48,18 +48,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * resolveLeafCommand: Walks a Command tree following the leading positional
+ * tokens of `args` (e.g. ['secrets', 'set', ...]) to find the actual
+ * subcommand that will handle them, mirroring Commander's own subcommand
+ * resolution. Stops at the first token that isn't a known subcommand name
+ * (an option or a positional arg).
+ */
+function resolveLeafCommand(program: Command, args: string[]): Command {
+    let current = program;
+    for (const token of args) {
+        if (token.startsWith('-')) break;
+        const next = current.commands.find(c => c.name() === token || c.aliases().includes(token));
+        if (!next) break;
+        current = next;
+    }
+    return current;
+}
+
+/**
  * preprocessArgs: Intercepts and rewrites dot-notation arguments (e.g. --query.status online)
  * into unified JSON record arguments (e.g. --query '{"status":"online"}').
  * This bypasses Commander's strict positional argument checks on schema-less ZodRecord fields.
+ *
+ * Only applies to dotted flags the resolved subcommand does NOT already have
+ * a real, directly-registered option for. `ZodToCliMapper` registers genuine
+ * per-field dotted options for plain nested `z.object` schemas (e.g.
+ * `secrets.set`'s `--scope.type`/`--scope.id`) -- rewriting those into a
+ * single JSON `--scope` blob broke them outright, since no `--scope` option
+ * was ever registered for that case (only real `ZodRecord` fields get the
+ * single-flag-plus-dot-notation-sugar treatment this function exists for).
  */
-function preprocessArgs(args: string[]): string[] {
+function preprocessArgs(args: string[], program: Command): string[] {
+    const leaf = resolveLeafCommand(program, args);
+    const registeredLongFlags = new Set(leaf.options.map(o => o.long));
+
     const result: string[] = [];
     const recordGroups: Record<string, Record<string, unknown>> = {};
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
 
-        if (arg.startsWith('--') && arg.includes('.')) {
+        if (arg.startsWith('--') && arg.includes('.') && !registeredLongFlags.has(arg.split('=')[0]!)) {
             let keyWithPrefix = '';
             let valStr: string | undefined = undefined;
 
@@ -120,10 +149,12 @@ function preprocessArgs(args: string[]): string[] {
     return result;
 }
 
-const cleanArgs = [
-    ...process.argv.slice(0, 2),
-    ...preprocessArgs(process.argv.slice(2))
-];
+// preprocessArgs needs the full command tree (including generated commands)
+// to correctly tell a real registered dotted option apart from ZodRecord
+// dot-notation sugar -- computed per-branch below, after generated commands
+// are registered wherever that succeeds, so it never runs against a
+// half-populated `program`.
+const rawArgs = process.argv.slice(2);
 
 // Try to dynamically load the generated commands
 try {
@@ -136,15 +167,18 @@ try {
         mod.registerGeneratedCommands(program);
 
         // Parse args after async load
+        const cleanArgs = [...process.argv.slice(0, 2), ...preprocessArgs(rawArgs, program)];
         program.parseAsync(cleanArgs);
     }).catch((err) => {
         // Fallback if generated files don't exist yet
         if (err.code !== 'ERR_MODULE_NOT_FOUND') {
             logger.error("Failed to load generated commands:", err);
         }
+        const cleanArgs = [...process.argv.slice(0, 2), ...preprocessArgs(rawArgs, program)];
         program.parse(cleanArgs);
     });
 } catch (err) {
     logger.error("Unexpected error loading commands:", err);
+    const cleanArgs = [...process.argv.slice(0, 2), ...preprocessArgs(rawArgs, program)];
     program.parse(cleanArgs);
 }
