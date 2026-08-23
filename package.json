@@ -1,6 +1,6 @@
 {
   "name": "@flybyme/mesh",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Mesh network framework",
   "type": "module",
   "main": "./dist/index.js",

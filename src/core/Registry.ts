@@ -407,8 +407,22 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
             localNode.services = localNode.services || [];
             const idx = localNode.services.findIndex(s => s.name === module.domain);
-            if (idx >= 0) localNode.services[idx] = serviceInfo;
-            else localNode.services.push(serviceInfo);
+            if (idx >= 0) {
+                // Multiple ServiceModule instances can share one logical `domain`
+                // (e.g. a domain split across control/edge/fleet processes that
+                // still get loaded together in one process, like `dns` + `dns/fleet`
+                // both mounted under `control`). Merge each newly-registered
+                // module's tools/events into the existing entry instead of
+                // replacing it -- overwriting silently dropped the first module's
+                // tools from presence data, making them unreachable for any
+                // remote peer even though local calls still worked (local dispatch
+                // uses ServiceBroker's own flat tool map, not this services array).
+                const existing = localNode.services[idx];
+                existing.tools = { ...existing.tools, ...serviceInfo.tools };
+                existing.events = { ...existing.events, ...serviceInfo.events };
+            } else {
+                localNode.services.push(serviceInfo);
+            }
 
             localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
             this.registerNode(localNode as unknown as CoreNodeInfo);
