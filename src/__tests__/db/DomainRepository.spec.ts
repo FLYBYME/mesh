@@ -304,22 +304,4 @@ describe('DomainRepository', () => {
         });
     });
 
-    // ─── resolve ─────────────────────────────────────────────────────────────
-
-    describe('resolve()', () => {
-        it('should resolve a single document by ID', async () => {
-            const created = await repo.create({ name: 'Resolvable', value: 50 } as Omit<Item, 'id' | 'createdAt' | 'updatedAt'>);
-            const result = await repo.resolve({ id: created.id });
-            expect(result).toBeDefined();
-            expect((result as Item).name).toBe('Resolvable');
-        });
-
-        it('should resolve multiple documents by ID array', async () => {
-            const a = await repo.create({ name: 'RA', value: 1 } as Omit<Item, 'id' | 'createdAt' | 'updatedAt'>);
-            const b = await repo.create({ name: 'RB', value: 2 } as Omit<Item, 'id' | 'createdAt' | 'updatedAt'>);
-            const results = await repo.resolve({ id: [a.id, b.id] });
-            expect(Array.isArray(results)).toBe(true);
-            expect((results as Item[])).toHaveLength(2);
-        });
-    });
 });

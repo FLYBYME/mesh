@@ -249,25 +249,6 @@ export class DomainRepository<T extends { id: string }> {
         const result = await this.collection.deleteOne({ _id: new ObjectId(id) });
         return (result.deletedCount || 0) > 0;
     }
-    
-    public async resolve(params: { [idField: string]: string | string[] }): Promise<T | T[]> {
-        // Find the id parameter
-        const idVal = Object.values(params).find(v => typeof v === 'string' || Array.isArray(v));
-        
-        if (Array.isArray(idVal)) {
-            const objectIds = idVal.filter(id => typeof id === 'string' && ObjectId.isValid(id)).map(id => new ObjectId(id as string));
-            if (objectIds.length === 0) return [];
-            
-            const docs = await this.collection.find({ _id: { $in: objectIds } }).toArray();
-            return docs.map(doc => this.mapOutbound(doc));
-        } else if (typeof idVal === 'string') {
-            const doc = await this.get(idVal);
-            if (!doc) throw new Error(`Document not found: ${idVal}`);
-            return doc;
-        }
-        
-        throw new Error('No valid ID found in resolve params');
-    }
 
     private mapOutbound(doc: Document, hasFields = false): T {
         const { _id, ...rest } = doc;

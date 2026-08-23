@@ -73,7 +73,6 @@ export type CrudContracts<
     TGet extends z.ZodTypeAny = z.ZodTypeAny,
     TFind extends z.ZodTypeAny = z.ZodTypeAny,
     TFindOne extends z.ZodTypeAny = z.ZodTypeAny,
-    TResolve extends z.ZodTypeAny = z.ZodTypeAny,
     TDelete extends z.ZodTypeAny = z.ZodTypeAny
 > = {
     readonly domain: string;
@@ -86,7 +85,8 @@ export type CrudContracts<
     readonly findOne: ToolContract<TFindOne, z.ZodOptional<TOut>>;
     readonly count: ToolContract<z.ZodObject<Pick<typeof CrudParamsSchema.shape, 'search' | 'searchFields' | 'query'>>, z.ZodNumber>;
     readonly get: ToolContract<TGet, TOut>;
-    readonly resolve: ToolContract<TResolve, z.ZodUnion<[z.ZodArray<TOut>, z.ZodRecord<z.ZodString, TOut>]>>;
+    /** Same lookup as `get`, by the same ID -- never throws NotFound; returns `undefined` instead. */
+    readonly resolve: ToolContract<TGet, z.ZodOptional<TOut>>;
 
     readonly create: ToolContract<TCreate, TOut>;
     readonly createMany: ToolContract<z.ZodArray<TCreate>, z.ZodArray<TOut>>;
@@ -135,7 +135,6 @@ export function defineCrud<
     z.ZodType<Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>>,
     typeof CrudParamsSchema,
     typeof CrudParamsSchema,
-    z.ZodType<Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>, z.ZodTypeDef, Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>>,
     z.ZodType<IdOnlyIn<TIdField>, z.ZodTypeDef, IdOnlyIn<TIdField>>
 > {
     const plural = options.pluralPath || `${domain}s`;
@@ -215,22 +214,8 @@ export function defineCrud<
         Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>
     >;
 
-    const ResolveInputSchema = z.object({
-        [idField]: z.union([z.string(), z.array(z.string())]),
-        ...CrudParamsSchema.shape,
-        mapping: z.boolean().optional(),
-        throwIfNotExist: z.boolean().optional(),
-        reorderResult: z.boolean().optional(),
-    } as Record<string, z.ZodTypeAny>) as unknown as z.ZodType<
-        Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>,
-        z.ZodTypeDef,
-        Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>
-    >;
-
     const FindInputSchema = CrudParamsSchema;
     const FindOneInputSchema = CrudParamsSchema;
-
-    const ResolveOutputSchema = z.union([z.array(outputSchema), z.record(z.string(), outputSchema)]);
 
     // --- Contracts ---
 
@@ -284,10 +269,10 @@ export function defineCrud<
 
     const resolveContract = defineContract({
         domain, action: actionNames.resolve,
-        description: `Resolve one or more ${plural} by ID(s).`,
-        inputSchema: ResolveInputSchema,
-        outputSchema: ResolveOutputSchema,
-        rest: { method: 'POST', path: `/${plural}/resolve` },
+        description: `Get a specific ${domain} by ID. Unlike get, returns undefined instead of throwing when it doesn't exist.`,
+        inputSchema: GetInputSchema,
+        outputSchema: outputSchema.optional(),
+        rest: { method: 'GET', path: `/${plural}/:${idField}/resolve` },
         destructive: destructive.resolve, event: eventNames.resolve,
         isCrud: true,
         timeout: timeouts.resolve,
@@ -378,7 +363,6 @@ export function defineCrud<
         z.ZodType<Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>, z.ZodTypeDef, Prettify<IdOnlyIn<TIdField> & Pick<z.input<typeof CrudParamsSchema>, 'fields' | 'populate'>>>,
         typeof CrudParamsSchema,
         typeof CrudParamsSchema,
-        z.ZodType<Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>, z.ZodTypeDef, Prettify<{ [K in TIdField]: string | string[] } & z.input<typeof CrudParamsSchema> & { mapping?: boolean, throwIfNotExist?: boolean, reorderResult?: boolean }>>,
         z.ZodType<IdOnlyIn<TIdField>, z.ZodTypeDef, IdOnlyIn<TIdField>>
     >;
 }

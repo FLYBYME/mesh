@@ -6,6 +6,7 @@ import { Database } from './Database.js';
 import { FindOptions, StrictFilterQuery } from './types.js';
 import { z } from 'zod';
 import { IServiceModule } from '../interfaces/IServiceModule.js';
+import { MeshError } from '../core/MeshError.js';
 interface BaseDoc {
     id: string;
     createdAt?: Date;
@@ -134,7 +135,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 }
                 case 'get': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    result = await repo.get(id);
+                    const doc = await repo.get(id);
+                    if (!doc) {
+                        throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
+                    }
+                    result = doc;
                     break;
                 }
                 case 'create': {
@@ -194,9 +199,9 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     break;
                 }
                 case 'resolve': {
-                    if (isRecord(params)) {
-                        result = await repo.resolve(params as Record<string, string | string[]>);
-                    }
+                    // Same lookup as 'get', by the same ID -- never throws NotFound.
+                    const id = typeof params.id === 'string' ? params.id : '';
+                    result = await repo.get(id);
                     break;
                 }
                 default:
