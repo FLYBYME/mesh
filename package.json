@@ -24,7 +24,9 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "src",
+    "tsconfig.json"
   ],
   "scripts": {
     "build": "tsc",
@@ -58,6 +60,6 @@
     "@types/ws": "latest",
     "jest": "latest",
     "ts-jest": "latest",
-    "typescript": "latest"
+    "typescript": "5.9.3"
   }
 }
