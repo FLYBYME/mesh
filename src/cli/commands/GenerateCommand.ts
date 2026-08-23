@@ -135,7 +135,12 @@ export class GenerateCommand extends BaseCommand {
         code += `\ndeclare global {\n`;
         code += `    interface IServiceToolRegistry {\n`;
 
+        const seenTools = new Set<string>();
         for (const m of discovery) {
+            const toolKey = `${m.domain}.${m.action}`;
+            if (seenTools.has(toolKey)) continue;
+            seenTools.add(toolKey);
+
             const domainFiles = files[m.domain];
             if (!domainFiles || domainFiles.length === 0) continue;
             const alias = aliasMap[domainFiles[0]!]?.alias;
@@ -283,7 +288,11 @@ export class GenerateCommand extends BaseCommand {
 
         for (const [domain, methods] of Object.entries(byDomain)) {
             code += `    const ${domain} = program.command('${domain}').description('${domain} tools');\n`;
+            const seenActions = new Set<string>();
             for (const m of methods) {
+                if (seenActions.has(m.action)) continue;
+                seenActions.add(m.action);
+
                 const domainFiles = files[domain];
                 if (!domainFiles || domainFiles.length === 0) continue;
                 const alias = aliasMap[domainFiles[0]!]?.alias;
