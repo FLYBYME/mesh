@@ -42,9 +42,9 @@
     "url": "git+https://github.com/FLYBYME/mesh.git"
   },
   "dependencies": {
-    "@types/express": "latest",
-    "@types/node": "latest",
-    "@types/ws": "latest",
+    "@types/express": "4.17.25",
+    "@types/node": "20.19.41",
+    "@types/ws": "8.18.1",
     "commander": "latest",
     "dotenv": "latest",
     "esbuild": "latest",
