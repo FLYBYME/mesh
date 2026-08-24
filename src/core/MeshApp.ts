@@ -102,8 +102,22 @@ export class MeshApp implements IMeshApp {
         const key = this.getTokenKey(token);
         this.providers.set(key, provider);
 
+        if (this.hasProvider('broker') && key !== 'broker') {
+            try {
+                const broker = this.getProvider<IServiceBroker>('broker');
+                broker.registerProvider(key, provider);
+            } catch {
+                // Ignore if broker isn't ready
+            }
+        }
+
         if (key === 'broker') {
             const broker = provider as IServiceBroker;
+            for (const [pKey, pVal] of this.providers.entries()) {
+                if (pKey !== 'broker') {
+                    broker.registerProvider(pKey, pVal);
+                }
+            }
             while (this.pendingMiddleware.length > 0) {
                 broker.use(this.pendingMiddleware.shift()! as any);
             }

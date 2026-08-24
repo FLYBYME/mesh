@@ -19,6 +19,7 @@ export class DatabaseModule implements IMeshModule {
         this.logger = app.logger;
         this.db = new Database(this.logger, this.config.uri, this.config.dbName);
         app.registerProvider('database', this.db);
+        app.registerProvider('db', this.db);
     }
 
     async onStart(app: IMeshApp): Promise<void> {
@@ -26,6 +27,8 @@ export class DatabaseModule implements IMeshModule {
         
         if (app.hasProvider('broker')) {
             const broker = app.getProvider<IServiceBroker>('broker');
+            broker.registerProvider('database', this.db);
+            broker.registerProvider('db', this.db);
             const middleware = createDatabaseMiddleware(broker, this.db);
             broker.useLocal(middleware);
             this.logger.info(`[DatabaseModule] Database middleware installed on local broker.`);

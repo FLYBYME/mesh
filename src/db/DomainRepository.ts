@@ -14,6 +14,10 @@ export class DomainRepository<T extends { id: string }> {
         private domain: string
     ) { }
 
+    public get rawCollection(): Collection<Document> {
+        return this.collection;
+    }
+
     /**
      * find: Returns an array of documents matching the query.
      */
@@ -204,6 +208,53 @@ export class DomainRepository<T extends { id: string }> {
             { _id: new ObjectId(id) },
             { $set: updateDoc },
             { returnDocument: 'after' }
+        );
+
+        if (!result) return undefined;
+        return this.mapOutbound(result as WithId<Document>);
+    }
+
+    /**
+     * findOneAndUpdate: Atomically finds a document matching the query, applies the update,
+     * and returns the updated document.
+     */
+    public async findOneAndUpdate(
+        query: StrictFilterQuery<T>,
+        data: Partial<T> | Record<string, unknown>,
+        options: { sort?: string | string[] | Partial<Record<keyof T, 1 | -1>> } = {}
+    ): Promise<T | undefined> {
+        const mappedQuery = this.mapQuery(query);
+        const isOperatorDoc = Object.keys(data).some(k => k.startsWith('$'));
+
+        let updateDoc: Document;
+        if (isOperatorDoc) {
+            const opData = { ...(data as Record<string, unknown>) };
+            const existingSet = this.isRecord(opData['$set']) ? (opData['$set'] as Record<string, unknown>) : {};
+            const { id: _, ...setToApply } = existingSet;
+            opData['$set'] = {
+                ...setToApply,
+                updatedAt: new Date()
+            };
+            updateDoc = opData as Document;
+        } else {
+            const { id: _, ...fieldsToSet } = data as Record<string, unknown>;
+            updateDoc = {
+                $set: {
+                    ...fieldsToSet,
+                    updatedAt: new Date()
+                }
+            };
+        }
+
+        const sort = options.sort ? this.parseSort(options.sort as any) : undefined;
+
+        const result = await this.collection.findOneAndUpdate(
+            mappedQuery,
+            updateDoc,
+            {
+                returnDocument: 'after',
+                ...(sort ? { sort } : {})
+            }
         );
 
         if (!result) return undefined;

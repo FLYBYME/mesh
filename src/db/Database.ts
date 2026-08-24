@@ -1,4 +1,4 @@
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, Collection, Document } from 'mongodb';
 import { z } from 'zod';
 import { DomainRepository } from './DomainRepository.js';
 import { TimeSeriesRepository } from './TimeSeriesRepository.js';
@@ -34,6 +34,19 @@ export class Database {
         await this.client.connect();
         this.dbInstance = this.client.db(this.dbName);
         this.logger.info(`[DB] Connected to MongoDB: ${this.dbInstance.databaseName}`);
+    }
+
+    public get db(): Db | null {
+        return this.dbInstance;
+    }
+
+    public getDb(): Db | null {
+        return this.dbInstance;
+    }
+
+    public getCollection(name: string): Collection<Document> {
+        if (!this.dbInstance) throw new Error('Database not connected. Call connect() first.');
+        return this.dbInstance.collection(name);
     }
 
     /**
