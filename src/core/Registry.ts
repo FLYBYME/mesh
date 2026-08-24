@@ -380,6 +380,19 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         const localNode = this.nodes.get(this.localNodeID);
         if (localNode) {
             const contracts = module.getContracts();
+
+            // `this.tools` (read by `getTool()`) is the registry's own by-key contract
+            // lookup -- distinct from `localNode.services[].tools` (presence data, below)
+            // and from `ServiceBroker`'s private `localTools` map (what local dispatch
+            // actually calls through). A caller checking "is this contract really
+            // registered" via `getTool()` before calling it (e.g. deployment/reconciler's
+            // hook execution, validating an operator-authored contract name at runtime)
+            // needs this populated the same way presence data already is, or every such
+            // check fails even for a genuinely mounted, callable contract.
+            for (const contract of contracts) {
+                this.registerTool(contract);
+            }
+
             const serviceInfo: RegistryServiceInfo = {
                 name: module.domain,
                 version: '1.0.0',
