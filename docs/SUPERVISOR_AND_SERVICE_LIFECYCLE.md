@@ -85,7 +85,7 @@ The Supervisor needs a way to be told "start this," "stop this," "restart this,"
 
 A service that throws during `onStart` or crashes its process-wide effects (an uncaught exception inside one of its handlers, if that's even isolable in a single process — investigate whether it's realistic to contain a fault to one service when everything shares one Node process, or whether this needs a documented, honest limitation) should be restartable via `service_restart`, which is exactly `unregisterModule` followed by a fresh `registerModule` on a new instance — not a special code path.
 
-### Part 2 — status: built (`mesh` commit pending, `src/supervisor/`)
+### Part 2 — status: built (`mesh` commit `3435ba7`, `src/supervisor/`)
 
 Built per the config shape and control-surface recommendation above, resolving the two open questions as follows:
 
