@@ -22,7 +22,8 @@ program
     .version('1.0.0')
     .option('-i, --node-id <id>', 'Node identifier (e.g., cli-xxx)')
     .option('-b, --bootstrap <nodes>', 'Comma-separated list of bootstrap node URLs (default: ws://127.0.0.1:5005)')
-    .option('-p, --port <number>', 'Port for the WebSocket server to listen on (default: 0 for random)');
+    .option('-p, --port <number>', 'Port for the WebSocket server to listen on (default: 0 for random)')
+    .option('-H, --host <address>', 'Bind address for this one-off client\'s own WebSocket server (default: 0.0.0.0). Set to a private/overlay IP to keep it off any public interface, same reasoning as `mesh start`\'s --host.');
 
 // Initialize Command Registry
 const registry = new CommandRegistry();

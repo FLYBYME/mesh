@@ -16,6 +16,7 @@ import { AuthInterceptorHMAC } from '../../browser.js';
 
 interface StartOptions {
     port?: number | string;
+    host?: string;
     nodeId?: string;
     bootstrap?: string;
     services?: string[];
@@ -36,6 +37,7 @@ export class StartCommand extends BaseCommand {
             .command(this.name)
             .description(this.description)
             .option('-p, --port <number>', 'Port for the WebSocket server')
+            .option('-H, --host <address>', 'Bind address for the WebSocket server (default: 0.0.0.0 -- all interfaces). Set to a private/overlay IP (e.g. a WireGuard address) to keep mesh RPC off any public interface entirely, rather than relying on a firewall rule alone.')
             .option('-i, --node-id <id>', 'Unique Node ID')
             .option('-b, --bootstrap <nodes>', 'Comma-separated bootstrap URLs')
             .option('-s, --services <dirs>', 'Directory list to scan for services (can be comma-separated or specified multiple times)', (val, memo: string[]) => {
@@ -68,7 +70,9 @@ export class StartCommand extends BaseCommand {
             logLevel = LogLevel.ERROR;
         }
 
-        this.logger.info(`${C.blue}${C.bold}Booting Mesh Node "${nodeId}" on port ${port}...${C.reset}`);
+        const host = options.host || '0.0.0.0';
+
+        this.logger.info(`${C.blue}${C.bold}Booting Mesh Node "${nodeId}" on ${host}:${port}...${C.reset}`);
 
         // Setup Logger
         const logger = new Logger(logLevel);
@@ -78,7 +82,7 @@ export class StartCommand extends BaseCommand {
             const serializer = new JSONSerializer();
 
             // Setup WS Transport
-            const wsTransport = new WSTransport(serializer, port);
+            const wsTransport = new WSTransport(serializer, port, host);
 
             // Initialize MeshApp
             const app = new MeshApp({
@@ -125,7 +129,7 @@ export class StartCommand extends BaseCommand {
             // Start the application
             await app.start();
 
-            this.logger.info(`${C.green}${C.bold}✔ Mesh Node "${nodeId}" is successfully running on port ${port}${C.reset}`);
+            this.logger.info(`${C.green}${C.bold}✔ Mesh Node "${nodeId}" is successfully running on ${host}:${port}${C.reset}`);
             if (bootstrapNodes.length > 0) {
                 this.logger.info(`${C.dim}Connected to bootstrap peers: ${bootstrapNodes.join(', ')}${C.reset}`);
             }
