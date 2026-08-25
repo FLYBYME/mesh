@@ -13,6 +13,7 @@ import type {
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
+import type { Database } from '../db/Database.js';
 
 /**
  * MeshApp — The "Motherboard" shell that provides DI and lifecycle management.
@@ -26,7 +27,7 @@ export class MeshApp implements IMeshApp {
     protected modules: IMeshModule[] = [];
     protected pendingMiddleware: ((ctx: any, next: () => Promise<unknown>) => Promise<unknown>)[] = [];
     protected providers = new Map<string, unknown>();
-    protected pendingModules: IServiceModule[] = [];
+    protected pendingModules: { module: IServiceModule; options?: { key?: string; database?: Database } }[] = [];
     public orchestrator: BootOrchestrator;
 
     constructor(config: AppConfig) {
@@ -67,12 +68,12 @@ export class MeshApp implements IMeshApp {
         return this;
     }
 
-    public async registerModule(module: IServiceModule): Promise<this> {
+    public async registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<this> {
         if (this.hasProvider('broker')) {
             const broker = this.getProvider<IServiceBroker>('broker');
-            await broker.registerModule(module);
+            await broker.registerModule(module, options);
         } else {
-            this.pendingModules.push(module);
+            this.pendingModules.push({ module, options });
         }
         return this;
     }
@@ -122,10 +123,10 @@ export class MeshApp implements IMeshApp {
                 broker.use(this.pendingMiddleware.shift()! as any);
             }
             while (this.pendingModules.length > 0) {
-                const mod = this.pendingModules.shift();
-                if (mod) {
-                    broker.registerModule(mod).catch((err: unknown) => {
-                        this.logger.error(`[MeshApp] Failed to register pending module: ${mod.domain}`, { error: err instanceof Error ? err.message : String(err) });
+                const pending = this.pendingModules.shift();
+                if (pending) {
+                    broker.registerModule(pending.module, pending.options).catch((err: unknown) => {
+                        this.logger.error(`[MeshApp] Failed to register pending module: ${pending.module.domain}`, { error: err instanceof Error ? err.message : String(err) });
                     });
                 }
             }

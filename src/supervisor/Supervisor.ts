@@ -5,6 +5,7 @@ import type { MeshApp } from '../core/MeshApp.js';
 import type { IServiceBroker } from '../interfaces/IServiceBroker.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { ILogger } from '../interfaces/ILogger.js';
+import { Database } from '../db/Database.js';
 
 // ─── Manifest ──────────────────────────────────────────────────────────────
 
@@ -17,6 +18,24 @@ export const SupervisorServiceEntrySchema = z.object({
     path: z.string().min(1),
     /** Other entries' `name`s that must be running before this one starts. */
     dependsOn: z.array(z.string()).default([]),
+    /** Mounts this entry under a different local address than its own `domain`
+     *  (ServiceBroker.registerModule's `key` option) -- lets a second, isolated
+     *  instance of a domain already running elsewhere in this manifest coexist,
+     *  e.g. a `-test` entry pointed at the same `path` as the real one. Omitted:
+     *  mounted under its own domain, same as every entry before this existed. */
+    mountKey: z.string().optional(),
+    /** Backs this entry's own CRUD/time-series calls with a dedicated Database
+     *  connection instead of the Supervisor's shared default (ServiceBroker.
+     *  registerModule's `database` option) -- e.g. an isolated test database for
+     *  a mountKey-aliased test entry, so it never touches the real instance's
+     *  collections. Connected on serviceStart, disconnected on serviceStop.
+     *  Omitted: uses the same shared database as every other entry. */
+    database: z.object({ uri: z.string(), dbName: z.string() }).optional(),
+    /** Where to dynamically `import()` this entry's associated tests from
+     *  (supervisor.run_tests). Resolved the same way as `path`. Omitted: this
+     *  entry has no associated tests -- run_tests reports a real, honest error
+     *  rather than a silent empty pass. */
+    testsPath: z.string().optional(),
 });
 export type SupervisorServiceEntry = z.infer<typeof SupervisorServiceEntrySchema>;
 
@@ -117,7 +136,34 @@ export interface SupervisorServiceStatus {
 
 interface TrackedInstance {
     module: IServiceModule;
-    domain: string;
+    /** The key this instance was actually registered under (entry.mountKey, or the
+     *  module's own domain when unset) -- unregisterModule needs this exact key,
+     *  not the domain, once a mount key is in play. */
+    mountKey: string;
+    /** This entry's own Database connection, if entry.database was set. Disconnected
+     *  on serviceStop -- real resource teardown, not just a broker-level unmount. */
+    database?: Database;
+}
+
+export interface SupervisorTestContext {
+    broker: IServiceBroker;
+    /** The mount key this entry's instance is actually registered under (its own domain,
+     *  unless the manifest entry set `mountKey`). Build tool keys as `${mountKey}.<action>`
+     *  to address *this specific instance* regardless of whether it's mounted under its
+     *  real domain or an alias -- a test file shouldn't need to know which. */
+    mountKey: string;
+}
+
+export interface SupervisorTestOutcome {
+    name: string;
+    ok: boolean;
+    error?: string;
+}
+
+export interface SupervisorTestRunResult {
+    passed: number;
+    failed: number;
+    results: SupervisorTestOutcome[];
 }
 
 /**
@@ -210,6 +256,7 @@ export class Supervisor {
             throw new Error(`[Supervisor] Cannot start "${name}": dependency not running: ${unmetDeps.join(', ')}`);
         }
 
+        let entryDb: Database | undefined;
         try {
             const resolved = this.resolvePath(entry.path);
             const imported = await import(resolved);
@@ -221,14 +268,24 @@ export class Supervisor {
             }
 
             const instance = new ServiceClass();
-            await this.broker.registerModule(instance);
+            const mountKey = entry.mountKey ?? instance.domain;
 
-            this.instances.set(name, { module: instance, domain: instance.domain });
+            if (entry.database) {
+                entryDb = new Database(this.logger, entry.database.uri, entry.database.dbName);
+                await entryDb.connect();
+            }
+
+            await this.broker.registerModule(instance, { key: entry.mountKey, database: entryDb });
+
+            this.instances.set(name, { module: instance, mountKey, database: entryDb });
             const status: SupervisorServiceStatus = { name, domain: instance.domain, status: 'running', dependsOn: entry.dependsOn };
             this.statuses.set(name, status);
-            this.logger.info(`[Supervisor] Started "${name}" (domain: ${instance.domain})`);
+            this.logger.info(`[Supervisor] Started "${name}" (domain: ${instance.domain}${mountKey !== instance.domain ? `, mount key: ${mountKey}` : ''})`);
             return status;
         } catch (err) {
+            if (entryDb) {
+                await entryDb.disconnect().catch(() => { });
+            }
             const status: SupervisorServiceStatus = {
                 name,
                 status: 'error',
@@ -269,7 +326,10 @@ export class Supervisor {
 
         const tracked = this.instances.get(name);
         if (tracked) {
-            await this.broker.unregisterModule(tracked.domain);
+            await this.broker.unregisterModule(tracked.mountKey);
+            if (tracked.database) {
+                await tracked.database.disconnect();
+            }
             this.instances.delete(name);
         }
 
@@ -298,5 +358,62 @@ export class Supervisor {
             return [status];
         }
         return this.manifest.services.map((e) => this.statuses.get(e.name)!);
+    }
+
+    /**
+     * runTests: the actual Part 3 ask -- "I can call a contract and a set of tests will run
+     * and return the result." Runs an entry's associated tests (its `testsPath` module's
+     * `tests` export) for real, against its currently-running instance -- the same live
+     * instance every other caller reaches via this Supervisor's own broker, not a fresh
+     * throwaway one. Real isolation from a production instance of the same domain, when
+     * wanted, comes from running a *separate* manifest entry with its own `mountKey`/
+     * `database` (see the manifest fields above) and pointing run_tests at that entry's
+     * `name` -- runTests itself doesn't decide isolation, the manifest does.
+     *
+     * Convention (deliberately the only one supported, not left as an open menu): the tests
+     * module at `testsPath` exports `tests: Record<string, (ctx: SupervisorTestContext) =>
+     * Promise<void>>`. A test passes by resolving, fails by throwing -- normal-looking unit
+     * tests, no custom assertion library required.
+     */
+    public async runTests(name: string, testName?: string): Promise<SupervisorTestRunResult> {
+        const entry = this.byName.get(name);
+        if (!entry) {
+            throw new Error(`[Supervisor] Unknown service: "${name}"`);
+        }
+        if (!entry.testsPath) {
+            throw new Error(`[Supervisor] Service "${name}" has no testsPath configured -- nothing to run`);
+        }
+        if (this.statuses.get(name)?.status !== 'running') {
+            throw new Error(`[Supervisor] Cannot run tests for "${name}": service is not running`);
+        }
+        const tracked = this.instances.get(name)!;
+
+        const resolved = this.resolvePath(entry.testsPath);
+        const imported = await import(resolved);
+        const tests = imported.tests as Record<string, (ctx: SupervisorTestContext) => Promise<void>> | undefined;
+        if (!tests || typeof tests !== 'object') {
+            throw new Error(`[Supervisor] ${resolved} does not export a "tests" object`);
+        }
+
+        const namesToRun = testName ? [testName] : Object.keys(tests);
+        if (testName && !tests[testName]) {
+            throw new Error(`[Supervisor] Test "${testName}" not found for service "${name}" (available: ${Object.keys(tests).join(', ') || 'none'})`);
+        }
+
+        const ctx: SupervisorTestContext = { broker: this.broker, mountKey: tracked.mountKey };
+        const results: SupervisorTestOutcome[] = [];
+        for (const testCaseName of namesToRun) {
+            try {
+                await tests[testCaseName]!(ctx);
+                results.push({ name: testCaseName, ok: true });
+            } catch (err) {
+                results.push({ name: testCaseName, ok: false, error: err instanceof Error ? err.message : String(err) });
+            }
+        }
+
+        const passed = results.filter((r) => r.ok).length;
+        const failed = results.length - passed;
+        this.logger.info(`[Supervisor] Ran ${results.length} test(s) for "${name}": ${passed} passed, ${failed} failed`);
+        return { passed, failed, results };
     }
 }

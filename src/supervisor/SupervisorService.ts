@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ServiceModule } from '../core/ServiceModule.js';
 import { defineContract, defaultPrint } from '../interfaces/IToolContract.js';
-import type { Supervisor, SupervisorServiceStatus } from './Supervisor.js';
+import type { Supervisor, SupervisorServiceStatus, SupervisorTestRunResult } from './Supervisor.js';
 
 const statusSchema = z.object({
     name: z.string(),
@@ -55,12 +55,30 @@ const serviceStatusContract = defineContract({
     print: defaultPrint,
 });
 
+const testOutcomeSchema = z.object({
+    name: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+});
+
+const runTestsContract = defineContract({
+    domain: 'supervisor',
+    action: 'run_tests',
+    description: "Runs one manifest-defined service's associated tests (its testsPath module) for real, against its currently-running instance. Pass testName to run just one test, omit it to run all.",
+    inputSchema: z.object({ name: z.string(), testName: z.string().optional() }),
+    outputSchema: z.object({ passed: z.number(), failed: z.number(), results: z.array(testOutcomeSchema) }),
+    rest: { method: 'POST', path: '/supervisor/run_tests' },
+    destructive: false,
+    print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
         'supervisor.service_start': { params: z.infer<typeof serviceStartContract.inputSchema>; returns: SupervisorServiceStatus };
         'supervisor.service_stop': { params: z.infer<typeof serviceStopContract.inputSchema>; returns: SupervisorServiceStatus };
         'supervisor.service_restart': { params: z.infer<typeof serviceRestartContract.inputSchema>; returns: SupervisorServiceStatus };
         'supervisor.service_status': { params: z.infer<typeof serviceStatusContract.inputSchema>; returns: { services: SupervisorServiceStatus[] } };
+        'supervisor.run_tests': { params: z.infer<typeof runTestsContract.inputSchema>; returns: SupervisorTestRunResult };
     }
 }
 
@@ -87,6 +105,8 @@ export class SupervisorService extends ServiceModule {
         this.mountTool(serviceStatusContract, async (input) => ({
             services: supervisor.serviceStatus(input.name),
         }));
+
+        this.mountTool(runTestsContract, async (input) => supervisor.runTests(input.name, input.testName));
     }
 }
 

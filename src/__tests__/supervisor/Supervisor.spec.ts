@@ -1,7 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createTestApp, destroyTestApp, dropTestDatabase } from '../helpers/setup.js';
+import { MongoClient } from 'mongodb';
+import { createTestApp, destroyTestApp, dropTestDatabase, TEST_DB_NAME } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { loadManifest, topologicalOrder, Supervisor, SupervisorManifest } from '../../supervisor/Supervisor.js';
@@ -164,5 +165,118 @@ describe('Supervisor — real dynamic lifecycle', () => {
         expect(stopResult.status).toBe('stopped');
 
         await (broker as unknown as { unregisterModule(domain: string): Promise<void> }).unregisterModule('supervisor');
+    });
+});
+
+// Real, load-bearing proof of Part 3: "I can call a contract and a set of tests will run
+// and return the result" -- run against a genuinely isolated test-mounted instance (its own
+// mount key AND its own database, per the manifest, not the Supervisor deciding this on its
+// own), verified both through the test results themselves and by inspecting the raw Mongo
+// databases directly, so this isn't just "the code ran and returned something."
+describe('Supervisor.runTests() — real isolated test runs', () => {
+    let app: MeshApp;
+    let broker: IServiceBroker;
+    let isolatedDbName: string;
+    let manifest: SupervisorManifest;
+
+    beforeAll(async () => {
+        app = await createTestApp('supervisor-tests-node');
+        broker = app.getProvider<IServiceBroker>('broker');
+
+        isolatedDbName = `mesh_test_suptests_${Math.random().toString(36).slice(2, 8)}`;
+        const isolatedUri = process.env.MONGODB_URI!.replace(/\/[^/?]+(\?|$)/, `/${isolatedDbName}$1`);
+
+        manifest = {
+            services: [
+                {
+                    name: 'widget',
+                    path: path.join(FIXTURES_DIR, 'widget.service.ts'),
+                    dependsOn: [],
+                },
+                {
+                    name: 'widget-test',
+                    path: path.join(FIXTURES_DIR, 'widget.service.ts'),
+                    dependsOn: [],
+                    mountKey: 'test:sup-widget',
+                    database: { uri: isolatedUri, dbName: isolatedDbName },
+                    testsPath: path.join(FIXTURES_DIR, 'widget.tests.ts'),
+                },
+            ],
+        };
+    });
+
+    afterAll(async () => {
+        await destroyTestApp(app);
+        await dropTestDatabase();
+        const client = new MongoClient(process.env.MONGODB_URI!);
+        await client.connect();
+        await client.db(isolatedDbName).dropDatabase();
+        await client.close();
+    });
+
+    it('runs real tests against a mount-key + database isolated instance, reporting structured pass/fail, never touching the production instance', async () => {
+        const supervisor = new Supervisor(app, manifest, FIXTURES_DIR);
+        const startResults = await supervisor.startAll();
+        expect(startResults.every((r) => r.status === 'running')).toBe(true);
+
+        // Wrong target entirely.
+        await expect(supervisor.runTests('nonexistent')).rejects.toThrow(/unknown service/i);
+
+        // The production entry has no testsPath -- a real, honest error, not a silent empty pass.
+        await expect(supervisor.runTests('widget')).rejects.toThrow(/no testsPath configured/i);
+
+        // A named test that doesn't exist.
+        await expect(supervisor.runTests('widget-test', 'nope')).rejects.toThrow(/not found/i);
+
+        const result = await supervisor.runTests('widget-test');
+        expect(result.passed).toBe(1);
+        expect(result.failed).toBe(1);
+        const passing = result.results.find((r) => r.name === 'create and find round-trip')!;
+        expect(passing.ok).toBe(true);
+        const failing = result.results.find((r) => r.name.includes('deliberately fails'))!;
+        expect(failing.ok).toBe(false);
+        expect(failing.error).toMatch(/intentional failure fixture/);
+
+        // Running just the one named test works too.
+        const single = await supervisor.runTests('widget-test', 'create and find round-trip');
+        expect(single.results).toHaveLength(1);
+        expect(single.passed).toBe(1);
+
+        // The real proof: the test run's writes landed in the isolated database, never in
+        // production's own collection for the same domain.
+        const rawClient = new MongoClient(process.env.MONGODB_URI!);
+        await rawClient.connect();
+        try {
+            const isolatedDocs = await rawClient.db(isolatedDbName).collection('sup-widget').find({}).toArray();
+            const productionDocs = await rawClient.db(TEST_DB_NAME).collection('sup-widget').find({}).toArray();
+            expect(isolatedDocs.map((d) => d.name)).toContain('widget-a');
+            expect(productionDocs.map((d) => d.name)).not.toContain('widget-a');
+        } finally {
+            await rawClient.close();
+        }
+
+        // Stopping the test entry means there's no longer a running instance to test against.
+        await supervisor.serviceStop('widget-test');
+        await expect(supervisor.runTests('widget-test')).rejects.toThrow(/not running/i);
+
+        await supervisor.serviceStop('widget');
+    });
+
+    it('exposes run_tests through the real supervisor.* mesh contract', async () => {
+        const supervisor = new Supervisor(app, manifest, FIXTURES_DIR);
+        await app.registerModule(new SupervisorService(supervisor), { key: 'supervisor2' });
+        await supervisor.startAll();
+
+        try {
+            const result = await broker.call(
+                'supervisor2.run_tests' as never,
+                { name: 'widget-test' } as never
+            ) as unknown as { passed: number; failed: number };
+            expect(result.passed).toBe(1);
+            expect(result.failed).toBe(1);
+        } finally {
+            await supervisor.stopAll();
+            await (broker as unknown as { unregisterModule(key: string): Promise<void> }).unregisterModule('supervisor2');
+        }
     });
 });

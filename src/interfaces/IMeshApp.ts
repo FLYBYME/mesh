@@ -6,6 +6,7 @@ import type { IServiceRegistry } from './IServiceRegistry.js';
 import type { IMeshMeta } from './IMeshMeta.js';
 import type { ICallOptions } from './IServiceContext.js';
 import { IMeshPacket } from './IMeshNetwork.js';
+import type { Database } from '../db/Database.js';
 export interface AppConfig extends Record<string, unknown> {
     nodeID: string;
     namespace?: string;
@@ -35,8 +36,10 @@ export interface IMeshApp extends IMeshNode {
     /** Registers a module or middleware. */
     use(moduleOrMiddleware: IMeshModule | ((ctx: any, next: () => Promise<unknown>) => Promise<unknown>)): this;
 
-    /** Registers a service module. */
-    registerModule(module: IServiceModule): Promise<this>;
+    /** Registers a service module. See IServiceBroker.registerModule for `options` (mount key /
+     *  database override) -- forwarded through once the broker is available, or queued and
+     *  forwarded when it becomes available if called before then. */
+    registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<this>;
 
     /** Registers a provider for DI. */
     registerProvider<T>(token: IProviderToken<T>, provider: T): void;
