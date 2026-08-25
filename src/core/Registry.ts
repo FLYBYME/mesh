@@ -37,16 +37,18 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     private ttl: number;
 
     private localModules = new Map<string, IServiceModule>();
+    private localNamespace: string;
 
     constructor(
         private logger: ILogger,
-        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number } = {}
+        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; namespace?: string } = {}
     ) {
         super();
         this.preferLocal = options.preferLocal ?? true;
         this.localNodeID = options.localNodeID || `node_${Math.random().toString(36).substr(2, 9)}`;
         this.dhtEnabled = options.dhtEnabled ?? false;
         this.ttl = options.ttl || 30000;
+        this.localNamespace = options.namespace || 'default';
         this.balancer = new RoundRobinBalancer();
 
         if (this.dhtEnabled) {
@@ -57,7 +59,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         this.registerNode({
             nodeID: this.localNodeID,
             type: 'node',
-            namespace: 'default',
+            namespace: this.localNamespace,
             addresses: [],
             available: true,
             timestamp: Date.now(),
@@ -255,6 +257,10 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         const results: RegistryNodeInfo[] = [];
         for (const node of this.nodes.values()) {
             if (!node.available) continue;
+            // Packet-layer namespace filtering (MeshNetwork) already keeps foreign-namespace
+            // nodes out of `this.nodes` via presence/PEX -- this is defense-in-depth so routing
+            // stays correct even if a node ever enters the map through some other path.
+            if ((node.namespace || 'default') !== this.localNamespace) continue;
             for (const svc of node.services) {
                 if (!svc.tools) continue;
 
@@ -475,6 +481,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
         for (const node of this.nodes.values()) {
             if (!node.available) continue;
+            if ((node.namespace || 'default') !== this.localNamespace) continue;
             for (const svc of node.services || []) {
                 if (!svc.tools) continue;
 

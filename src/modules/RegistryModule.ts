@@ -18,6 +18,7 @@ export class RegistryModule implements IMeshModule {
         // 1. Initialize core registry logic
         this.registry = new Registry(this.logger, {
             localNodeID: app.nodeID,
+            namespace: app.namespace,
             ...this.options
         });
 

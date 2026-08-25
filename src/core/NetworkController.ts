@@ -44,7 +44,9 @@ export class NetworkController {
         this.node.registry.registerNode({
             nodeID: packet.senderNodeID,
             type: 'node',
-            namespace: 'default', // Ideally from data or config
+            // MeshNetwork already drops any packet whose namespace differs from our own
+            // before it reaches this handler, so the sender is guaranteed same-namespace.
+            namespace: this.node.namespace,
             addresses: [],
             available: true,
             timestamp: Date.now(),
