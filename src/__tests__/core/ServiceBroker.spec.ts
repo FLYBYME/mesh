@@ -1,7 +1,12 @@
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
+import { IServiceModule } from '../../interfaces/IServiceModule.js';
+import { IServiceContext } from '../../interfaces/IServiceContext.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
+import { ServiceModule } from '../../core/ServiceModule.js';
+import { defaultPrint, defineContract } from '../../interfaces/IToolContract.js';
+import { z } from 'zod';
 
 describe('ServiceBroker', () => {
     let app: MeshApp;
@@ -124,6 +129,93 @@ describe('ServiceBroker', () => {
             const testBroker = new ServiceBroker('lifecycle-test', app.logger);
             await testBroker.start();
             await testBroker.stop();
+        });
+    });
+
+    // ─── unregisterModule() — real dynamic service lifecycle ──────────────────
+    // See docs/SUPERVISOR_AND_SERVICE_LIFECYCLE.md Part 1. The load-bearing claim
+    // being tested here isn't "the code ran without throwing" -- it's that a
+    // service's own resources (a live timer, in this case) are genuinely released,
+    // and that removal doesn't disturb anything else still registered.
+
+    describe('unregisterModule()', () => {
+        const tickContract = defineContract({
+            domain: 'ticker',
+            action: 'tick_count',
+            description: 'Returns how many times the internal timer has ticked.',
+            inputSchema: z.object({}),
+            outputSchema: z.object({ count: z.number() }),
+            rest: { method: 'POST', path: '/ticker/tick_count' },
+            destructive: false,
+            print: defaultPrint,
+        });
+
+        class TickerModule extends ServiceModule {
+            public readonly domain = 'ticker';
+            public tickCount = 0;
+            public stopCalled = false;
+            public receivedEvents: unknown[] = [];
+            private timer?: ReturnType<typeof setInterval>;
+
+            constructor() {
+                super();
+                this.mountTool(tickContract, async () => ({ count: this.tickCount }));
+                this.mountEventHandler('test.event', (payload) => {
+                    this.receivedEvents.push(payload);
+                });
+            }
+
+            public async onStart(): Promise<void> {
+                this.timer = setInterval(() => { this.tickCount++; }, 10);
+            }
+
+            public async onStop(): Promise<void> {
+                this.stopCalled = true;
+                if (this.timer) {
+                    clearInterval(this.timer);
+                    this.timer = undefined;
+                }
+            }
+        }
+
+        it('calls onStop, stops a live timer for real, removes tools/schema/events, and leaves other modules untouched', async () => {
+            const ticker = new TickerModule();
+            await (broker as ServiceBroker).registerModule(ticker as unknown as IServiceModule);
+            // Broker-level registerModule doesn't call onStart itself unless the broker
+            // is already started -- this test app's broker is, via app.start() in setup.
+            await new Promise((resolve) => setTimeout(resolve, 55));
+            const midCount = (await broker.call('ticker.tick_count' as never, {} as never)) as unknown as { count: number };
+            expect(midCount.count).toBeGreaterThan(0);
+
+            // A still-registered, unrelated tool works fine before we touch anything.
+            const before = await broker.call('demo.hello', { name: 'Untouched' });
+            expect(before.message).toContain('Untouched');
+
+            await (broker as ServiceBroker).unregisterModule('ticker');
+
+            expect(ticker.stopCalled).toBe(true);
+            const countAtUnregister = ticker.tickCount;
+            await new Promise((resolve) => setTimeout(resolve, 55));
+            // The real assertion: the interval genuinely stopped firing, not just that
+            // onStop was called (a service could call onStop and still leak a timer if
+            // the framework didn't actually clear it -- this proves the whole chain).
+            expect(ticker.tickCount).toBe(countAtUnregister);
+
+            // The tool is really gone, not just quietly failing some other way.
+            await expect(broker.call('ticker.tick_count' as never, {} as never)).rejects.toThrow(/not found/i);
+
+            // Emitting the event this module was subscribed to must not touch it anymore.
+            const receivedBefore = ticker.receivedEvents.length;
+            broker.emit('test.event', { data: 'after-unregister' });
+            expect(ticker.receivedEvents.length).toBe(receivedBefore);
+
+            // A completely different, still-registered service is unaffected throughout.
+            const after = await broker.call('demo.hello', { name: 'StillHere' });
+            expect(after.message).toContain('StillHere');
+        });
+
+        it('throws a real error when unregistering a domain that was never registered', async () => {
+            await expect((broker as ServiceBroker).unregisterModule('never-registered')).rejects.toThrow(/not registered/i);
         });
     });
 });

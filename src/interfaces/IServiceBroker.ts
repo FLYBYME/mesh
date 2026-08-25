@@ -20,6 +20,10 @@ export interface IServiceBroker {
     use(mw: IMiddleware): void;
     useLocal(mw: IMiddleware): void;
     registerModule(module: IServiceModule): Promise<void>;
+    /** Calls the module's own onStop for real resource cleanup, then removes its tools,
+     *  schema entries, event subscriptions, and registry entry. Throws if `domain` isn't
+     *  currently registered. */
+    unregisterModule(domain: string): Promise<void>;
     handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown>;
     handleIncomingRPC(packet: IMeshPacket): Promise<unknown>;
     executeRemote(nodeID: string, toolName: string, params: unknown, meta?: Record<string, unknown>): Promise<unknown>;

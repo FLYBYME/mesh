@@ -37,6 +37,10 @@ export class ServiceBroker implements IServiceBroker {
     private localTools = new Map<string, LocalTool>();
     private modules: IServiceModule[] = [];
     private isStarted: boolean = false;
+    // registerModule's event subscriptions use an inline closure per handler, so nothing
+    // keeps a reference to hand back to EventEmitter#off later -- without this, unregisterModule
+    // has no way to remove only this module's listeners. Keyed by domain.
+    private moduleEventListeners = new Map<string, Array<{ event: string; listener: (...args: unknown[]) => void }>>();
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -258,7 +262,7 @@ export class ServiceBroker implements IServiceBroker {
             const eventHandlers = module.getEventHandlers();
             for (const [name, handler] of eventHandlers.entries()) {
                 this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${String(name)}`);
-                this.localEvents.on(name as string, (data: unknown, packet?: IMeshPacket) => {
+                const listener = (data: unknown, packet?: IMeshPacket) => {
                     const ctx = {
                         broker: this,
                         correlationId: packet?.id || nanoid(),
@@ -282,13 +286,64 @@ export class ServiceBroker implements IServiceBroker {
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
                         this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
                     });
-                });
+                };
+                this.localEvents.on(name as string, listener);
+                const tracked = this.moduleEventListeners.get(domain) ?? [];
+                tracked.push({ event: name as string, listener: listener as (...args: unknown[]) => void });
+                this.moduleEventListeners.set(domain, tracked);
             }
         }
 
         if (this.isStarted && module.onStart) {
             await module.onStart(this);
         }
+    }
+
+    /**
+     * unregisterModule: the real, missing other half of registerModule. Nothing before this
+     * called module.onStop, so a service's own setInterval/setTimeout/caches/sockets were never
+     * actually released -- registerModule's onStop hook existed on the interface but had no
+     * corresponding teardown path that invoked it for a live, already-registered module. Order
+     * matters: onStop runs first, before any broker/registry bookkeeping is touched, so the
+     * module still sees a fully-functional broker (able to call other services, etc.) while it
+     * cleans itself up.
+     */
+    public async unregisterModule(domain: string): Promise<void> {
+        const module = this.modules.find((m) => m.domain === domain);
+        if (!module) {
+            throw new Error(`[ServiceBroker] Cannot unregister module '${domain}': not registered`);
+        }
+
+        this.logger.info(`[ServiceBroker] Unregistering module: ${domain} (Node: ${this.nodeID})`);
+
+        if (module.onStop) {
+            await module.onStop(this);
+        }
+
+        const contracts = module.getContracts();
+        for (const contract of contracts) {
+            const toolKeyStr = `${contract.domain}.${contract.action}`;
+            this.localTools.delete(toolKeyStr);
+            MeshToolSchemaRegistry.delete(toolKeyStr);
+        }
+        this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${domain}'`);
+
+        const tracked = this.moduleEventListeners.get(domain);
+        if (tracked) {
+            for (const { event, listener } of tracked) {
+                this.localEvents.off(event, listener);
+            }
+            this.moduleEventListeners.delete(domain);
+            this.logger.debug(`[ServiceBroker] Removed ${tracked.length} event subscription(s) for module '${domain}'`);
+        }
+
+        this.modules = this.modules.filter((m) => m.domain !== domain);
+
+        if (this.registry) {
+            this.registry.unregisterModule(domain);
+        }
+
+        this.logger.info(`[ServiceBroker] Module '${domain}' fully unregistered: tools, schema, event subscriptions, and registry entry all removed.`);
     }
 
     public async call<K extends keyof IServiceToolRegistry>(
