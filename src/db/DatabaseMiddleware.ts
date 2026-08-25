@@ -60,10 +60,23 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             return await next();
         }
 
-        const action = toolKey.substring(domain.length + 1);
+        // Split on the *last* dot, not `domain.length + 1`: `domain` here is the contract's real
+        // domain (from MeshToolSchemaRegistry), but `toolKey` is the *effective* key a mount-key
+        // alias may have prefixed (e.g. `test:widget.create` for schemaReg.domain === 'widget') --
+        // `domain` is no longer guaranteed to be an exact, immediate prefix of `toolKey` once
+        // registerModule's `key` option is in play. An action name never contains a literal '.'
+        // (dots are reserved as the domain/action separator everywhere in this framework), so the
+        // last dot is always the real split point, aliased or not.
+        const action = toolKey.substring(toolKey.lastIndexOf('.') + 1);
+        // A mount-keyed instance registered with its own `database` (registerModule's
+        // `options.database`) routes its CRUD/time-series calls there instead of this
+        // middleware's shared default -- e.g. an isolated test database for a test-mounted
+        // instance, never touching the same collections as the real one. Falls back to the
+        // shared `db` for every mount that didn't ask for an override (unchanged behavior).
+        const effectiveDb = broker.getDatabaseForTool(toolKey) ?? db;
 
         if (schemaReg.isTimeSeries) {
-            return await handleTimeSeries(ctx, broker, db, domain, action);
+            return await handleTimeSeries(ctx, broker, effectiveDb, domain, action);
         }
 
         // Try to find the base schema from a tool that returns it
@@ -77,7 +90,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         }
 
         const schema: z.ZodType<BaseDoc> = possibleSchema as z.ZodType<BaseDoc>;
-        const repo = db.repo(schema, domain);
+        const repo = effectiveDb.repo(schema, domain);
 
         let params: Record<string, unknown> = ctx.params;
         let result: unknown;

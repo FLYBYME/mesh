@@ -7,6 +7,7 @@ import type { IMeshMeta } from './IMeshMeta.js';
 import type { IBrokerPlugin } from './IBrokerPlugin.js';
 import type { IMiddleware } from './IInterceptor.js';
 import type { ICallOptions } from './IServiceContext.js';
+import type { Database } from '../db/Database.js';
 /**
  * IServiceBroker — Interface for the central communication kernel.
  */
@@ -25,13 +26,22 @@ export interface IServiceBroker {
      *  one). An aliased mount (`key` !== the module's `domain`) is local-only: it is never
      *  advertised to the Registry, so it can't collide with the real instance's entry or be
      *  routed to remotely -- only reachable via a direct local `broker.call('<key>.<action>', ...)`
-     *  on this exact broker. Throws if `key` (or `domain`, when `key` is omitted) is already in use. */
-    registerModule(module: IServiceModule, options?: { key?: string }): Promise<void>;
+     *  on this exact broker. Throws if `key` (or `domain`, when `key` is omitted) is already in use.
+     *  Pass `options.database` to route this mount's own CRUD/time-series calls to a different
+     *  Database (a different Mongo connection/dbName) than DatabaseModule's shared broker-wide
+     *  default -- e.g. an isolated test database for a test-mounted instance. Omitted (the default),
+     *  this mount's calls use the same shared database as everything else on the broker. */
+    registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<void>;
     /** Calls the module's own onStop for real resource cleanup, then removes its tools,
      *  schema entries, event subscriptions, and (for a non-aliased mount) registry entry.
      *  Takes the same key `registerModule` mounted it under (its `domain`, unless `options.key`
      *  was passed). Throws if that key isn't currently registered. */
     unregisterModule(mountKey: string): Promise<void>;
+    /** Resolves the Database override (if any) registered via registerModule's `options.database`
+     *  for the mount that owns `toolKey`. Undefined when the tool isn't mounted, or was mounted
+     *  without an override -- callers (DatabaseMiddleware) fall back to their own shared default
+     *  Database in either case. */
+    getDatabaseForTool(toolKey: string): Database | undefined;
     handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown>;
     handleIncomingRPC(packet: IMeshPacket): Promise<unknown>;
     executeRemote(nodeID: string, toolName: string, params: unknown, meta?: Record<string, unknown>): Promise<unknown>;

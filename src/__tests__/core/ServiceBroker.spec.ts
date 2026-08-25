@@ -1,4 +1,4 @@
-import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
+import { createTestApp, destroyTestApp, dropTestCollection, TEST_DB_NAME } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { IServiceModule } from '../../interfaces/IServiceModule.js';
@@ -6,6 +6,9 @@ import { IServiceContext } from '../../interfaces/IServiceContext.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
 import { ServiceModule } from '../../core/ServiceModule.js';
 import { defaultPrint, defineContract } from '../../interfaces/IToolContract.js';
+import { defineCrud } from '../../interfaces/ICrudContract.js';
+import { Database } from '../../db/Database.js';
+import { MongoClient } from 'mongodb';
 import { z } from 'zod';
 
 describe('ServiceBroker', () => {
@@ -294,6 +297,86 @@ describe('ServiceBroker', () => {
             expect(stillReal.instanceId).toBe(real.instanceId);
 
             await (broker as ServiceBroker).unregisterModule('md-primary');
+        });
+    });
+
+    // ─── registerModule() database override — real per-mount DB isolation ─────
+    // The mount-key fix above only solves the *tool key* collision. CRUD calls all flow
+    // through DatabaseMiddleware, which was tied to one shared Database/Mongo connection for
+    // the whole broker regardless of mount key -- a test-mounted instance would still write into
+    // the real production database. These tests prove registerModule's `database` option fixes
+    // that for real: a mount-keyed instance backed by its own Database genuinely writes to and
+    // reads from a separate Mongo database, verified both through the CRUD contracts themselves
+    // and by inspecting the raw underlying Mongo collections directly.
+    describe('registerModule() — per-mount database override', () => {
+        const WidgetSchema = z.object({
+            name: z.string(),
+            createdAt: z.coerce.date(),
+            updatedAt: z.coerce.date(),
+        });
+        const widgetCrud = defineCrud('widget', WidgetSchema);
+
+        class WidgetModule extends ServiceModule {
+            public readonly domain = 'widget';
+            constructor() {
+                super();
+                this.mountCrud(widgetCrud);
+            }
+        }
+
+        it("routes a mount-keyed instance's CRUD calls to its own Database, fully isolated from the shared default", async () => {
+            const testDbName = `mesh_test_dbiso_${Math.random().toString(36).slice(2, 8)}`;
+            // Database's constructor lets the URI's own path override an explicit `dbName` --
+            // the URI must actually embed the target db name, same as createTestApp does.
+            const isolatedUri = process.env.MONGODB_URI!.replace(/\/[^/?]+(\?|$)/, `/${testDbName}$1`);
+            const testDb = new Database(app.logger, isolatedUri, testDbName);
+            await testDb.connect();
+
+            await (broker as ServiceBroker).registerModule(new WidgetModule() as unknown as IServiceModule);
+            await (broker as ServiceBroker).registerModule(new WidgetModule() as unknown as IServiceModule, {
+                key: 'test:widget',
+                database: testDb,
+            });
+
+            try {
+                const real = await broker.call('widget.create' as never, { name: 'real-widget' } as never) as unknown as { id: string };
+                const test = await broker.call('test:widget.create' as never, { name: 'test-widget' } as never) as unknown as { id: string };
+
+                // Through the contracts: each mount only ever sees its own data.
+                const realFind = await broker.call('widget.find' as never, {} as never) as unknown as { name: string }[];
+                const testFind = await broker.call('test:widget.find' as never, {} as never) as unknown as { name: string }[];
+                expect(realFind.map((i) => i.name)).toContain('real-widget');
+                expect(realFind.map((i) => i.name)).not.toContain('test-widget');
+                expect(testFind.map((i) => i.name)).toContain('test-widget');
+                expect(testFind.map((i) => i.name)).not.toContain('real-widget');
+
+                // Directly against the raw Mongo collections: the real proof that this isn't
+                // just two logical views over the same underlying storage. One shared client for
+                // both the check and the cleanup below, to minimize extra connection churn
+                // alongside the rest of the suite's own parallel Mongo usage.
+                const rawClient = new MongoClient(process.env.MONGODB_URI!);
+                await rawClient.connect();
+                try {
+                    const defaultDocs = await rawClient.db(TEST_DB_NAME).collection('widget').find({}).toArray();
+                    const isolatedDocs = await rawClient.db(testDbName).collection('widget').find({}).toArray();
+
+                    expect(defaultDocs.map((d) => d.name)).toContain('real-widget');
+                    expect(defaultDocs.map((d) => d.name)).not.toContain('test-widget');
+                    expect(defaultDocs.find((d) => d.id === test.id)).toBeUndefined();
+
+                    expect(isolatedDocs.map((d) => d.name)).toContain('test-widget');
+                    expect(isolatedDocs.map((d) => d.name)).not.toContain('real-widget');
+                    expect(isolatedDocs.find((d) => d.id === real.id)).toBeUndefined();
+
+                    await rawClient.db(testDbName).dropDatabase();
+                } finally {
+                    await rawClient.close();
+                }
+            } finally {
+                await (broker as ServiceBroker).unregisterModule('test:widget');
+                await (broker as ServiceBroker).unregisterModule('widget');
+                await testDb.disconnect();
+            }
         });
     });
 });

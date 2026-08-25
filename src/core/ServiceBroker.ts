@@ -10,6 +10,7 @@ import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { IServiceContext, ICallOptions } from '../interfaces/IServiceContext.js';
+import type { Database } from '../db/Database.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
@@ -47,7 +48,16 @@ export class ServiceBroker implements IServiceBroker {
     // this entry used its real domain (and therefore was advertised to the Registry for remote
     // discovery) or an override key (which is never advertised -- it's local-only by construction,
     // so it can never collide with the real instance's Registry entry or be routed to remotely).
-    private mountedModules = new Map<string, { module: IServiceModule; aliased: boolean }>();
+    // `database`, when passed, lets this specific mount's CRUD/time-series calls route to a
+    // different Database (a different Mongo connection/dbName) than DatabaseModule's single
+    // broker-wide default -- e.g. a test-mounted instance backed by an isolated test database,
+    // never touching production data. Unset (the default for every existing caller) falls back
+    // to that shared default, unchanged.
+    private mountedModules = new Map<string, { module: IServiceModule; aliased: boolean; database?: Database }>();
+    // toolKey ("<effectiveDomain>.<action>", see effectiveToolDomain) -> the mount key that
+    // registered it. DatabaseMiddleware uses this to resolve which mount (and therefore which
+    // Database override, if any) a given CRUD/time-series call actually belongs to.
+    private toolMountKeys = new Map<string, string>();
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -91,6 +101,19 @@ export class ServiceBroker implements IServiceBroker {
 
     public getModule(domain: string): IServiceModule | undefined {
         return this.modules.find(m => m.domain === domain);
+    }
+
+    /**
+     * getDatabaseForTool: resolves the Database override (if any) registered for the mount
+     * that owns `toolKey`, via registerModule's `options.database`. Returns undefined when the
+     * tool isn't currently mounted, or was mounted without an override -- DatabaseMiddleware
+     * falls back to its own shared default in either case, so this changes nothing for any
+     * existing, non-database-overridden registration.
+     */
+    public getDatabaseForTool(toolKey: string): Database | undefined {
+        const mountKey = this.toolMountKeys.get(toolKey);
+        if (!mountKey) return undefined;
+        return this.mountedModules.get(mountKey)?.database;
     }
 
     public pipe(plugin: IBrokerPlugin): this {
@@ -217,7 +240,7 @@ export class ServiceBroker implements IServiceBroker {
         return contractDomain === domain ? mountKey : `${mountKey}:${contractDomain}`;
     }
 
-    public async registerModule(module: IServiceModule, options?: { key?: string }): Promise<void> {
+    public async registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<void> {
         const domain = module.domain;
         if (!domain) throw new Error('[ServiceBroker] Module domain must be provided');
 
@@ -228,7 +251,7 @@ export class ServiceBroker implements IServiceBroker {
 
         this.logger.info(`[ServiceBroker] Registering module: ${domain}${mountKey !== domain ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
         this.modules.push(module);
-        this.mountedModules.set(mountKey, { module, aliased: mountKey !== domain });
+        this.mountedModules.set(mountKey, { module, aliased: mountKey !== domain, database: options?.database });
 
         if (module.onInit) {
             await module.onInit(this);
@@ -246,6 +269,7 @@ export class ServiceBroker implements IServiceBroker {
             // secondary-domain tools either.
             const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
             const toolKeyStr = `${toolDomain}.${contract.action}`;
+            this.toolMountKeys.set(toolKeyStr, mountKey);
 
             MeshToolSchemaRegistry.set(toolKeyStr, {
                 params: contract.inputSchema as z.ZodTypeAny,
@@ -363,6 +387,7 @@ export class ServiceBroker implements IServiceBroker {
             const toolKeyStr = `${toolDomain}.${contract.action}`;
             this.localTools.delete(toolKeyStr);
             MeshToolSchemaRegistry.delete(toolKeyStr);
+            this.toolMountKeys.delete(toolKeyStr);
         }
         this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${mountKey}'`);
 
