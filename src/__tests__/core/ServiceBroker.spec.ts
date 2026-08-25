@@ -298,6 +298,50 @@ describe('ServiceBroker', () => {
 
             await (broker as ServiceBroker).unregisterModule('md-primary');
         });
+
+        // Real regression test: found when pulling this change into a real downstream project
+        // (`paas`) broke 18 previously-passing test suites. Multiple distinct modules legitimately
+        // share one real `domain`, each contributing different, non-overlapping actions to that
+        // domain's shared tool namespace (e.g. a base service + an "edge" extension of it, both
+        // `domain: 's3'`) -- this always silently worked pre-mount-keys, and must keep working:
+        // the mount-key conflict check must only guard the *aliased* path (a genuinely new
+        // capability with nothing to preserve), never the default/unaliased one.
+        it('still lets two distinct, unaliased modules share one real domain, each contributing different actions', async () => {
+            const otherPingContract = defineContract({
+                domain: 'md-primary',
+                action: 'other',
+                description: 'A second module sharing md-primary\'s domain, contributing a different action.',
+                inputSchema: z.object({}),
+                outputSchema: z.object({ ok: z.boolean() }),
+                rest: { method: 'GET', path: '/md-primary/other' },
+                print: defaultPrint,
+            });
+
+            class OtherModule extends ServiceModule {
+                public readonly domain = 'md-primary';
+                constructor() {
+                    super();
+                    this.mountTool(otherPingContract, async () => ({ ok: true }));
+                }
+            }
+
+            const first = new MultiDomainModule();
+            const second = new OtherModule();
+
+            await expect(
+                (broker as ServiceBroker).registerModule(first as unknown as IServiceModule)
+            ).resolves.not.toThrow();
+            await expect(
+                (broker as ServiceBroker).registerModule(second as unknown as IServiceModule)
+            ).resolves.not.toThrow();
+
+            const pingResult = (await broker.call('md-primary.ping' as never, {} as never)) as unknown as { instanceId: string };
+            expect(pingResult.instanceId).toBe(first.instanceId);
+            const otherResult = (await broker.call('md-primary.other' as never, {} as never)) as unknown as { ok: boolean };
+            expect(otherResult.ok).toBe(true);
+
+            await (broker as ServiceBroker).unregisterModule('md-primary');
+        });
     });
 
     // ─── registerModule() database override — real per-mount DB isolation ─────

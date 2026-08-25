@@ -245,13 +245,21 @@ export class ServiceBroker implements IServiceBroker {
         if (!domain) throw new Error('[ServiceBroker] Module domain must be provided');
 
         const mountKey = options?.key ?? domain;
-        if (this.mountedModules.has(mountKey)) {
+        const aliased = mountKey !== domain;
+        // Only an *aliased* mount key can conflict -- this is a genuinely new address nothing
+        // used to be able to claim, so requiring it be free is a real, new safety guarantee with
+        // no prior behavior to preserve. The unaliased (default) path must NOT gain this check:
+        // multiple distinct modules sharing one real `domain`, each contributing different,
+        // non-overlapping actions to that domain's tool namespace, is an existing, load-bearing
+        // pattern elsewhere (e.g. `S3Service` + `S3EdgeService`, both `domain: 's3'`) that always
+        // silently coexisted -- rejecting it here would be a real regression, not a new guarantee.
+        if (aliased && this.mountedModules.has(mountKey)) {
             throw new Error(`[ServiceBroker] Cannot register module: mount key "${mountKey}" is already in use`);
         }
 
-        this.logger.info(`[ServiceBroker] Registering module: ${domain}${mountKey !== domain ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
+        this.logger.info(`[ServiceBroker] Registering module: ${domain}${aliased ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
         this.modules.push(module);
-        this.mountedModules.set(mountKey, { module, aliased: mountKey !== domain, database: options?.database });
+        this.mountedModules.set(mountKey, { module, aliased, database: options?.database });
 
         if (module.onInit) {
             await module.onInit(this);
