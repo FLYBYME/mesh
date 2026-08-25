@@ -1,0 +1,6 @@
+{
+  "services": [
+    { "name": "alpha", "path": "./alpha.service.ts", "dependsOn": [] },
+    { "name": "beta", "path": "./beta.service.ts", "dependsOn": ["alpha"] }
+  ]
+}

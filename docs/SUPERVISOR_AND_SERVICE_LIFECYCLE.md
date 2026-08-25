@@ -1,6 +1,6 @@
 # The Supervisor, real dynamic service lifecycle, and built-in test running
 
-**Status: Part 1 and step 2 of the build order built and verified 2026-08-25 (see "Part 1 — status" and "Step 2 — status" below). Parts 2 and 3 not yet built.** Design doc + build assignment, written 2026-08-25. This is framework-level, not application-level — nothing here is specific to any one project built on `@flybyme/mesh`. Read `ARCHITECTURE.md` and `MODULES_AND_EXTENSIONS.md` first if you haven't already; this doc assumes you know what a `ServiceModule`, a `MeshApp`, and the `ServiceBroker`/`Registry` split are.
+**Status: Part 1, step 2, and Part 2 of the build order built and verified 2026-08-25 (see the "status" notes inline below). Part 3 not yet built.** Design doc + build assignment, written 2026-08-25. This is framework-level, not application-level — nothing here is specific to any one project built on `@flybyme/mesh`. Read `ARCHITECTURE.md` and `MODULES_AND_EXTENSIONS.md` first if you haven't already; this doc assumes you know what a `ServiceModule`, a `MeshApp`, and the `ServiceBroker`/`Registry` split are.
 
 ## Why this exists
 
@@ -84,6 +84,19 @@ The Supervisor needs a way to be told "start this," "stop this," "restart this,"
 ### Restart / crash behavior
 
 A service that throws during `onStart` or crashes its process-wide effects (an uncaught exception inside one of its handlers, if that's even isolable in a single process — investigate whether it's realistic to contain a fault to one service when everything shares one Node process, or whether this needs a documented, honest limitation) should be restartable via `service_restart`, which is exactly `unregisterModule` followed by a fresh `registerModule` on a new instance — not a special code path.
+
+### Part 2 — status: built (`mesh` commit pending, `src/supervisor/`)
+
+Built per the config shape and control-surface recommendation above, resolving the two open questions as follows:
+
+- **Control surface**: both, as the doc suggested — `SupervisorService` (`src/supervisor/SupervisorService.ts`) is a real `ServiceModule` mounted first, before any manifest-defined service, exposing `supervisor.service_start`/`service_stop`/`service_restart`/`service_status` as real mesh contracts. The local-only path for the crash-loop case (a Unix socket / loopback control channel reachable even if the Supervisor's own broker is down) was **not built in this pass** — today, if the Supervisor's own broker/network genuinely can't come up, there's no way to reach it at all. Scoped out deliberately (see "What NOT to build" below), flagged here as a real, known gap rather than silently assumed away.
+- **Restart/dependent handling**: `service_stop` (and therefore `service_restart`, which calls it) refuses to stop a service that other currently-*running* services still depend on, returning a real error naming them, unless `cascade: true` is passed — in which case dependents are stopped first, recursively, before the target. This wasn't explicitly specified in the design above; it's the natural complement to `dependsOn` ordering `startAll` already needed, and avoids silently breaking a running dependent out from under itself.
+- **Partial-failure startup**: `startAll` starts every manifest entry in dependency order; a service whose `path` fails to `import()` (or whose `onStart`/`registerModule` throws) is marked `status: 'error'` with the real error message, and any entry depending on it — directly or transitively — is also marked `'error'` (reason: `"Skipped: dependency not running: <names>"`) rather than being silently started against a broken dependency.
+- **Dynamic `import()`**: resolves `path` relative to the manifest file's own directory (absolute paths pass through unchanged), then looks for a default export first, falling back to the first exported function/class — mirrors the exact pattern `StartCommand.loadServicesFromDirectory` already used for `mesh start --services <dir>`.
+
+Verified: `src/__tests__/supervisor/Supervisor.spec.ts` (13 tests: cycle detection, manifest validation against real files on disk, and a full real-`MeshApp`/real-`ServiceBroker` integration suite using real fixture `.service.ts` files under `src/__tests__/fixtures/supervisor/` — dependency-ordered start, the cascade-stop dependent guard, proof a restarted service is a genuinely new instance (compared by a per-instance random id, not just "didn't throw"), partial-failure skip propagation, and the same lifecycle exercised through the real `supervisor.*` mesh contracts rather than calling `Supervisor`'s methods directly). Also smoke-tested end-to-end outside the test suite: built the CLI, ran `mesh supervise --config <manifest>` pointing at a real compiled `dist/examples/demo/demo.service.js`, called `demo.hello` and `supervisor.service_status` from a separate real client process over a real `WSTransport` connection, and confirmed `SIGTERM` cleanly tears the dynamically-started service down (`unregisterModule` teardown visible in the logs) before the process exits.
+
+**Left out of this pass, on purpose:** the local-only control channel noted above; true process-level fault isolation between services sharing the Supervisor's one process (not attempted — see "What NOT to build" below, unchanged); any config hot-reload (editing the manifest file on disk while the Supervisor is running currently does nothing until restarted with a new `--config` read — `loadManifest` is only ever called once, at CLI startup).
 
 ## Part 3 — tests built into the Supervisor
 
