@@ -456,12 +456,37 @@ export class ServiceBroker implements IServiceBroker {
                     if (isLocal) {
                         const tool = this.localTools.get(ctx.toolName);
                         if (!tool) {
-                            this.logger.error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`, {
+                            // "Local tool not found" collapses three genuinely different
+                            // situations into one unhelpful message -- distinguish them:
+                            // (1) this broker has nothing mounted at all (a bare CLI/client
+                            //     process, or a node that never finished booting);
+                            // (2) the contract is known (schema registered) but no live
+                            //     node currently advertises it -- a reachability/bootstrap
+                            //     problem, not a naming problem; (3) genuinely unknown name,
+                            //     possibly a typo -- surface same-domain siblings if any.
+                            const knownSchema = MeshToolSchemaRegistry.get(ctx.toolName);
+                            const registeredTools = Array.from(this.localTools.keys());
+                            const domain = ctx.toolName.split('.')[0];
+                            const sameDomainTools = registeredTools.filter((t) => t.startsWith(`${domain}.`));
+
+                            let reason: string;
+                            if (registeredTools.length === 0) {
+                                reason = 'this broker has no local tools mounted at all -- likely a bare CLI/client process with no services attached (e.g. `mesh start --services <dir>` was never run here), or it never finished booting';
+                            } else if (knownSchema) {
+                                reason = 'the contract is defined (schema registered), but no node currently advertising it was reachable -- check whether the owning service is running and connected to this mesh (bootstrap URL correct?), this is a reachability problem, not a naming problem';
+                            } else if (sameDomainTools.length > 0) {
+                                reason = `not a registered action under domain "${domain}" -- did you mean one of: ${sameDomainTools.join(', ')}?`;
+                            } else {
+                                reason = `no domain "${domain}" is mounted anywhere on this broker -- likely a typo, or that service isn't started`;
+                            }
+
+                            this.logger.error(`[ServiceBroker] Tool not found: ${ctx.toolName} -- ${reason}`, {
                                 targetNodeID: ctx.targetNodeID,
                                 nodeID: this.nodeID,
-                                registeredTools: Array.from(this.localTools.keys())
+                                registeredToolCount: registeredTools.length,
+                                ...(sameDomainTools.length > 0 ? { sameDomainTools } : {})
                             });
-                            throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName}`);
+                            throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName} -- ${reason}`);
                         }
 
                         let parsedParams = ctx.params;
