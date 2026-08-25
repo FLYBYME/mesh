@@ -19,11 +19,19 @@ export interface IServiceBroker {
     pipe(plugin: IBrokerPlugin): this;
     use(mw: IMiddleware): void;
     useLocal(mw: IMiddleware): void;
-    registerModule(module: IServiceModule): Promise<void>;
+    /** Registers a module's tools under its own `domain` by default. Pass `options.key` to mount
+     *  it under a different local address instead -- e.g. a second, isolated instance of a domain
+     *  already registered elsewhere on this broker (a test-namespace instance alongside the real
+     *  one). An aliased mount (`key` !== the module's `domain`) is local-only: it is never
+     *  advertised to the Registry, so it can't collide with the real instance's entry or be
+     *  routed to remotely -- only reachable via a direct local `broker.call('<key>.<action>', ...)`
+     *  on this exact broker. Throws if `key` (or `domain`, when `key` is omitted) is already in use. */
+    registerModule(module: IServiceModule, options?: { key?: string }): Promise<void>;
     /** Calls the module's own onStop for real resource cleanup, then removes its tools,
-     *  schema entries, event subscriptions, and registry entry. Throws if `domain` isn't
-     *  currently registered. */
-    unregisterModule(domain: string): Promise<void>;
+     *  schema entries, event subscriptions, and (for a non-aliased mount) registry entry.
+     *  Takes the same key `registerModule` mounted it under (its `domain`, unless `options.key`
+     *  was passed). Throws if that key isn't currently registered. */
+    unregisterModule(mountKey: string): Promise<void>;
     handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown>;
     handleIncomingRPC(packet: IMeshPacket): Promise<unknown>;
     executeRemote(nodeID: string, toolName: string, params: unknown, meta?: Record<string, unknown>): Promise<unknown>;

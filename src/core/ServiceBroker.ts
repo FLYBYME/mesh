@@ -39,8 +39,15 @@ export class ServiceBroker implements IServiceBroker {
     private isStarted: boolean = false;
     // registerModule's event subscriptions use an inline closure per handler, so nothing
     // keeps a reference to hand back to EventEmitter#off later -- without this, unregisterModule
-    // has no way to remove only this module's listeners. Keyed by domain.
+    // has no way to remove only this module's listeners. Keyed by mount key (see below).
     private moduleEventListeners = new Map<string, Array<{ event: string; listener: (...args: unknown[]) => void }>>();
+    // mountKey defaults to the module's own `domain`, but registerModule's `key` option lets a
+    // second instance of the *same* domain coexist on one broker under a different local address
+    // (e.g. a test-namespace instance mounted alongside the real one). `aliased` records whether
+    // this entry used its real domain (and therefore was advertised to the Registry for remote
+    // discovery) or an override key (which is never advertised -- it's local-only by construction,
+    // so it can never collide with the real instance's Registry entry or be routed to remotely).
+    private mountedModules = new Map<string, { module: IServiceModule; aliased: boolean }>();
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -197,12 +204,31 @@ export class ServiceBroker implements IServiceBroker {
         this.localEvents.emit('__pattern_event', data, packet);
     }
 
-    public async registerModule(module: IServiceModule): Promise<void> {
+    /**
+     * effectiveToolDomain: computes the real local key a contract's domain resolves to, given
+     * the module's mount key. Unaliased (mountKey === domain), this is always just
+     * `contractDomain` unchanged -- identical to the pre-mount-key behavior. Aliased, the
+     * module's own primary domain is replaced by the mount key; any other domain the same module
+     * owns (a secondary domain like `demometrics` alongside `demo`) is namespaced under the mount
+     * key instead of colliding with another mounted instance's own secondary-domain tools.
+     */
+    private effectiveToolDomain(mountKey: string, domain: string, contractDomain: string): string {
+        if (mountKey === domain) return contractDomain;
+        return contractDomain === domain ? mountKey : `${mountKey}:${contractDomain}`;
+    }
+
+    public async registerModule(module: IServiceModule, options?: { key?: string }): Promise<void> {
         const domain = module.domain;
         if (!domain) throw new Error('[ServiceBroker] Module domain must be provided');
 
-        this.logger.info(`[ServiceBroker] Registering module: ${domain} (Node: ${this.nodeID})`);
+        const mountKey = options?.key ?? domain;
+        if (this.mountedModules.has(mountKey)) {
+            throw new Error(`[ServiceBroker] Cannot register module: mount key "${mountKey}" is already in use`);
+        }
+
+        this.logger.info(`[ServiceBroker] Registering module: ${domain}${mountKey !== domain ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
         this.modules.push(module);
+        this.mountedModules.set(mountKey, { module, aliased: mountKey !== domain });
 
         if (module.onInit) {
             await module.onInit(this);
@@ -212,7 +238,14 @@ export class ServiceBroker implements IServiceBroker {
         this.logger.debug(`[ServiceBroker] Module '${domain}' has ${contracts.length} contracts`);
 
         for (const contract of contracts) {
-            const toolKeyStr = `${contract.domain}.${contract.action}`;
+            // A module can own contracts across more than one real domain (e.g. `demo` also
+            // mounts `demometrics.*`). Unaliased, this reduces to exactly `contract.domain` --
+            // no behavior change. Aliased, only the module's own primary domain gets renamed to
+            // the mount key; any other domain the module owns is prefixed `<mountKey>:<domain>`
+            // instead, so a second mounted instance can't collide with the first instance's
+            // secondary-domain tools either.
+            const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
+            const toolKeyStr = `${toolDomain}.${contract.action}`;
 
             MeshToolSchemaRegistry.set(toolKeyStr, {
                 params: contract.inputSchema as z.ZodTypeAny,
@@ -253,7 +286,9 @@ export class ServiceBroker implements IServiceBroker {
             this.logger.info(`[ServiceBroker] Tool registered successfully: ${toolKeyStr}`);
         }
 
-        if (this.registry) {
+        // An aliased mount is local-only by construction: it never touches the Registry, so it
+        // can never collide with (or be routed to remotely instead of) the real instance's entry.
+        if (this.registry && mountKey === domain) {
             this.registry.registerModule(module);
         }
 
@@ -261,7 +296,7 @@ export class ServiceBroker implements IServiceBroker {
         if (typeof module.getEventHandlers === 'function') {
             const eventHandlers = module.getEventHandlers();
             for (const [name, handler] of eventHandlers.entries()) {
-                this.logger.info(`[ServiceBroker] Subscribing service ${domain} to event: ${String(name)}`);
+                this.logger.info(`[ServiceBroker] Subscribing service ${domain} (mount key: ${mountKey}) to event: ${String(name)}`);
                 const listener = (data: unknown, packet?: IMeshPacket) => {
                     const ctx = {
                         broker: this,
@@ -288,9 +323,9 @@ export class ServiceBroker implements IServiceBroker {
                     });
                 };
                 this.localEvents.on(name as string, listener);
-                const tracked = this.moduleEventListeners.get(domain) ?? [];
+                const tracked = this.moduleEventListeners.get(mountKey) ?? [];
                 tracked.push({ event: name as string, listener: listener as (...args: unknown[]) => void });
-                this.moduleEventListeners.set(domain, tracked);
+                this.moduleEventListeners.set(mountKey, tracked);
             }
         }
 
@@ -308,13 +343,15 @@ export class ServiceBroker implements IServiceBroker {
      * module still sees a fully-functional broker (able to call other services, etc.) while it
      * cleans itself up.
      */
-    public async unregisterModule(domain: string): Promise<void> {
-        const module = this.modules.find((m) => m.domain === domain);
-        if (!module) {
-            throw new Error(`[ServiceBroker] Cannot unregister module '${domain}': not registered`);
+    public async unregisterModule(mountKey: string): Promise<void> {
+        const entry = this.mountedModules.get(mountKey);
+        if (!entry) {
+            throw new Error(`[ServiceBroker] Cannot unregister module '${mountKey}': not registered`);
         }
+        const { module, aliased } = entry;
+        const domain = module.domain;
 
-        this.logger.info(`[ServiceBroker] Unregistering module: ${domain} (Node: ${this.nodeID})`);
+        this.logger.info(`[ServiceBroker] Unregistering module: ${domain}${aliased ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
 
         if (module.onStop) {
             await module.onStop(this);
@@ -322,28 +359,32 @@ export class ServiceBroker implements IServiceBroker {
 
         const contracts = module.getContracts();
         for (const contract of contracts) {
-            const toolKeyStr = `${contract.domain}.${contract.action}`;
+            const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
+            const toolKeyStr = `${toolDomain}.${contract.action}`;
             this.localTools.delete(toolKeyStr);
             MeshToolSchemaRegistry.delete(toolKeyStr);
         }
-        this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${domain}'`);
+        this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${mountKey}'`);
 
-        const tracked = this.moduleEventListeners.get(domain);
+        const tracked = this.moduleEventListeners.get(mountKey);
         if (tracked) {
             for (const { event, listener } of tracked) {
                 this.localEvents.off(event, listener);
             }
-            this.moduleEventListeners.delete(domain);
-            this.logger.debug(`[ServiceBroker] Removed ${tracked.length} event subscription(s) for module '${domain}'`);
+            this.moduleEventListeners.delete(mountKey);
+            this.logger.debug(`[ServiceBroker] Removed ${tracked.length} event subscription(s) for module '${mountKey}'`);
         }
 
-        this.modules = this.modules.filter((m) => m.domain !== domain);
+        // Filter by instance identity, not domain -- a second, still-registered instance of the
+        // same domain (a different mount key) must never be removed by this call.
+        this.modules = this.modules.filter((m) => m !== module);
+        this.mountedModules.delete(mountKey);
 
-        if (this.registry) {
-            this.registry.unregisterModule(domain);
+        if (this.registry && !aliased) {
+            this.registry.unregisterModule(mountKey);
         }
 
-        this.logger.info(`[ServiceBroker] Module '${domain}' fully unregistered: tools, schema, event subscriptions, and registry entry all removed.`);
+        this.logger.info(`[ServiceBroker] Module '${mountKey}' fully unregistered: tools, schema, event subscriptions${!aliased ? ', and registry entry' : ''} all removed.`);
     }
 
     public async call<K extends keyof IServiceToolRegistry>(

@@ -218,4 +218,82 @@ describe('ServiceBroker', () => {
             await expect((broker as ServiceBroker).unregisterModule('never-registered')).rejects.toThrow(/not registered/i);
         });
     });
+
+    // ─── registerModule() mount keys — coexisting instances of the same domain ─
+    // A single Supervisor process needs to be able to run an isolated test-namespace
+    // instance of a service alongside the real one (docs/SUPERVISOR_AND_SERVICE_LIFECYCLE.md,
+    // Part 3's prerequisite). The real blocker was that localTools/MeshToolSchemaRegistry are
+    // keyed by `${domain}.${action}` with no room for a second instance -- these tests prove
+    // registerModule's `key` option resolves that for real: independent instance state, a
+    // module that owns *two* real domains (mirroring `demo`/`demometrics`) aliases both without
+    // collision, a colliding mount key is rejected, and an aliased mount is genuinely invisible
+    // to the Registry (local-only, can't be routed to remotely or collide with the real entry).
+    describe('registerModule() — mount keys / aliased instances', () => {
+        const primaryPingContract = defineContract({
+            domain: 'md-primary',
+            action: 'ping',
+            description: 'Multi-domain module fixture -- primary domain.',
+            inputSchema: z.object({}),
+            outputSchema: z.object({ instanceId: z.string() }),
+            rest: { method: 'GET', path: '/md-primary/ping' },
+            print: defaultPrint,
+        });
+
+        const secondaryPingContract = defineContract({
+            domain: 'md-secondary',
+            action: 'ping',
+            description: 'Multi-domain module fixture -- secondary domain owned by the same module (mirrors demo/demometrics).',
+            inputSchema: z.object({}),
+            outputSchema: z.object({ instanceId: z.string() }),
+            rest: { method: 'GET', path: '/md-secondary/ping' },
+            print: defaultPrint,
+        });
+
+        class MultiDomainModule extends ServiceModule {
+            public readonly domain = 'md-primary';
+            public readonly instanceId = Math.random().toString(36).slice(2);
+
+            constructor() {
+                super();
+                this.mountTool(primaryPingContract, async () => ({ instanceId: this.instanceId }));
+                this.mountTool(secondaryPingContract, async () => ({ instanceId: this.instanceId }));
+            }
+        }
+
+        it('lets two instances of the same domain coexist under different mount keys, aliasing every real domain the module owns', async () => {
+            const real = new MultiDomainModule();
+            const test = new MultiDomainModule();
+
+            await (broker as ServiceBroker).registerModule(real as unknown as IServiceModule);
+            await (broker as ServiceBroker).registerModule(test as unknown as IServiceModule, { key: 'md-test' });
+
+            const realPrimary = (await broker.call('md-primary.ping' as never, {} as never)) as unknown as { instanceId: string };
+            const realSecondary = (await broker.call('md-secondary.ping' as never, {} as never)) as unknown as { instanceId: string };
+            expect(realPrimary.instanceId).toBe(real.instanceId);
+            expect(realSecondary.instanceId).toBe(real.instanceId);
+
+            const testPrimary = (await broker.call('md-test.ping' as never, {} as never)) as unknown as { instanceId: string };
+            const testSecondary = (await broker.call('md-test:md-secondary.ping' as never, {} as never)) as unknown as { instanceId: string };
+            expect(testPrimary.instanceId).toBe(test.instanceId);
+            expect(testSecondary.instanceId).toBe(test.instanceId);
+            expect(testPrimary.instanceId).not.toBe(realPrimary.instanceId);
+
+            // Aliased mount is local-only: never advertised to the Registry.
+            expect(app.registry.findNodesForTool('md-test.ping')).toHaveLength(0);
+            expect(app.registry.findNodesForTool('md-primary.ping').length).toBeGreaterThan(0);
+
+            // A third registration colliding on the same mount key is a real, rejected conflict.
+            await expect(
+                (broker as ServiceBroker).registerModule(new MultiDomainModule() as unknown as IServiceModule, { key: 'md-test' })
+            ).rejects.toThrow(/mount key "md-test" is already in use/i);
+
+            // Unregistering the aliased instance leaves the real one completely untouched.
+            await (broker as ServiceBroker).unregisterModule('md-test');
+            await expect(broker.call('md-test.ping' as never, {} as never)).rejects.toThrow(/not found/i);
+            const stillReal = (await broker.call('md-primary.ping' as never, {} as never)) as unknown as { instanceId: string };
+            expect(stillReal.instanceId).toBe(real.instanceId);
+
+            await (broker as ServiceBroker).unregisterModule('md-primary');
+        });
+    });
 });
