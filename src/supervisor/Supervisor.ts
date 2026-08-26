@@ -196,7 +196,12 @@ export class Supervisor {
     }
 
     private resolvePath(entryPath: string): string {
-        return path.isAbsolute(entryPath) ? entryPath : path.resolve(this.baseDir, entryPath);
+        if (path.isAbsolute(entryPath)) return entryPath;
+        const fromBase = path.resolve(this.baseDir, entryPath);
+        if (fs.existsSync(fromBase)) return fromBase;
+        const fromCwd = path.resolve(process.cwd(), entryPath);
+        if (fs.existsSync(fromCwd)) return fromCwd;
+        return fromBase;
     }
 
     /**

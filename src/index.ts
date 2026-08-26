@@ -60,3 +60,7 @@ export * from './cli/core/Utils.js';
 
 // Testing Utilities
 export * from './testing/index.js';
+
+// Supervisor
+export * from './supervisor/Supervisor.js';
+export * from './supervisor/SupervisorService.js';
