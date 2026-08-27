@@ -82,22 +82,52 @@ export class SuperviseCommand extends BaseCommand {
             return;
         }
 
-        this.logger.info(`${C.blue}${C.bold}Booting Supervisor "${nodeId}" on ${host}:${port}, manifest: ${options.config} (${manifest.services.length} service(s))...${C.reset}`);
+        // Requested/default port may already be in use -- expected when running many
+        // Supervisor instances on one node (the real, intended way to run this platform's
+        // services going forward, one manifest per deployable unit). Bump sequentially and
+        // retry rather than failing outright; only for a genuine bind conflict, not any
+        // other startup failure.
+        const MAX_PORT_ATTEMPTS = 50;
+        let app: MeshApp | undefined;
+        let attemptPort = port;
+        let lastErr: unknown;
+
+        for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+            this.logger.info(`${C.blue}${C.bold}Booting Supervisor "${nodeId}" on ${host}:${attemptPort}, manifest: ${options.config} (${manifest.services.length} service(s))...${C.reset}`);
+            try {
+                const serializer = new JSONSerializer();
+                const wsTransport = new WSTransport(serializer, attemptPort, host);
+
+                const candidate = new MeshApp({ nodeID: nodeId, logger });
+                candidate.use(new RegistryModule());
+                candidate.use(new NetworkModule({ port: attemptPort, transports: [wsTransport], bootstrapNodes }));
+                const dbConfig: { uri?: string } = {};
+                if (options.db) dbConfig.uri = options.db;
+                candidate.use(new DatabaseModule(dbConfig));
+                candidate.use(new BrokerModule());
+
+                await candidate.start();
+                app = candidate;
+                port = attemptPort;
+                break;
+            } catch (err: unknown) {
+                const code = (err as { code?: string } | undefined)?.code;
+                if (code !== 'EADDRINUSE') {
+                    throw err;
+                }
+                lastErr = err;
+                this.logger.warn(`${C.yellow}Port ${attemptPort} already in use, trying ${attemptPort + 1}...${C.reset}`);
+                attemptPort += 1;
+            }
+        }
+
+        if (!app) {
+            this.logger.error(`${C.red}${C.bold}✖ Failed to find a free port after ${MAX_PORT_ATTEMPTS} attempts starting from ${port}:${C.reset} ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+            process.exit(1);
+            return;
+        }
 
         try {
-            const serializer = new JSONSerializer();
-            const wsTransport = new WSTransport(serializer, port, host);
-
-            const app = new MeshApp({ nodeID: nodeId, logger });
-            app.use(new RegistryModule());
-            app.use(new NetworkModule({ port, transports: [wsTransport], bootstrapNodes }));
-            const dbConfig: { uri?: string } = {};
-            if (options.db) dbConfig.uri = options.db;
-            app.use(new DatabaseModule(dbConfig));
-            app.use(new BrokerModule());
-
-            await app.start();
-
             // Mounted first, before any manifest-defined service starts, so the
             // control surface is live even if a dynamic service fails to start.
             const supervisor = new Supervisor(app, manifest, baseDir);
