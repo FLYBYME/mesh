@@ -1,4 +1,8 @@
-import { AuthInterceptor } from '../../interceptors/AuthInterceptor.js';
+// The factory is `AuthInterceptorHMAC`; this suite still imported a name (`AuthInterceptor`) that
+// the module has not exported for some time, so every case here failed on "is not a function"
+// rather than on anything it was written to check. The failures were invisible behind 78 unrelated
+// MONGODB_URI errors, which is how a whole suite stayed dead without anyone noticing.
+import { AuthInterceptorHMAC } from '../../interceptors/AuthInterceptor.js';
 import { MeshPacket } from '../../interfaces/IMeshNetwork.js';
 import { IsomorphicCrypto } from '../../utils/Crypto.js';
 
@@ -6,11 +10,11 @@ describe('AuthInterceptor', () => {
     const SECRET = 'test-secret';
     
     it('should throw if no secret is provided', () => {
-        expect(() => AuthInterceptor({ secret: '' })).toThrow(/shared secret must be provided/);
+        expect(() => AuthInterceptorHMAC({ secret: '' })).toThrow(/shared secret must be provided/);
     });
 
     it('should sign outbound packets', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET });
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET });
         const packet: MeshPacket = {
             id: 'pkt_1',
             topic: 'test',
@@ -29,7 +33,7 @@ describe('AuthInterceptor', () => {
     });
 
     it('should verify valid inbound packets', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET });
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET });
         const packet: MeshPacket = {
             id: 'pkt_2',
             topic: 'test',
@@ -45,7 +49,7 @@ describe('AuthInterceptor', () => {
     });
 
     it('should reject inbound packets with missing signature', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET });
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET });
         const packet: MeshPacket = {
             id: 'pkt_3',
             topic: 'test',
@@ -57,7 +61,7 @@ describe('AuthInterceptor', () => {
     });
 
     it('should reject inbound packets with invalid signature', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET });
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET });
         const packet: MeshPacket = {
             id: 'pkt_4',
             topic: 'test',
@@ -70,7 +74,7 @@ describe('AuthInterceptor', () => {
     });
 
     it('should allow unsigned packets if allowUnsigned is true', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET, allowUnsigned: true });
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET, allowUnsigned: true });
         const packet: MeshPacket = {
             id: 'pkt_5',
             topic: 'test',
@@ -83,7 +87,7 @@ describe('AuthInterceptor', () => {
     });
 
     it('should reject replayed packets (too old)', async () => {
-        const interceptor = AuthInterceptor({ secret: SECRET, maxAgeMs: 1000 }); // 1 second
+        const interceptor = AuthInterceptorHMAC({ secret: SECRET, maxAgeMs: 1000 }); // 1 second
         const packet: MeshPacket = {
             id: 'pkt_6',
             topic: 'test',
