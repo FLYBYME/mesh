@@ -16,6 +16,25 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
+import { ClientError } from './MeshError.js';
+
+/**
+ * formatZodIssues: renders a params validation failure as "field: reason; field: reason".
+ *
+ * `${zodError}` stringifies to a multi-line JSON dump of the whole issue array, which is unusable
+ * in a log line and unusable in an API response. The caller needs to know which field was wrong.
+ */
+function formatZodIssues(error: unknown): string {
+    if (error instanceof z.ZodError) {
+        return error.issues
+            .map(issue => {
+                const path = issue.path.join('.');
+                return path ? `${path}: ${issue.message}` : issue.message;
+            })
+            .join('; ');
+    }
+    return String(error);
+}
 
 interface LocalTool {
     handler: (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => Promise<unknown>;
@@ -461,7 +480,15 @@ export class ServiceBroker implements IServiceBroker {
                     params = (schema.params as z.ZodTypeAny).parse(params) as Record<string, unknown>;
                 }
             } catch (error) {
-                throw new Error(`[ServiceBroker] Invalid params for tool ${toolName}: ${error}`);
+                // A caller passing params the contract rejects is a *client* error, not a server
+                // fault. Throwing a plain `Error` here gave it no `status`, so anything mapping
+                // mesh errors to a transport (an HTTP gateway, the CLI) had to report it as a 500
+                // -- the wrong status, with a message unsafe to forward because it embedded the
+                // raw thrown value. `ClientError` already exists and already carries status 400.
+                throw new ClientError(
+                    `Invalid params for tool ${toolName}: ${formatZodIssues(error)}`,
+                    'INVALID_PARAMS'
+                );
             }
         } else if (params === undefined) {
             params = {};
@@ -621,7 +648,17 @@ export class ServiceBroker implements IServiceBroker {
                         let parsedParams = ctx.params;
                         const schema = MeshToolSchemaRegistry.get(ctx.toolName);
                         if (schema?.params) {
-                            parsedParams = schema.params.parse(ctx.params);
+                            try {
+                                parsedParams = schema.params.parse(ctx.params);
+                            } catch (error) {
+                                // Same reasoning as internalCall's validation above: a raw ZodError
+                                // escaping here carries no status either, so a remote-dispatched
+                                // call's bad params surfaced as a 500 rather than a 400.
+                                throw new ClientError(
+                                    `Invalid params for tool ${ctx.toolName}: ${formatZodIssues(error)}`,
+                                    'INVALID_PARAMS'
+                                );
+                            }
                         }
 
                         return await tool.handler({ ...ctx, params: parsedParams } as IContext<Record<string, unknown>, Record<string, unknown>>);
