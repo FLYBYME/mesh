@@ -8,6 +8,11 @@ export interface MeshOrchestratorOptions {
     gossipIntervalMs?: number;
 }
 
+// Long enough that a PEX round (every 10s, from every peer) cannot turn an
+// unreachable node into a dial storm; short enough that a peer which restarts
+// is re-attached within one lease window rather than one gossip era.
+const DIAL_RETRY_FLOOR_MS = 20000;
+
 /**
  * MeshOrchestrator — manages the DHT overlay network lifecycle and gossip.
  */
@@ -15,6 +20,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     private logger: ILogger;
     private gossipInterval?: TimerHandle;
     private presenceInterval?: TimerHandle;
+    /** nodeID -> last dial attempt, so a PEX round cannot become a dial storm. */
+    private dialAttempts = new Map<string, number>();
 
     constructor(
         private node: IMeshNetworkNode,
@@ -178,7 +185,54 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             const p = peer as NodeInfo;
             if (!p.nodeID || p.nodeID === this.node.nodeID) continue;
             this.node.registry.registerNode(p);
+            this.dialLearnedPeer(p);
         }
+    }
+
+    /**
+     * Connects to a peer we have only heard about second-hand.
+     *
+     * Presence -- the only thing that refreshes a node's lease -- travels just
+     * one hop, between directly connected peers. With everything bootstrapping
+     * to a single hub, two spokes therefore never exchange presence: each knows
+     * the other exists (via this PEX) but never hears it speak for itself, so
+     * each expires the other's lease every 30s. getNextToolEndpoint skips
+     * unavailable nodes, so a call from one spoke to a domain on another failed
+     * roughly half the time with "no domain X is mounted anywhere on this
+     * broker" -- for a node that was up the entire time.
+     *
+     * Packets can already be relayed through an intermediary, so reachability
+     * was never the problem; liveness was. Dialing the peer directly fixes it at
+     * the root: every pair exchanges presence, so every lease stays fresh, and
+     * selectNode's routing becomes honest -- it only returns nodes this one can
+     * actually reach.
+     */
+    private dialLearnedPeer(peer: NodeInfo): void {
+        if (!this.node.isPeerConnected || this.node.isPeerConnected(peer.nodeID)) return;
+        if ((peer.namespace || 'default') !== (this.node.namespace || 'default')) return;
+
+        const addresses = peer.addresses || [];
+        if (addresses.length === 0) return;
+
+        // One attempt in flight per peer, and a floor between retries: a PEX
+        // round arrives every 10s from every peer, so an unreachable node would
+        // otherwise be dialed continuously by everyone that has heard of it.
+        const now = Date.now();
+        const lastAttempt = this.dialAttempts.get(peer.nodeID) ?? 0;
+        if (now - lastAttempt < DIAL_RETRY_FLOOR_MS) return;
+        this.dialAttempts.set(peer.nodeID, now);
+
+        const address = addresses[0];
+        this.logger.debug(`Dialing peer learned via PEX: ${peer.nodeID} at ${address}`, { internal: true });
+        this.node.connectToPeer(peer.nodeID, address).catch((err) => {
+            // Not an error: a peer can be legitimately unreachable from here
+            // (NAT, a private overlay address, a node already shutting down).
+            // The floor above keeps this from becoming a retry storm.
+            this.logger.debug(
+                `Could not dial ${peer.nodeID} at ${address}: ${err instanceof Error ? err.message : String(err)}`,
+                { internal: true }
+            );
+        });
     }
 
     async handlePresence(data: { node: NodeInfo }): Promise<void> {

@@ -188,6 +188,10 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         return this.transport.getTransport().connectToPeer(nodeID, url);
     }
 
+    public isPeerConnected(nodeID: string): boolean {
+        return this.transport.getTransport().isPeerConnected(nodeID);
+    }
+
     async stop(): Promise<void> {
         await this.orchestrator.stop();
         await this.transport.disconnect();

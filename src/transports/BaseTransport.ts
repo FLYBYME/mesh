@@ -33,6 +33,17 @@ export abstract class BaseTransport extends EventEmitter {
     /** Send a packet to a specific node */
     abstract send(nodeID: string, packet: MeshPacket): Promise<void>;
 
+    /**
+     * Whether this transport currently holds a direct connection to `nodeID`.
+     *
+     * Needed so a node can dial peers it has only heard about second-hand
+     * without redialing ones it is already attached to. Defaults to false, so a
+     * transport that does not track connections simply never claims one.
+     */
+    isPeerConnected(_nodeID: string): boolean {
+        return false;
+    }
+
     /** Establish a direct peer connection (optional implementation) */
     async connectToPeer(_nodeID: string, _url: string, _options?: Record<string, unknown>): Promise<void> {
         throw new Error(`Transport ${this.protocol} does not support direct peer connections`);

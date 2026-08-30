@@ -331,6 +331,11 @@ export class WSTransport extends BaseTransport {
         return this.internalConnectToPeer(nodeID, url);
     }
 
+    override isPeerConnected(nodeID: string): boolean {
+        const ws = this.peers.get(nodeID);
+        return !!ws && ws.readyState === WebSocket.OPEN;
+    }
+
     private async internalConnectToPeer(nodeID: string, url: string, attempt = 0): Promise<void> {
         this.logger?.info(`[WSTransport] Connecting to peer ${nodeID} at ${url}...`);
         return new Promise((resolve, reject) => {

@@ -90,6 +90,9 @@ export interface IMeshNetwork {
 
     connectToPeer(nodeID: string, url: string): Promise<void>;
 
+    /** Whether a direct connection to this peer is currently open. */
+    isPeerConnected?(nodeID: string): boolean;
+
     start(): Promise<void>;
     stop(): Promise<void>;
 
@@ -197,6 +200,8 @@ export interface IMeshNetworkNode extends IMeshBaseNode {
     send<T = unknown>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void>;
     publish<T = unknown>(topic: string, data: T): Promise<void>;
     connectToPeer(nodeID: string, url: string): Promise<void>;
+    /** Whether a direct connection to this peer is currently open. */
+    isPeerConnected?(nodeID: string): boolean;
 }
 
 // --- Transport Types ---
