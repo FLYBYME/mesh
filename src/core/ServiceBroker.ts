@@ -651,12 +651,12 @@ export class ServiceBroker implements IServiceBroker {
                                 reason = `no domain "${domain}" is mounted anywhere on this broker -- likely a typo, or that service isn't started`;
                             }
 
-                            this.logger.error(`[ServiceBroker] Tool not found: ${ctx.toolName} -- ${reason}`, {
-                                targetNodeID: ctx.targetNodeID,
-                                nodeID: this.nodeID,
-                                registeredToolCount: registeredTools.length,
-                                ...(sameDomainTools.length > 0 ? { sameDomainTools } : {})
-                            });
+                            // this.logger.error(`[ServiceBroker] Tool not found: ${ctx.toolName} -- ${reason}`, {
+                            //     targetNodeID: ctx.targetNodeID,
+                            //     nodeID: this.nodeID,
+                            //     registeredToolCount: registeredTools.length,
+                            //     ...(sameDomainTools.length > 0 ? { sameDomainTools } : {})
+                            // });
                             throw new Error(`[ServiceBroker] Local tool not found: ${ctx.toolName} -- ${reason}`);
                         }
 
