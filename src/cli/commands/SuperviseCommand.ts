@@ -87,10 +87,25 @@ export class SuperviseCommand extends BaseCommand {
         // services going forward, one manifest per deployable unit). Bump sequentially and
         // retry rather than failing outright; only for a genuine bind conflict, not any
         // other startup failure.
+        // A bumped port with no bootstrap silently starts a SECOND, isolated mesh on
+        // the same machine. Everything reports healthy, and nothing can see anything
+        // else -- which is exactly what an occupied port means it should NOT do: the
+        // process already holding the port we asked for is almost always a mesh node,
+        // so the right response to "someone is already there" is to join them, not to
+        // set up next door and pretend to be alone.
+        //
+        // Only ever applied when no --bootstrap was given; an explicit one is the
+        // operator's decision and is never overridden.
         const MAX_PORT_ATTEMPTS = 50;
         let app: MeshApp | undefined;
         let attemptPort = port;
         let lastErr: unknown;
+        let occupiedPort: number | undefined;
+
+        // 0.0.0.0 is a bind address, not a dialable one -- the occupant is reachable
+        // on loopback from here regardless of what it bound.
+        const bootstrapFor = (occupied: number): string[] =>
+            bootstrapNodes.length > 0 ? bootstrapNodes : [`ws://127.0.0.1:${occupied}`];
 
         for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
             this.logger.info(`${C.blue}${C.bold}Booting Supervisor "${nodeId}" on ${host}:${attemptPort}, manifest: ${options.config} (${manifest.services.length} service(s))...${C.reset}`);
@@ -98,9 +113,13 @@ export class SuperviseCommand extends BaseCommand {
                 const serializer = new JSONSerializer();
                 const wsTransport = new WSTransport(serializer, attemptPort, host);
 
+                const effectiveBootstrap = occupiedPort === undefined
+                    ? bootstrapNodes
+                    : bootstrapFor(occupiedPort);
+
                 const candidate = new MeshApp({ nodeID: nodeId, logger });
                 candidate.use(new RegistryModule());
-                candidate.use(new NetworkModule({ port: attemptPort, transports: [wsTransport], bootstrapNodes }));
+                candidate.use(new NetworkModule({ port: attemptPort, transports: [wsTransport], bootstrapNodes: effectiveBootstrap }));
                 const dbConfig: { uri?: string } = {};
                 if (options.db) dbConfig.uri = options.db;
                 candidate.use(new DatabaseModule(dbConfig));
@@ -116,7 +135,13 @@ export class SuperviseCommand extends BaseCommand {
                     throw err;
                 }
                 lastErr = err;
-                this.logger.warn(`${C.yellow}Port ${attemptPort} already in use, trying ${attemptPort + 1}...${C.reset}`);
+                // Remember the FIRST occupied port, not the latest: that is the node
+                // the operator meant to sit alongside, and the mesh gossips the rest.
+                if (occupiedPort === undefined) occupiedPort = attemptPort;
+                const joining = bootstrapNodes.length === 0
+                    ? ` (will bootstrap to ws://127.0.0.1:${occupiedPort} rather than start an isolated mesh)`
+                    : '';
+                this.logger.warn(`${C.yellow}Port ${attemptPort} already in use, trying ${attemptPort + 1}...${joining}${C.reset}`);
                 attemptPort += 1;
             }
         }

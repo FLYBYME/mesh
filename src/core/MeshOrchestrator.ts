@@ -89,6 +89,10 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         const allKnown = this.node.registry.getNodes();
         const subset = allKnown.sort(() => 0.5 - Math.random()).slice(0, 50);
 
+        // hostname travels with PEX too. It is carried by $node.presence (which
+        // sends the whole node record), but this projection used to drop it -- so
+        // a node learned about second-hand showed up as "unknown" forever, while
+        // the same node seen over a direct connection had a name.
         const peers = subset.map(n => ({
             nodeID: n.nodeID,
             addresses: n.addresses,
@@ -100,7 +104,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             bootedAt: n.bootedAt,
             nodeSeq: n.nodeSeq,
             nodeType: n.nodeType,
-            parentID: n.parentID
+            parentID: n.parentID,
+            hostname: n.hostname
         }));
 
         this.node.publish('$node.pex', { peers }).catch(() => { });
@@ -141,9 +146,11 @@ export class MeshOrchestrator implements IMeshOrchestrator {
                 services: n.services,
                 available: n.available,
                 timestamp: n.timestamp,
+                bootedAt: n.bootedAt,
                 nodeSeq: n.nodeSeq,
                 nodeType: n.nodeType,
-                parentID: n.parentID
+                parentID: n.parentID,
+                hostname: n.hostname
             }));
 
             await this.node.send(nodeID, '$node.pex', { peers });

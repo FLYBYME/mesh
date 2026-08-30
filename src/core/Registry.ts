@@ -10,14 +10,51 @@ import type { NodeInfo as CoreNodeInfo, IServiceNode } from '../interfaces/IMesh
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import { ToolContract, toolKey } from '../interfaces/IToolContract.js';
 
-// Platform-agnostic OS check
-const getHostname = () => {
-    try {
-        const os = eval('require')('os');
-        return os.hostname();
-    } catch {
-        return 'browser-client';
+// Platform-agnostic hostname, resolved once.
+//
+// This used to be `eval('require')('os')` in a try/catch falling back to
+// 'browser-client'. That fallback was meant for browsers and fired in Node too:
+// every package here is ESM ("type": "module"), and an ESM module has no
+// `require`, so the eval threw and *every Node process reported itself as
+// 'browser-client'*. The check has to be "am I in Node", not "does require
+// exist" -- those stopped being the same question when the framework moved to ESM.
+//
+// Populated asynchronously because `import()` is the only ESM-safe way to reach
+// node:os without making this module unloadable in a browser bundle. The local
+// node record is built in the constructor, which can run before that import
+// settles -- so callers register for the value instead of reading it once and
+// caching a placeholder forever.
+let resolvedHostname: string | undefined;
+const hostnameWaiters: Array<(hostname: string) => void> = [];
+
+const isNodeRuntime = (): boolean => {
+    const proc = (globalThis as { process?: { versions?: { node?: string } } }).process;
+    return typeof proc?.versions?.node === 'string';
+};
+
+const setResolvedHostname = (hostname: string): void => {
+    resolvedHostname = hostname;
+    while (hostnameWaiters.length > 0) {
+        const waiter = hostnameWaiters.shift();
+        if (waiter) waiter(hostname);
     }
+};
+
+if (isNodeRuntime()) {
+    import('node:os')
+        .then((os) => setResolvedHostname(os.hostname()))
+        .catch(() => setResolvedHostname('unknown-node'));
+}
+
+const getHostname = (): string => {
+    if (!isNodeRuntime()) return 'browser-client';
+    return resolvedHostname ?? 'unknown-node';
+};
+
+/** Calls back once the real hostname is known -- immediately if it already is. */
+const onHostnameResolved = (callback: (hostname: string) => void): void => {
+    if (resolvedHostname !== undefined) callback(resolvedHostname);
+    else if (isNodeRuntime()) hostnameWaiters.push(callback);
 };
 
 /**
@@ -77,6 +114,13 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             cpu: 0,
             activeRequests: 0,
             healthScore: 1.0
+        });
+
+        // node:os resolves on a later tick than this constructor, so patch the
+        // record once it lands rather than shipping the placeholder to every peer.
+        onHostnameResolved((hostname) => {
+            const local = this.nodes.get(this.localNodeID);
+            if (local) local.hostname = hostname;
         });
     }
 
