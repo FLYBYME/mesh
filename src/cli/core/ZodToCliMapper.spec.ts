@@ -105,6 +105,40 @@ describe('ZodToCliMapper', () => {
             expect(parsed.items).toEqual(['a', 'b']);
         });
 
+        it('should parse each element of a variadic array-of-objects option', () => {
+            // Commander gives a `--nodes <values...>` option back as string[].
+            // Before this was handled, every element stayed raw JSON text and
+            // zod rejected it with "Expected object, received string" -- so a
+            // contract like fleet.preflight could not be called from the CLI at all.
+            const schema = z.object({
+                nodes: z.array(z.object({
+                    hostname: z.string(),
+                    port: z.number().optional(),
+                    active: z.boolean().optional(),
+                })),
+            });
+
+            const parsed = ZodToCliMapper.parseOptions({
+                nodes: [
+                    '{"hostname":"ns1","port":22,"active":true}',
+                    '{"hostname":"ns2"}',
+                ],
+            }, schema);
+
+            expect(parsed.nodes).toEqual([
+                { hostname: 'ns1', port: 22, active: true },
+                { hostname: 'ns2' },
+            ]);
+            // And it must survive the schema it was rejected by.
+            expect(() => schema.parse(parsed)).not.toThrow();
+        });
+
+        it('should coerce scalar elements of a variadic array using the element schema', () => {
+            const schema = z.object({ ports: z.array(z.number()) });
+            const parsed = ZodToCliMapper.parseOptions({ ports: ['80', '443'] }, schema);
+            expect(parsed.ports).toEqual([80, 443]);
+        });
+
         it('should leave unknown properties untouched', () => {
             const schema = z.object({ known: z.string() });
             const parsed = ZodToCliMapper.parseOptions({ known: 'a', unknown: 'b' }, schema);

@@ -63,6 +63,24 @@ export class ZodToCliMapper {
     }
 
     private static coerceValue(value: unknown, schema?: z.ZodTypeAny): unknown {
+        // Commander hands a variadic option (`--nodes <values...>`) back as an
+        // array of raw string tokens. This method used to bail on the first line
+        // for anything that was not a string, so every element stayed literal
+        // text and any contract taking an array of objects was simply uncallable
+        // from the CLI:
+        //
+        //   nodes.0: Expected object, received string
+        //
+        // which reads like a malformed command and is actually a missing feature.
+        // Recurse per element, using the array's own element schema so numbers
+        // and booleans inside coerce exactly as they do at the top level.
+        if (Array.isArray(value)) {
+            const elementSchema = schema instanceof z.ZodArray
+                ? this.unwrapSchema(schema.element as z.ZodTypeAny)
+                : undefined;
+            return value.map((entry) => this.coerceValue(entry, elementSchema));
+        }
+
         if (typeof value !== 'string') return value;
 
         const trimmed = value.trim();
