@@ -191,6 +191,26 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         });
         this.node.registry.registerNode(data.node);
 
+        // A presence packet is the node speaking for ITSELF -- first-party proof
+        // of life, arriving every 15s. registerNode deliberately refuses to
+        // refresh the lease when nodeSeq is unchanged, so that second-hand PEX
+        // gossip cannot keep a dead node alive forever. That rule is right, but
+        // it also threw away the one signal that genuinely proves liveness,
+        // because presence goes through the same path.
+        //
+        // The result was a registry that flapped on a 30/60s cycle against a
+        // perfectly healthy peer: available -> offline at the 30s lease, pruned
+        // at 60s, re-added by the next PEX, offline again 30s later. While a
+        // node was in the offline half of that cycle, getNextToolEndpoint
+        // skipped it, selectNode returned nothing, and the call fell back to a
+        // local lookup that failed with "no domain X is mounted anywhere on
+        // this broker" -- for a domain sitting on a node that was up the whole
+        // time. Observed live 2026-08-30 across three local nodes.
+        //
+        // PEX still cannot refresh a lease. Presence can, because we know who
+        // is making the claim.
+        this.node.registry.heartbeat(data.node.nodeID);
+
         // If this is a new node discovering us, immediately send our presence back to them
         if (isNew) {
             await this.broadcastPresence(data.node.nodeID);

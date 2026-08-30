@@ -283,6 +283,16 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         const node = this.nodes.get(nodeID);
         if (node) {
             node.timestamp = Date.now();
+
+            // A heartbeat is proof of life, so it must be able to bring a node
+            // back. pruneStaleNodes flips `available` to false once the lease
+            // lapses, and nothing else ever flipped it back -- so a node that
+            // went quiet for 30s stayed unusable to getNextToolEndpoint even
+            // while it was actively talking to us again.
+            if (!node.available) {
+                node.available = true;
+                this.emit('changed', nodeID);
+            }
             if (data) {
                 if (data.cpu !== undefined) node.cpu = data.cpu;
                 if (data.activeRequests !== undefined) node.activeRequests = data.activeRequests;
