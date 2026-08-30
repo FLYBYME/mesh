@@ -83,7 +83,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         // Don't gossip with ourselves
         if (target.nodeID === this.node.nodeID) return;
 
-        this.logger.debug(`Gossip: Exchanging peer list with ${target.nodeID}`, { internal: true });
+        //this.logger.debug(`Gossip: Exchanging peer list with ${target.nodeID}`, { internal: true });
 
         // Send a random subset of our known nodes (max 50)
         const allKnown = this.node.registry.getNodes();
@@ -116,7 +116,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         if (!localNode) return;
 
         try {
-            this.logger.debug(`Broadcasting presence for ${this.node.nodeID}${targetNodeID ? ` to ${targetNodeID}` : ''}...`);
+            //this.logger.debug(`Broadcasting presence for ${this.node.nodeID}${targetNodeID ? ` to ${targetNodeID}` : ''}...`);
             await this.node.send(targetNodeID || '*', '$node.presence', {
                 node: localNode
             });
