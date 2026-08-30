@@ -625,9 +625,24 @@ export class ServiceBroker implements IServiceBroker {
                             const domain = ctx.toolName.split('.')[0];
                             const sameDomainTools = registeredTools.filter((t) => t.startsWith(`${domain}.`));
 
+                            // A CLI client legitimately has zero local tools and reaches
+                            // everything remotely, so `registeredTools.length === 0` cannot be
+                            // the first test -- it is always true there, and it swallowed the
+                            // two informative cases below. Ask the registry what the *mesh*
+                            // knows before blaming the local process.
+                            const meshNodes = this.registry ? this.registry.getNodes() : [];
+                            const remotePeers = meshNodes.filter((n) => n.nodeID !== this.nodeID);
+
                             let reason: string;
-                            if (registeredTools.length === 0) {
-                                reason = 'this broker has no local tools mounted at all -- likely a bare CLI/client process with no services attached (e.g. `mesh start --services <dir>` was never run here), or it never finished booting';
+                            if (registeredTools.length === 0 && remotePeers.length === 0) {
+                                reason = 'this broker has no local tools mounted at all and no remote nodes are connected -- likely a bare CLI/client process with no services attached (e.g. `mesh start --services <dir>` was never run here), or it never finished booting';
+                            } else if (registeredTools.length === 0) {
+                                // The informative case for a CLI: connected to a real mesh, but
+                                // nothing in it mounts this domain. Name the nodes that *are*
+                                // there, so "which role do I need to start?" is answerable.
+                                reason = knownSchema
+                                    ? `the contract is defined (schema registered), but none of the ${remotePeers.length} connected node(s) [${remotePeers.map((n) => n.nodeID).join(', ')}] advertises it -- the owning service is not running in any role you are connected to, not a problem with this client`
+                                    : `no node in this mesh advertises domain "${domain}" -- connected to ${remotePeers.length} node(s) [${remotePeers.map((n) => n.nodeID).join(', ')}], likely a typo or that service isn't started anywhere`;
                             } else if (knownSchema) {
                                 reason = 'the contract is defined (schema registered), but no node currently advertising it was reachable -- check whether the owning service is running and connected to this mesh (bootstrap URL correct?), this is a reachability problem, not a naming problem';
                             } else if (sameDomainTools.length > 0) {
