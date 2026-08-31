@@ -82,28 +82,31 @@ export class Database {
 
         const collection = this.dbInstance.collection(domain);
         
-        // Asynchronously ensure TS collection (fire and forget for now, or we could await if we were in an async context)
-        this.ensureTimeSeriesCollection(domain).catch(err => {
-            this.logger.error(`[DB] Failed to ensure TS collection ${domain}: ${err.message}`);
-        });
+        const readyPromise = this.ensureTimeSeriesCollection(domain);
 
-        const repository = new TimeSeriesRepository<T>(collection, schema, domain);
+        const repository = new TimeSeriesRepository<T>(collection, schema, domain, readyPromise);
         this.tsRepositories.set(domain, repository as unknown as TimeSeriesRepository<{ timestamp: Date, tags: Record<string, string> }>);
         return repository;
     }
 
     private async ensureTimeSeriesCollection(name: string): Promise<void> {
         if (!this.dbInstance) return;
-        const collections = await this.dbInstance.listCollections({ name }).toArray();
-        if (collections.length === 0) {
-            this.logger.info(`[DB] Creating Time Series collection: ${name}`);
-            await this.dbInstance.createCollection(name, {
-                timeseries: {
-                    timeField: 'timestamp',
-                    metaField: 'tags',
-                    granularity: 'seconds'
-                }
-            });
+        try {
+            const collections = await this.dbInstance.listCollections({ name }).toArray();
+            if (collections.length === 0) {
+                this.logger.info(`[DB] Creating Time Series collection: ${name}`);
+                await this.dbInstance.createCollection(name, {
+                    timeseries: {
+                        timeField: 'timestamp',
+                        metaField: 'tags',
+                        granularity: 'seconds'
+                    }
+                });
+            }
+        } catch (err: any) {
+            if (err?.codeName !== 'NamespaceExists' && err?.code !== 48) {
+                this.logger.error(`[DB] Failed to ensure TS collection ${name}: ${err.message}`);
+            }
         }
     }
 
