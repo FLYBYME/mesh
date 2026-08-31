@@ -15,6 +15,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
+    # 71 of the 299 tests talk to a real MongoDB. They passed locally and had never once run on a
+    # runner, because until now no workflow ran the tests at all -- publish.yml only built and
+    # published. A service container is the honest fix: the suite is not a unit suite and
+    # pretending otherwise would mean deleting the coverage that matters most.
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MONGODB_URI: mongodb://localhost:27017
+
     steps:
       - uses: actions/checkout@v4
 

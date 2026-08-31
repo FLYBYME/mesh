@@ -18,6 +18,23 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    # Same MongoDB the CI job needs -- see ci.yml. A release runs the full suite, so it needs the
+    # full environment.
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MONGODB_URI: mongodb://localhost:27017
+
     steps:
       - uses: actions/checkout@v4
 
