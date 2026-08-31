@@ -9,7 +9,8 @@ describe('ICrudContract', () => {
 
     describe('defineCrud()', () => {
         it('should generate all standard CRUD contracts', () => {
-            const crud = defineCrud('user', TestBaseSchema);
+            const crud = defineCrud('user', TestBaseSchema, {
+                dependencies: [], dependencies: [] });
 
             expect(crud.domain).toBe('user');
             expect(crud.idField).toBe('id');
@@ -26,7 +27,8 @@ describe('ICrudContract', () => {
         });
 
         it('should ensure all generated contracts have isCrud: true and correct domain', () => {
-            const crud = defineCrud('user', TestBaseSchema);
+            const crud = defineCrud('user', TestBaseSchema, {
+                dependencies: [], dependencies: [] });
 
             const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
             for (const action of actions) {
@@ -43,12 +45,12 @@ describe('ICrudContract', () => {
             });
 
             expect(() => {
-                defineCrud('bad', BadSchema);
+                defineCrud('bad', BadSchema, { dependencies: [] });
             }).toThrow('must NOT be defined in the Zod baseSchema');
         });
 
         it('should allow custom idField without conflict', () => {
-            const crud = defineCrud('item', TestBaseSchema, { idField: 'uuid' });
+            const crud = defineCrud('item', TestBaseSchema, { idField: 'uuid', dependencies: [] });
 
             expect(crud.idField).toBe('uuid');
 
@@ -59,6 +61,7 @@ describe('ICrudContract', () => {
 
         it('should allow custom action names via options.actions', () => {
             const crud = defineCrud('user', TestBaseSchema, {
+                dependencies: [],
                 actions: { create: 'make' }
             });
 
@@ -67,7 +70,8 @@ describe('ICrudContract', () => {
         });
 
         it('should omit auto-generated fields from CreateInputSchema', () => {
-            const crud = defineCrud('user', TestBaseSchema);
+            const crud = defineCrud('user', TestBaseSchema, {
+                dependencies: [], dependencies: [] });
             const createSchema = crud.create.inputSchema as any;
 
             // Should require name and age
@@ -81,6 +85,7 @@ describe('ICrudContract', () => {
 
         it('should allow custom timeouts via options.timeout', () => {
             const crud = defineCrud('user', TestBaseSchema, {
+                dependencies: [],
                 timeout: { create: 5000 }
             });
 

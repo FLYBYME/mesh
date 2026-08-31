@@ -358,7 +358,7 @@ describe('ServiceBroker', () => {
             createdAt: z.coerce.date(),
             updatedAt: z.coerce.date(),
         });
-        const widgetCrud = defineCrud('widget', WidgetSchema);
+        const widgetCrud = defineCrud('widget', WidgetSchema, { dependencies: [] });
 
         class WidgetModule extends ServiceModule {
             public readonly domain = 'widget';

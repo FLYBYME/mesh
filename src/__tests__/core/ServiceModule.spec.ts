@@ -100,7 +100,7 @@ describe('ServiceModule', () => {
                 constructor() {
                     super();
                     const schema = z.object({ name: z.string() });
-                    const crud = defineCrud('hooked', schema);
+                    const crud = defineCrud('hooked', schema, { dependencies: [] });
                     this.mountCrud(crud);
 
                     this.mountCrudHook('hooked', 'create', {

@@ -13,7 +13,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('defineCrud()', () => {
         it('should generate all standard CRUD contracts', () => {
-            const crud = defineCrud('item', TestSchema);
+            const crud = defineCrud('item', TestSchema, { dependencies: [] });
 
             expect(crud.domain).toBe('item');
             expect(crud.idField).toBe('id');
@@ -30,7 +30,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should set correct action names', () => {
-            const crud = defineCrud('item', TestSchema);
+            const crud = defineCrud('item', TestSchema, { dependencies: [] });
 
             expect(crud.find.action).toBe('find');
             expect(crud.findOne.action).toBe('find_one');
@@ -42,7 +42,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should set correct domain on all contracts', () => {
-            const crud = defineCrud('widget', TestSchema);
+            const crud = defineCrud('widget', TestSchema, { dependencies: [] });
             const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
 
             for (const action of actions) {
@@ -55,7 +55,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('REST route generation', () => {
         it('should generate correct REST paths using plural', () => {
-            const crud = defineCrud('item', TestSchema);
+            const crud = defineCrud('item', TestSchema, { dependencies: [] });
 
             expect(crud.find.rest.method).toBe('GET');
             expect(crud.find.rest.path).toBe('/items');
@@ -70,7 +70,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should use custom plural path', () => {
-            const crud = defineCrud('person', TestSchema, { pluralPath: 'people' });
+            const crud = defineCrud('person', TestSchema, { pluralPath: 'people', dependencies: [] });
             expect(crud.find.rest.path).toBe('/people');
         });
     });
@@ -79,7 +79,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('schema shapes', () => {
         it('should include id, createdAt, updatedAt in output schema', () => {
-            const crud = defineCrud('item', TestSchema);
+            const crud = defineCrud('item', TestSchema, { dependencies: [] });
             const outputShape = (crud.outputSchema as z.ZodObject<z.ZodRawShape>).shape;
 
             expect(outputShape.id).toBeDefined();
@@ -97,7 +97,7 @@ describe('ICrudContract — defineCrud', () => {
                 updatedAt: z.coerce.date(),
             });
 
-            expect(() => defineCrud('bad', BadSchema)).toThrow('must NOT be defined');
+            expect(() => defineCrud('bad', BadSchema, { dependencies: [] })).toThrow('must NOT be defined');
         });
     });
 
@@ -131,6 +131,7 @@ describe('ICrudContract — defineCrud', () => {
     describe('custom options', () => {
         it('should support custom action names', () => {
             const crud = defineCrud('item', TestSchema, {
+                dependencies: [],
                 actions: { find: 'search', create: 'add' }
             });
             expect(crud.find.action).toBe('search');
@@ -138,7 +139,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should support custom id field', () => {
-            const crud = defineCrud('item', TestSchema, { idField: 'itemId' });
+            const crud = defineCrud('item', TestSchema, { idField: 'itemId', dependencies: [] });
             expect(crud.idField).toBe('itemId');
         });
     });

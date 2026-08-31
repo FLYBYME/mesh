@@ -8,7 +8,7 @@ export const WidgetSchema = z.object({
     updatedAt: z.coerce.date(),
 });
 
-export const widgetCrud = defineCrud('sup-widget', WidgetSchema);
+export const widgetCrud = defineCrud('sup-widget', WidgetSchema, { dependencies: [] });
 
 export class WidgetService extends ServiceModule {
     public readonly domain = 'sup-widget';

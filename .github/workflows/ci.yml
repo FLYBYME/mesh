@@ -1,0 +1,30 @@
+name: CI
+
+# Publishing moved to tags, so master needed a check of its own -- this is the one to require in
+# the branch protection rule for master.
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - run: npm install
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - run: npm test

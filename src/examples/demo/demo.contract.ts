@@ -20,7 +20,11 @@ export const demoHelloSentEvent = defineEvent('demo.hello.sent', DemoHelloEventS
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
 export const demoCrud = defineCrud('demo', DemoSchema, {
-    // options
+    // A leaf collection: its handlers call nothing else. `[]` says so explicitly.
+    dependencies: [],
+    // The example exists to be called from outside, so it opts its reads into the public surface.
+    // Everything unnamed here -- create, update, delete -- stays internal by default.
+    visibility: { find: 'public', get: 'public' },
 });
 
 // ─── Time Series ─────────────────────────────────────────────────────────────

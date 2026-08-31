@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { defineContract, ToolContract, defaultPrint } from './IToolContract.js';
+import {
+    defineContract,
+    ToolContract,
+    defaultPrint,
+    assertValidDependencies,
+    type ContractVisibility,
+} from './IToolContract.js';
 
 // --- Type Helpers ---
 type Prettify<T> = { [K in keyof T]: T[K] } & { [K in keyof T as never]: T[K] };
@@ -39,6 +45,7 @@ export const CrudParamsSchema = z.object({
 export interface AnyCrudContracts extends Record<string, unknown> {
     readonly domain: string;
     readonly idField: string;
+    readonly dependencies: readonly string[];
     readonly find: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
     readonly findOne: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
     readonly count: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
@@ -80,6 +87,8 @@ export type CrudContracts<
     readonly baseSchema: TBase;
     readonly outputSchema: TOut;
     readonly relations: RelationDefinition[];
+    /** The contract keys this collection's handlers depend on, as declared at definition time. */
+    readonly dependencies: readonly string[];
 
     readonly find: ToolContract<TFind, z.ZodArray<TOut>>;
     readonly findOne: ToolContract<TFindOne, z.ZodOptional<TOut>>;
@@ -94,6 +103,15 @@ export type CrudContracts<
     readonly replace: ToolContract<TReplace, TOut>;
     readonly delete: ToolContract<TDelete, z.ZodObject<{ success: z.ZodBoolean }>>;
 };
+
+/**
+ * CrudActionKey: the generated action slots of a CRUD set -- `find`, `create`, `delete` and the
+ * rest -- excluding the descriptive fields that are not contracts. Per-action option maps
+ * (`actions`, `events`, `visibility`, ...) are keyed by this.
+ */
+export type CrudActionKey =
+    | 'find' | 'findOne' | 'count' | 'get' | 'resolve'
+    | 'create' | 'createMany' | 'update' | 'replace' | 'delete';
 
 export function defineCrud<
     TShape extends z.ZodRawShape,
@@ -120,11 +138,22 @@ export function defineCrud<
         idField?: TIdField;
         outputSchema?: z.ZodObject<z.ZodRawShape>;
         relations?: RelationDefinition[];
-        actions?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, string>>,
-        events?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, string | boolean>>,
-        destructive?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, boolean>>,
-        timeout?: Partial<Record<keyof Omit<CrudContracts<TBase, TIdField, TOut>, 'domain' | 'baseSchema' | 'outputSchema' | 'relations'>, number>>
-    } = {}
+        actions?: Partial<Record<CrudActionKey, string>>,
+        events?: Partial<Record<CrudActionKey, string | boolean>>,
+        destructive?: Partial<Record<CrudActionKey, boolean>>,
+        timeout?: Partial<Record<CrudActionKey, number>>,
+        /**
+         * Per-action visibility. Anything not named here stays `internal`, which is the whole
+         * point: publishing a CRUD action is a decision someone has to write down.
+         */
+        visibility?: Partial<Record<CrudActionKey, ContractVisibility>>,
+        /**
+         * REQUIRED. Contract keys this collection's handlers depend on, as `domain.action` or a
+         * bare `domain`. Pass `[]` for a leaf collection that calls nothing -- an empty array is
+         * an answer, and the type system will not let you skip the question.
+         */
+        dependencies: readonly string[],
+    }
 ): CrudContracts<
     TBase,
     TIdField,
@@ -148,6 +177,18 @@ export function defineCrud<
         updatedAt: z.coerce.date()
     } as unknown as Record<string, z.ZodTypeAny>) as unknown as TOut);
     const relations = options.relations || [];
+
+    assertValidDependencies(options.dependencies, `defineCrud("${domain}")`);
+    const dependencies = Object.freeze([...options.dependencies]);
+
+    // Absent means internal. Spreading the caller's map over an all-internal base keeps that true
+    // for every action they did not name, which is the default the whole change exists to set.
+    const visibility: Record<CrudActionKey, ContractVisibility> = {
+        find: 'internal', findOne: 'internal', count: 'internal', get: 'internal', resolve: 'internal',
+        create: 'internal', createMany: 'internal', update: 'internal',
+        replace: 'internal', delete: 'internal',
+        ...options.visibility
+    };
 
     const actionNames = {
         find: 'find', findOne: 'find_one', count: 'count', get: 'get', resolve: 'resolve',
@@ -228,6 +269,8 @@ export function defineCrud<
         destructive: destructive.find, event: eventNames.find,
         isCrud: true,
         timeout: timeouts.find,
+        visibility: visibility.find,
+        dependencies,
         print: defaultPrint
     });
 
@@ -240,6 +283,8 @@ export function defineCrud<
         destructive: destructive.findOne, event: eventNames.findOne,
         isCrud: true,
         timeout: timeouts.findOne,
+        visibility: visibility.findOne,
+        dependencies,
         print: defaultPrint
     });
 
@@ -252,6 +297,8 @@ export function defineCrud<
         destructive: destructive.count, event: eventNames.count,
         isCrud: true,
         timeout: timeouts.count,
+        visibility: visibility.count,
+        dependencies,
         print: defaultPrint
     });
 
@@ -264,6 +311,8 @@ export function defineCrud<
         destructive: destructive.get, event: eventNames.get,
         isCrud: true,
         timeout: timeouts.get,
+        visibility: visibility.get,
+        dependencies,
         print: defaultPrint
     });
 
@@ -276,6 +325,8 @@ export function defineCrud<
         destructive: destructive.resolve, event: eventNames.resolve,
         isCrud: true,
         timeout: timeouts.resolve,
+        visibility: visibility.resolve,
+        dependencies,
         print: defaultPrint
     });
 
@@ -288,6 +339,8 @@ export function defineCrud<
         destructive: destructive.create, event: eventNames.create || true,
         isCrud: true,
         timeout: timeouts.create,
+        visibility: visibility.create,
+        dependencies,
         print: defaultPrint
     });
 
@@ -300,6 +353,8 @@ export function defineCrud<
         destructive: destructive.createMany, event: eventNames.createMany || true,
         isCrud: true,
         timeout: timeouts.createMany,
+        visibility: visibility.createMany,
+        dependencies,
         print: defaultPrint
     });
 
@@ -312,6 +367,8 @@ export function defineCrud<
         destructive: destructive.update, event: eventNames.update || true,
         isCrud: true,
         timeout: timeouts.update,
+        visibility: visibility.update,
+        dependencies,
         print: defaultPrint
     });
 
@@ -324,6 +381,8 @@ export function defineCrud<
         destructive: destructive.replace, event: eventNames.replace || true,
         isCrud: true,
         timeout: timeouts.replace,
+        visibility: visibility.replace,
+        dependencies,
         print: defaultPrint
     });
 
@@ -336,11 +395,13 @@ export function defineCrud<
         destructive: destructive.delete, event: eventNames.delete || true,
         isCrud: true,
         timeout: timeouts.delete,
+        visibility: visibility.delete,
+        dependencies,
         print: defaultPrint
     });
 
     const crudResult = {
-        domain, idField, baseSchema, outputSchema, relations,
+        domain, idField, baseSchema, outputSchema, relations, dependencies,
         find: findContract,
         findOne: findOneContract,
         count: countContract,
