@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { MongoClient } from 'mongodb';
-import { createTestApp, destroyTestApp, dropTestDatabase, TEST_DB_NAME } from '../helpers/setup.js';
+import { createTestApp, destroyTestApp, dropTestDatabase, TEST_DB_NAME, withTestDatabase } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { loadManifest, topologicalOrder, Supervisor, SupervisorManifest } from '../../supervisor/Supervisor.js';
@@ -184,7 +184,7 @@ describe('Supervisor.runTests() — real isolated test runs', () => {
         broker = app.getProvider<IServiceBroker>('broker');
 
         isolatedDbName = `mesh_test_suptests_${Math.random().toString(36).slice(2, 8)}`;
-        const isolatedUri = process.env.MONGODB_URI!.replace(/\/[^/?]+(\?|$)/, `/${isolatedDbName}$1`);
+        const isolatedUri = withTestDatabase(process.env.MONGODB_URI!, isolatedDbName);
 
         manifest = {
             services: [

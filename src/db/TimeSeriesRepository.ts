@@ -8,13 +8,17 @@ export class TimeSeriesRepository<T extends { timestamp: Date; tags: Record<stri
     constructor(
         private collection: Collection<Document>,
         private schema: z.ZodType<T>,
-        private domain: string
+        private domain: string,
+        private readyPromise?: Promise<void>
     ) { }
 
     /**
      * insert: Batch inserts multiple points.
      */
     public async insert(points: Partial<T>[]): Promise<{ count: number }> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
         const now = new Date();
         const docs = points.map(p => {
             const point = {
@@ -35,6 +39,9 @@ export class TimeSeriesRepository<T extends { timestamp: Date; tags: Record<stri
      * query: Retrieves points by time range and tags.
      */
     public async query(params: { from?: Date; to?: Date; tags?: Record<string, string>; limit?: number }): Promise<T[]> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
         const filter: Filter<Document> = {};
 
         if (params.from || params.to) {
@@ -60,6 +67,9 @@ export class TimeSeriesRepository<T extends { timestamp: Date; tags: Record<stri
      * latest: Returns the most recent point matching the tags.
      */
     public async latest(tags?: Record<string, string>): Promise<T | undefined> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
         const filter: Filter<Document> = {};
         if (tags) {
             for (const [key, value] of Object.entries(tags)) {
@@ -81,6 +91,9 @@ export class TimeSeriesRepository<T extends { timestamp: Date; tags: Record<stri
         interval: string; 
         aggregates: Record<string, 'min' | 'max' | 'avg' | 'sum' | 'count'> 
     }): Promise<Record<string, unknown>[]> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
         const pipeline: Document[] = [];
 
         // 1. Match

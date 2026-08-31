@@ -1,4 +1,4 @@
-import { createTestApp, destroyTestApp, dropTestCollection, TEST_DB_NAME } from '../helpers/setup.js';
+import { createTestApp, destroyTestApp, dropTestCollection, TEST_DB_NAME, withTestDatabase } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { IServiceModule } from '../../interfaces/IServiceModule.js';
@@ -372,7 +372,7 @@ describe('ServiceBroker', () => {
             const testDbName = `mesh_test_dbiso_${Math.random().toString(36).slice(2, 8)}`;
             // Database's constructor lets the URI's own path override an explicit `dbName` --
             // the URI must actually embed the target db name, same as createTestApp does.
-            const isolatedUri = process.env.MONGODB_URI!.replace(/\/[^/?]+(\?|$)/, `/${testDbName}$1`);
+            const isolatedUri = withTestDatabase(process.env.MONGODB_URI!, testDbName);
             const testDb = new Database(app.logger, isolatedUri, testDbName);
             await testDb.connect();
 

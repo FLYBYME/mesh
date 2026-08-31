@@ -79,4 +79,4 @@ export async function dropTestCollection(collectionName: string): Promise<void> 
     await genericDropTestCollection(TEST_DB_NAME, collectionName);
 }
 
-export { TEST_DB_NAME };
+export { TEST_DB_NAME, withTestDatabase };

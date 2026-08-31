@@ -121,7 +121,7 @@ export async function dropTestCollection(dbName: string, collectionName: string,
     if (!uri) {
         throw new Error('[TestHelpers] MONGODB_URI environment variable or mongoUri must be configured.');
     }
-    const baseUri = uri.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
+    const baseUri = withTestDatabase(uri, dbName);
     const client = new MongoClient(baseUri);
     try {
         await client.connect();
