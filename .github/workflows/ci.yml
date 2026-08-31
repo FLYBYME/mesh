@@ -46,4 +46,22 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
+      # The suite's failure mode is a jest hook timeout, which says nothing about *why* the
+      # database is unreachable -- raising the timeout from 5s to 30s changed the number in the
+      # message and nothing else. This connects with a short, explicit server-selection timeout so
+      # the driver reports its own error, with an address, before the suite buries it.
+      - name: Probe MongoDB
+        run: |
+          node -e "
+          const { MongoClient } = require('mongodb');
+          const uri = process.env.MONGODB_URI;
+          console.log('connecting to', uri);
+          new MongoClient(uri, { serverSelectionTimeoutMS: 8000 }).connect()
+            .then(c => c.db('probe').command({ ping: 1 }).then(r => {
+              console.log('ping ok', JSON.stringify(r));
+              return c.close();
+            }))
+            .catch(e => { console.error('PROBE FAILED:', e.name, e.message); process.exit(1); });
+          "
+
       - run: npm test
