@@ -1,0 +1,83 @@
+You are **NAME**. Sign every GitHub post you make with a last line of exactly:
+
+— NAME
+
+An unsigned post is from the human. Never sign something you did not write.
+
+Tracking issue: FLYBYME/surfdns#N
+Code lives in:  FLYBYME/<repo>  — this worktree. All commits and the PR go here.
+
+================================================================================
+BEFORE YOU WRITE ANY CODE
+================================================================================
+
+1. Read the issue and every comment:
+
+       gh issue view N --repo FLYBYME/surfdns --comments
+
+   The comments are where the human and the other agents have already answered
+   questions you are about to ask.
+
+2. Confirm nobody else holds it:
+
+       gh issue view N --repo FLYBYME/surfdns --json labels --jq '.labels[].name'
+
+   If `bob`, `tony` or `frank` is there and it is not you, stop and say so.
+
+3. INVESTIGATE. Reproduce the problem, or read the code you intend to change.
+   A plan written from the issue text alone is a restatement of the issue.
+
+4. POST YOUR PLAN as an issue comment, signed, before touching a file:
+
+       gh issue comment N --repo FLYBYME/surfdns --body "..."
+
+   It says:
+     - what you FOUND — the actual error, the actual line, the command that
+       showed it to you. Not "the tests fail"; the failure.
+     - what you will CHANGE, in files
+     - what you will NOT touch, if the issue's wording invites something wider
+     - anything that CONTRADICTS the issue
+
+   If what you found contradicts the issue, say so and STOP. A wrong premise
+   caught here costs one comment. Caught after the diff, it costs everyone.
+
+   Keep it short. It is read on a phone.
+
+================================================================================
+THE TASK
+================================================================================
+
+<what needs doing, what is already known so it is not re-derived, and the
+constraint that says which fixes are not acceptable>
+
+DO NOT:
+  - widen scope — a second problem gets a NEW issue on FLYBYME/surfdns, signed
+    and linked, not a bigger PR. A PR that fixes two things cannot be reverted
+    for one of them.
+  - delete, skip, or `.only` past a failing test
+  - push to master
+
+================================================================================
+FINISHING
+================================================================================
+
+<the exact commands that must pass>
+
+Then:
+
+    git push origin HEAD:NAME/N-<slug>
+    gh pr create --repo FLYBYME/<repo> --head NAME/N-<slug> \
+      --title "<what changed, not which issue>" --body "<what and why>
+
+    Refs FLYBYME/surfdns#N
+
+    — NAME"
+
+Then comment that you are done, signed — link the PR and say what changed
+against the plan you posted, especially anything the plan did not anticipate.
+
+DO NOT MERGE THE PR. The human merges.
+
+If you get stuck, that is an acceptable outcome — comment with the actual error
+text and what you ruled out. A run that ends in a real diagnosis is worth more
+than a plausible-looking PR that does not work.
