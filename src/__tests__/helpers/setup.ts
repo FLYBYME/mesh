@@ -4,7 +4,8 @@ import {
     destroyTestApp,
     dropTestDatabase as genericDropTestDatabase,
     dropTestCollection as genericDropTestCollection,
-    generateTestDbName
+    generateTestDbName,
+    withTestDatabase
 } from '../../testing/index.js';
 import { MeshApp } from '../../core/MeshApp.js';
 import { Logger } from '../../utils/Logger.js';
@@ -38,7 +39,7 @@ export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
     if (!mongoUri) {
         throw new Error('[setup.ts] MONGODB_URI environment variable must be configured.');
     }
-    const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
+    const baseUri = withTestDatabase(mongoUri, TEST_DB_NAME);
 
     const app = new MeshApp({
         nodeID,

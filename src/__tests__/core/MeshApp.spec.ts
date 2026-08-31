@@ -6,6 +6,7 @@ import { DemoSkill } from '../../examples/demo/demo.service.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { IServiceRegistry } from '../../interfaces/IServiceRegistry.js';
 import { Database } from '../../db/Database.js';
+import { withTestDatabase } from '../../testing/TestHelpers.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import { dropTestCollection, TEST_DB_NAME } from '../helpers/setup.js';
@@ -52,7 +53,7 @@ describe('MeshApp', () => {
 
         it('should boot with all modules and provide broker, registry, database', async () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-            const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
+            const baseUri = withTestDatabase(mongoUri, TEST_DB_NAME);
 
             app = new MeshApp({ nodeID: 'lifecycle-test', namespace: 'test', logger: new Logger(LogLevel.WARN) });
             app.use(new RegistryModule({ preferLocal: true }));
@@ -74,7 +75,7 @@ describe('MeshApp', () => {
 
         it('should call tools through app.call()', async () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-            const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
+            const baseUri = withTestDatabase(mongoUri, TEST_DB_NAME);
 
             app = new MeshApp({ nodeID: 'call-test', namespace: 'test', logger: new Logger(LogLevel.WARN) });
             app.use(new RegistryModule({ preferLocal: true }));
@@ -94,7 +95,7 @@ describe('MeshApp', () => {
     describe('Middleware queueing', () => {
         it('should queue middleware added before broker is available', async () => {
             const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-            const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
+            const baseUri = withTestDatabase(mongoUri, TEST_DB_NAME);
 
             const app = new MeshApp({ nodeID: 'mw-queue-test', logger: new Logger(LogLevel.WARN) });
 

@@ -2,6 +2,7 @@ import { MongoClient, Collection, Document, ObjectId } from 'mongodb';
 import { z } from 'zod';
 import { DomainRepository } from '../../db/DomainRepository.js';
 import { TEST_DB_NAME } from '../helpers/setup.js';
+import { withTestDatabase } from '../../testing/TestHelpers.js';
 import dotenv from 'dotenv';
 import path from 'path';
 
@@ -24,7 +25,7 @@ describe('DomainRepository', () => {
 
     beforeAll(async () => {
         const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-        const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${TEST_DB_NAME}$1`);
+        const baseUri = withTestDatabase(mongoUri, TEST_DB_NAME);
         client = new MongoClient(baseUri);
         await client.connect();
         collection = client.db(TEST_DB_NAME).collection('repo_test');

@@ -27,6 +27,25 @@ export function generateTestDbName(): string {
 }
 
 /**
+ * withTestDatabase: points a MongoDB URI at an isolated test database.
+ *
+ * The previous form of this was `uri.replace(/\/[^/?]+(\?|$)/, '/' + dbName + '$1')`, which is
+ * correct only when the URI already carries a database path. Given `mongodb://localhost:27017`
+ * -- a perfectly ordinary URI, and the one a CI service container suggests -- the pattern matches
+ * `/localhost:27017` and produces `mongodb://mesh_test_xxxxxx`, silently replacing the *host* with
+ * the database name. The driver then spends its full server-selection timeout resolving a
+ * hostname that does not exist, and every suite reports a hook timeout rather than a bad URI.
+ *
+ * Parsing rather than pattern-matching: everything before the path is the authority and must
+ * survive untouched; everything after it is ours to replace.
+ */
+export function withTestDatabase(mongoUri: string, dbName: string): string {
+    const url = new URL(mongoUri);
+    url.pathname = `/${dbName}`;
+    return url.toString();
+}
+
+/**
  * Creates a fully wired MeshApp with Registry, Broker, and Database.
  * Uses the provided MongoDB connection or defaults to localhost, pointing to a unique test DB.
  */
@@ -42,8 +61,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<{ app
     
     const dbName = generateTestDbName();
     
-    // Strip existing DB name from URI and use the isolated test DB
-    const baseUri = mongoUri.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
+    const baseUri = withTestDatabase(mongoUri, dbName);
 
     const app = new MeshApp({
         nodeID,
