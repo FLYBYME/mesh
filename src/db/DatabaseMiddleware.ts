@@ -100,6 +100,19 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         // Utility to bridge calls without 'any' where possible
         const serviceCtx = {
             broker,
+
+            // `meta` carries who is calling -- `user.id`, `user.tenant_id` -- and beforeCrud is
+            // where a module confines a query to that caller before the database sees it. Omitting
+            // it here did not fail loudly: the hooks still ran, still received a structurally valid
+            // IServiceContext (meta is optional), and simply could not see the caller. A module
+            // scoping a collection therefore read `undefined` and either threw or, worse, returned
+            // every row in the collection to whoever asked.
+            //
+            // ServiceBroker builds the identical field for ordinary tool handlers
+            // (ServiceBroker.ts, `meta: ctx.meta`), which is why the same read succeeds in a tool
+            // and failed here on the same request. There was never a reason for the two to differ.
+            meta: ctx.meta,
+
             correlationId: ctx.correlationID || ctx.id,
             nodeID: broker.nodeID,
 
