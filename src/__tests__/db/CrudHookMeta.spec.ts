@@ -3,6 +3,7 @@ import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/se
 import { MeshApp } from '../../core/MeshApp.js';
 import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
+import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import type { IServiceContext } from '../../interfaces/IServiceContext.js';
 
@@ -30,10 +31,29 @@ const RecordSchema = z.object({
 
 const scopedCrud = defineCrud('scoped', RecordSchema, { dependencies: [] });
 
+/**
+ * A plain tool that turns around and calls the scoped collection.
+ *
+ * This is the shape every real request has -- a handler does some work and then reads or writes a
+ * collection -- and it is not exercised by calling the CRUD action directly.
+ */
+const scopedViaToolContract = defineContract({
+    domain: 'scoped',
+    action: 'via_tool',
+    description: 'Creates through a tool handler, so the CRUD call is a nested call.',
+    inputSchema: z.object({ label: z.string() }),
+    outputSchema: z.object({ id: z.string(), tenantId: z.string(), label: z.string() }),
+    rest: { method: 'POST', path: '/scoped/via_tool' },
+    destructive: true,
+    dependencies: ['scoped.create'],
+    print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
         'scoped.create': { params: { tenantId: string; label: string }; returns: { id: string; tenantId: string; label: string } };
         'scoped.find': { params: { query?: Record<string, unknown> }; returns: { id: string; tenantId: string; label: string }[] };
+        'scoped.via_tool': { params: { label: string }; returns: { id: string; tenantId: string; label: string } };
     }
 }
 
@@ -53,6 +73,7 @@ interface Seen {
 }
 
 const seen: Seen = { before: [], after: [] };
+const seenInTool: (string | undefined)[] = [];
 
 function tenantOf(ctx: IServiceContext): string | undefined {
     return ctx.meta?.user?.tenant_id;
@@ -68,6 +89,13 @@ class ScopedModule extends ServiceModule {
     constructor() {
         super();
         this.mountCrud(scopedCrud);
+
+        this.mountTool(scopedViaToolContract, async (input, ctx) => {
+            // The tool can see the caller -- assert it here so a failure downstream cannot be
+            // blamed on the tool's own context.
+            seenInTool.push(tenantOf(ctx));
+            return await ctx.call('scoped.create', { label: input.label, tenantId: CLAIMED });
+        });
 
         this.mountCrudHook('scoped', 'find', {
             before: async (input, ctx) => {
@@ -114,6 +142,22 @@ describe('CRUD hooks receive the caller meta', () => {
         await dropTestCollection('scoped');
         seen.before = [];
         seen.after = [];
+        seenInTool.length = 0;
+    });
+
+    it('carries the tenant through a nested call from a tool handler', async () => {
+        // The shape of every real request: a handler runs, then touches a collection. The tool's
+        // own context is asserted first, so a failure here cannot be mistaken for the tool never
+        // having had the meta in the first place.
+        const doc = await broker.call(
+            'scoped.via_tool',
+            { label: 'nested' },
+            { meta: { user: { id: 'u1', tenant_id: 'acme' } } },
+        );
+
+        expect(seenInTool).toEqual(['acme']);
+        expect(seen.before).toEqual(['acme']);
+        expect(doc.tenantId).toBe('acme');
     });
 
     it('gives beforeCrud the caller tenant', async () => {
