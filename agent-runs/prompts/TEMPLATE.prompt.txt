@@ -38,8 +38,8 @@ BEFORE YOU WRITE ANY CODE
      - what you will NOT touch, if the issue's wording invites something wider
      - anything that CONTRADICTS the issue
 
-   If what you found contradicts the issue, say so and STOP. A wrong premise
-   caught here costs one comment. Caught after the diff, it costs everyone.
+   If what you found contradicts the issue, say so, pick how you will proceed, and keep going.
+   Nobody answers on GitHub, so a run that waits for a reply waits forever.
 
    Keep it short. It is read on a phone.
 
@@ -78,6 +78,24 @@ against the plan you posted, especially anything the plan did not anticipate.
 
 DO NOT MERGE THE PR. The human merges.
 
-If you get stuck, that is an acceptable outcome — comment with the actual error
-text and what you ruled out. A run that ends in a real diagnosis is worth more
-than a plausible-looking PR that does not work.
+================================================================================
+COMMENT AT LEAST TWICE. NEVER WAIT.
+================================================================================
+
+Two comments are the floor: the plan before any code, and the closing report.
+Post more whenever the picture changes — a wrong assumption, a second bug, a
+decision you took. They are the only trace of this run the human ever sees, and
+they read them on a phone.
+
+Nobody replies on GitHub. The human answers through a conversation with bob,
+not in a comment thread, so a run that halts pending a reply halts forever.
+When you would want a decision: say so in a comment with the options and which
+you would pick, CHOOSE ONE, say you are proceeding under that assumption, and
+keep going. Make it easy to undo — a separate commit, or a smaller change.
+
+If you get stuck, finish every part you still can, then post the closing
+comment anyway with the actual error text and what you ruled out. That comment
+is the one required output of a run, more than the PR is: a real diagnosis is
+useful, and silence is indistinguishable from a crash. If you produced no PR,
+say so and say why. A plausible-looking PR that does not work is worse than
+none — say plainly which you have.

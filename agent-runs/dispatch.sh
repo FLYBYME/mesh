@@ -8,7 +8,7 @@
 # branch dispatch/<N>, launches agy inside it in the background
 # (--dangerously-skip-permissions, required for an unattended background run --
 # see agent-runs/README.md), and writes its output to the main tree's
-# agent-runs/results/<N>-*.result.log.
+# agent-runs/results/<N>-*.result.md.
 #
 # WHY THE WORKTREE (roadmap D14, raised 2026-08-28):
 # Dispatches #112-#118 all layered directly onto one shared, uncommitted working
@@ -56,7 +56,10 @@ BASENAME="$(basename "$PROMPT_FILE" .prompt.txt)"
 # The log lives in the MAIN tree, never the worktree -- a worktree gets removed
 # after merge, and taking the only record of what the dispatch did with it would
 # be the one irreversible part of this whole flow.
-RESULT_FILE="$SCRIPT_DIR/results/${BASENAME}.result.log"
+# .md, not .log: agy's final output is Markdown, and the human reads these on GitHub from a
+# phone. A .log renders as a wall of monospace with the headings, links and code fences shown as
+# literal characters; the same bytes named .md render as the report agy actually wrote.
+RESULT_FILE="$SCRIPT_DIR/results/${BASENAME}.result.md"
 
 RUNNING=0
 if pgrep -f '^agy ' > /dev/null 2>&1; then
