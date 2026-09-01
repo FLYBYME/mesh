@@ -65,3 +65,40 @@ jobs:
           "
 
       - run: npm test
+
+      # `@flybyme/mesh/contracts` is the entry browser code loads to get *this package's* zod —
+      # which matters because zod's type checks are `instanceof`, so two copies on one page fail
+      # every check made across them. Its whole value is that it pulls in nothing but zod.
+      #
+      # That property is invisible to `tsc`: an import of the broker from here would compile
+      # perfectly and only fail when someone bundles it, downstream, weeks later. It has already
+      # happened three times in mesh-api, each one found by a person building a UI rather than by
+      # a check.
+      #
+      # `./browser` is deliberately NOT tested here. It is named for the browser and does not
+      # bundle for one — it exports ServiceBroker and takes express with it. That is a real bug,
+      # filed separately; asserting it now would just pin a known-broken entry.
+      - name: The contracts entry stays browser-safe
+        run: |
+          set -euo pipefail
+          npx --yes esbuild@0.28.2 dist/contracts.js \
+            --bundle --platform=browser --format=esm \
+            --outfile=/tmp/contracts-browser-check.js
+
+          # Inspect the OUTPUT, do not rely on the bundle failing.
+          #
+          # A resolution error was the obvious check and it does not work: esbuild marks `node:`
+          # builtins external for a browser target rather than erroring, so a bundle that imports
+          # node:async_hooks succeeds and exits 0. Adding a used ContextStack import here — a real
+          # leak of the exact shape this guards against — produced a clean exit and a bundle with
+          # `"node:async_hooks"` sitting in it.
+          #
+          # So assert on what came out. This one is demonstrable: with the leak the grep finds
+          # node:async_hooks, without it the bundle contains no builtin at all.
+          if grep -oE '"node:[a-z_]+"' /tmp/contracts-browser-check.js | sort -u | grep .; then
+            echo
+            echo "FAIL: the contracts entry reached a Node builtin — something in it, or something"
+            echo "it imports, belongs to the server half. See src/contracts.ts."
+            exit 1
+          fi
+          echo "no Node builtins reached. bundled: $(wc -c < /tmp/contracts-browser-check.js) bytes"
