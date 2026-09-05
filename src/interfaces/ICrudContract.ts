@@ -38,6 +38,179 @@ export const CrudParamsSchema = z.object({
     populate: z.union([z.string(), z.array(z.string())]).optional().describe("Populated fields."),
 });
 
+export type UniqueScope = 'global' | 'scoped';
+
+export interface UniqueKeyDescriptor {
+    readonly fields: string | readonly string[];
+    readonly scope?: UniqueScope;
+}
+
+export type UniqueOption =
+    | string
+    | readonly string[]
+    | UniqueKeyDescriptor;
+
+export interface NormalizedUniqueKey {
+    /** The ordered fields that make up the unique index key in MongoDB. */
+    readonly fields: readonly string[];
+    /** Whether the key is unique globally or scoped by the collection's scopedBy field. */
+    readonly scope: UniqueScope;
+    /** Optional explicit MongoDB index name. */
+    readonly name?: string;
+}
+
+/**
+ * normalizeUniqueKeys: validates and canonicalizes unique key options.
+ *
+ * Enforces:
+ * - Compound keys preserve caller-specified field order (index column order matters for index prefix optimization).
+ * - No duplicate fields within a compound key.
+ * - All unique fields must exist in baseSchema or be the scopedBy field.
+ * - Unique fields must not include document ID (idField / 'id' / '_id').
+ * - On an unscoped collection: all keys are global; scope: 'scoped' is refused.
+ * - On a scoped collection: keys must declare scope: 'scoped' (prepends scopedBy) or scope: 'global',
+ *   or include scopedBy in the compound key. Ambiguous bare keys are refused to prevent accidental leaks.
+ */
+export function normalizeUniqueKeys(
+    uniqueOptions: UniqueOption | readonly UniqueOption[] | undefined,
+    domain: string,
+    baseSchema: z.ZodObject<z.ZodRawShape>,
+    scopedBy?: string,
+    idField: string = 'id'
+): readonly NormalizedUniqueKey[] {
+    if (!uniqueOptions) return [];
+    const optionsArray = Array.isArray(uniqueOptions) ? uniqueOptions : [uniqueOptions];
+    if (optionsArray.length === 0) return [];
+
+    const shape = baseSchema.shape;
+    const normalized: NormalizedUniqueKey[] = [];
+
+    for (const opt of optionsArray) {
+        let rawFields: readonly string[];
+        let explicitScope: UniqueScope | undefined;
+
+        if (typeof opt === 'string') {
+            rawFields = [opt];
+        } else if (Array.isArray(opt)) {
+            rawFields = opt;
+        } else if (typeof opt === 'object' && opt !== null && 'fields' in opt) {
+            const descriptor = opt as UniqueKeyDescriptor;
+            rawFields = typeof descriptor.fields === 'string' ? [descriptor.fields] : descriptor.fields;
+            explicitScope = descriptor.scope;
+        } else {
+            throw new Error(`defineCrud Error: Invalid unique key definition in domain "${domain}". Expected field name, array of field names, or descriptor object.`);
+        }
+
+        if (!Array.isArray(rawFields) || rawFields.length === 0) {
+            throw new Error(`defineCrud Error: Unique key for domain "${domain}" must specify at least one field.`);
+        }
+
+        // Validate each field
+        const seenFields = new Set<string>();
+        for (const field of rawFields) {
+            if (typeof field !== 'string' || field.trim().length === 0) {
+                throw new Error(`defineCrud Error: Unique field names for domain "${domain}" must be non-empty strings.`);
+            }
+            if (field === idField || field === 'id' || field === '_id') {
+                throw new Error(`defineCrud Error: The ID field "${field}" must NOT be declared as a unique key for domain "${domain}". Document IDs are automatically unique in the database.`);
+            }
+            if (seenFields.has(field)) {
+                throw new Error(`defineCrud Error: Unique compound key for domain "${domain}" contains duplicate field "${field}".`);
+            }
+            seenFields.add(field);
+
+            // Field must exist in baseSchema or be scopedBy
+            if (!(field in shape) && field !== scopedBy) {
+                throw new Error(`defineCrud Error: Unique field "${field}" is not defined in the Zod baseSchema shape for domain "${domain}".`);
+            }
+        }
+
+        // Determine effective scope and fields
+        let effectiveScope: UniqueScope;
+        let finalFields: readonly string[];
+
+        if (!scopedBy) {
+            // Unscoped collection
+            if (explicitScope === 'scoped') {
+                throw new Error(`defineCrud Error: Unique key [${rawFields.join(', ')}] in domain "${domain}" declared scope: 'scoped', but collection "${domain}" does not declare scopedBy.`);
+            }
+            effectiveScope = 'global';
+            finalFields = Object.freeze([...rawFields]);
+        } else {
+            // Scoped collection
+            const includesScopeField = rawFields.includes(scopedBy);
+
+            if (includesScopeField) {
+                effectiveScope = 'scoped';
+                finalFields = Object.freeze([...rawFields]);
+            } else if (explicitScope === 'scoped') {
+                effectiveScope = 'scoped';
+                finalFields = Object.freeze([scopedBy, ...rawFields]);
+            } else if (explicitScope === 'global') {
+                effectiveScope = 'global';
+                finalFields = Object.freeze([...rawFields]);
+            } else {
+                const keyDesc = rawFields.length === 1 ? `"${rawFields[0]}"` : `[${rawFields.join(', ')}]`;
+                throw new Error(
+                    `defineCrud Error: Collection "${domain}" is scoped by "${scopedBy}". ` +
+                    `Unique key ${keyDesc} must explicitly declare scope: 'scoped' or scope: 'global' ` +
+                    `(e.g. { fields: ${keyDesc}, scope: 'scoped' }) so its tenant isolation boundary is explicit.`
+                );
+            }
+        }
+
+        normalized.push(Object.freeze({
+            fields: finalFields,
+            scope: effectiveScope
+        }));
+    }
+
+    return Object.freeze(normalized);
+}
+
+/**
+ * CrudRegistry: In-memory registry of all defined CRUD collections.
+ * Populated at definition/import time by defineCrud.
+ */
+export class CrudRegistry {
+    private readonly cruds = new Map<string, AnyCrudContracts>();
+
+    public register(crud: AnyCrudContracts): void {
+        this.cruds.set(crud.domain, crud);
+    }
+
+    public has(domain: string): boolean {
+        return this.cruds.has(domain);
+    }
+
+    public clear(): void {
+        this.cruds.clear();
+    }
+
+    public get(domain: string): AnyCrudContracts | undefined {
+        return this.cruds.get(domain);
+    }
+
+    public entries(): IterableIterator<[string, AnyCrudContracts]> {
+        return this.cruds.entries();
+    }
+
+    public values(): IterableIterator<AnyCrudContracts> {
+        return this.cruds.values();
+    }
+
+    public get size(): number {
+        return this.cruds.size;
+    }
+}
+
+const globalCrudKey = 'mesh.globalCrudRegistry';
+const globalCrudObj = globalThis as { [globalCrudKey]?: CrudRegistry };
+if (!globalCrudObj[globalCrudKey]) {
+    globalCrudObj[globalCrudKey] = new CrudRegistry();
+}
+export const globalCrudRegistry: CrudRegistry = globalCrudObj[globalCrudKey] ?? new CrudRegistry();
+
 /**
  * AnyCrudContracts: Generic base for any CRUD contract set.
  * Allows the framework to consume CRUD sets without knowing the exact schemas.
@@ -46,6 +219,7 @@ export interface AnyCrudContracts extends Record<string, unknown> {
     readonly domain: string;
     readonly idField: string;
     readonly scopedBy?: string;
+    readonly unique?: readonly NormalizedUniqueKey[];
     readonly dependencies: readonly string[];
     readonly find: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
     readonly findOne: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
@@ -86,6 +260,7 @@ export type CrudContracts<
     readonly domain: string;
     readonly idField: TIdField;
     readonly scopedBy?: string;
+    readonly unique?: readonly NormalizedUniqueKey[];
     readonly baseSchema: TBase;
     readonly outputSchema: TOut;
     readonly relations: RelationDefinition[];
@@ -139,6 +314,7 @@ export function defineCrud<
         pluralPath?: string;
         idField?: TIdField;
         scopedBy?: string;
+        unique?: UniqueOption | readonly UniqueOption[];
         outputSchema?: z.ZodObject<z.ZodRawShape>;
         relations?: RelationDefinition[];
         actions?: Partial<Record<CrudActionKey, string>>,
@@ -186,6 +362,7 @@ export function defineCrud<
             throw new Error(`defineCrud Error: The scopedBy field "${scopedBy}" must be defined in the Zod baseSchema shape for domain "${domain}". Scoped collections require a field in their schema to store the scope identifier.`);
         }
     }
+    const unique = normalizeUniqueKeys(options.unique, domain, baseSchema, scopedBy, idField);
     const outputSchema = options.outputSchema || (baseSchema.extend({
         [idField]: z.string(),
         createdAt: z.coerce.date(),
@@ -426,7 +603,7 @@ export function defineCrud<
     });
 
     const crudResult = {
-        domain, idField, scopedBy, baseSchema, outputSchema, relations, dependencies,
+        domain, idField, scopedBy, unique, baseSchema, outputSchema, relations, dependencies,
         find: findContract,
         findOne: findOneContract,
         count: countContract,
@@ -438,6 +615,8 @@ export function defineCrud<
         replace: replaceContract,
         delete: deleteContract
     };
+
+    globalCrudRegistry.register(crudResult as AnyCrudContracts);
 
     return crudResult as unknown as CrudContracts<
         TBase,

@@ -182,5 +182,151 @@ describe('ICrudContract — defineCrud', () => {
                     .toThrow('scopedBy option for domain "item" must be a non-empty string.');
             });
         });
+
+        describe('unique option', () => {
+            const ArtifactSchema = z.object({
+                digest: z.string(),
+                size: z.number(),
+            });
+
+            const PartVersionSchema = z.object({
+                partName: z.string(),
+                version: z.string(),
+                tarball: z.string(),
+            });
+
+            const SiteSchema = z.object({
+                host: z.string(),
+                slug: z.string(),
+                tenantId: z.string(),
+            });
+
+            it('should record a single unique field as a global unique key', () => {
+                const crud = defineCrud('artifact', ArtifactSchema, { unique: ['digest'], dependencies: [] });
+                expect(crud.unique).toEqual([
+                    { fields: ['digest'], scope: 'global' }
+                ]);
+            });
+
+            it('should record a compound unique key preserving field order', () => {
+                const crud1 = defineCrud('partVersion', PartVersionSchema, {
+                    unique: [['partName', 'version']],
+                    dependencies: []
+                });
+                expect(crud1.unique).toEqual([
+                    { fields: ['partName', 'version'], scope: 'global' }
+                ]);
+
+                const crud2 = defineCrud('partVersion', PartVersionSchema, {
+                    unique: [['version', 'partName']],
+                    dependencies: []
+                });
+                expect(crud2.unique).toEqual([
+                    { fields: ['version', 'partName'], scope: 'global' }
+                ]);
+            });
+
+            it('should support multiple unique constraints on one collection', () => {
+                const crud = defineCrud('partVersion', PartVersionSchema, {
+                    unique: ['tarball', ['partName', 'version']],
+                    dependencies: []
+                });
+                expect(crud.unique).toEqual([
+                    { fields: ['tarball'], scope: 'global' },
+                    { fields: ['partName', 'version'], scope: 'global' }
+                ]);
+            });
+
+            it('should prepend scopedBy when scope is "scoped" on a scoped collection', () => {
+                const crud = defineCrud('site', SiteSchema, {
+                    scopedBy: 'tenantId',
+                    unique: [{ fields: 'slug', scope: 'scoped' }],
+                    dependencies: []
+                });
+                expect(crud.unique).toEqual([
+                    { fields: ['tenantId', 'slug'], scope: 'scoped' }
+                ]);
+            });
+
+            it('should not prepend scopedBy when scope is "global" on a scoped collection', () => {
+                const crud = defineCrud('site', SiteSchema, {
+                    scopedBy: 'tenantId',
+                    unique: [{ fields: 'host', scope: 'global' }],
+                    dependencies: []
+                });
+                expect(crud.unique).toEqual([
+                    { fields: ['host'], scope: 'global' }
+                ]);
+            });
+
+            it('should allow mixing scoped and global unique keys on a scoped collection', () => {
+                const crud = defineCrud('site', SiteSchema, {
+                    scopedBy: 'tenantId',
+                    unique: [
+                        { fields: 'host', scope: 'global' },
+                        { fields: 'slug', scope: 'scoped' }
+                    ],
+                    dependencies: []
+                });
+                expect(crud.unique).toEqual([
+                    { fields: ['host'], scope: 'global' },
+                    { fields: ['tenantId', 'slug'], scope: 'scoped' }
+                ]);
+            });
+
+            it('should recognize compound keys already containing scopedBy as scoped', () => {
+                const crud = defineCrud('site', SiteSchema, {
+                    scopedBy: 'tenantId',
+                    unique: [['tenantId', 'slug']],
+                    dependencies: []
+                });
+                expect(crud.unique).toEqual([
+                    { fields: ['tenantId', 'slug'], scope: 'scoped' }
+                ]);
+            });
+
+            it('should refuse ambiguous bare unique keys on a scoped collection', () => {
+                expect(() => defineCrud('site', SiteSchema, {
+                    scopedBy: 'tenantId',
+                    unique: ['slug'],
+                    dependencies: []
+                })).toThrow('Collection "site" is scoped by "tenantId". Unique key "slug" must explicitly declare scope: \'scoped\' or scope: \'global\'');
+            });
+
+            it('should refuse scope: "scoped" on an unscoped collection', () => {
+                expect(() => defineCrud('artifact', ArtifactSchema, {
+                    unique: [{ fields: 'digest', scope: 'scoped' }],
+                    dependencies: []
+                })).toThrow('declared scope: \'scoped\', but collection "artifact" does not declare scopedBy.');
+            });
+
+            it('should refuse declaring ID field as unique key', () => {
+                expect(() => defineCrud('artifact', ArtifactSchema, {
+                    unique: ['id'],
+                    dependencies: []
+                })).toThrow('The ID field "id" must NOT be declared as a unique key');
+            });
+
+            it('should refuse declaring non-existent fields as unique key', () => {
+                expect(() => defineCrud('artifact', ArtifactSchema, {
+                    unique: ['nonExistent'],
+                    dependencies: []
+                })).toThrow('Unique field "nonExistent" is not defined in the Zod baseSchema shape');
+            });
+
+            it('should refuse duplicate fields in a compound key', () => {
+                expect(() => defineCrud('partVersion', PartVersionSchema, {
+                    unique: [['partName', 'partName']],
+                    dependencies: []
+                })).toThrow('Unique compound key for domain "partVersion" contains duplicate field "partName".');
+            });
+
+            it('should refuse an empty compound key array', () => {
+                expect(() => defineCrud('partVersion', PartVersionSchema, {
+                    unique: [[]],
+                    dependencies: []
+                })).toThrow('Unique key for domain "partVersion" must specify at least one field.');
+            });
+        });
     });
 });
