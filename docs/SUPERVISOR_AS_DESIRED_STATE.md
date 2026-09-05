@@ -9,6 +9,10 @@ which built the Supervisor. Nothing in that document is retracted. The change he
 large in consequence: **what a node should run stops being a file read once at startup and becomes a
 document the node converges toward.**
 
+This document covers *desired*. [DECLARED_DESIRED_OBSERVED.md](./DECLARED_DESIRED_OBSERVED.md) covers
+the other two, the rule for deciding what is code and what is a row, and why "is a service
+unavailable" is a diff rather than a mechanism.
+
 ---
 
 ## 1. Why — counted, not asserted
