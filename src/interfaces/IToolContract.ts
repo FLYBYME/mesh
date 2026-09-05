@@ -90,6 +90,8 @@ export interface ToolContract<
      * a real answer meaning "depends on nothing" -- it is not the same as leaving it undeclared.
      */
     readonly dependencies?: readonly string[];
+    /** Field that scopes this contract to a caller's tenant/organization, if any. */
+    readonly scopedBy?: string;
     /** Formats the tool output as a human-readable string */
     readonly print: (output: TPrint) => string;
 }

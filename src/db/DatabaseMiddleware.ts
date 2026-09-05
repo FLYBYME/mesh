@@ -28,6 +28,32 @@ function isStringArray(obj: unknown): obj is string[] {
     return Array.isArray(obj) && obj.every(i => typeof i === 'string');
 }
 
+function toSnakeCase(str: string): string {
+    return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+}
+
+function resolveCallerScope(meta: Record<string, unknown> | undefined, scopeField: string): string | undefined {
+    if (!meta || typeof meta !== 'object') return undefined;
+
+    const snakeField = toSnakeCase(scopeField);
+    const user = isRecord(meta.user) ? meta.user : undefined;
+
+    if (user) {
+        const userScopeVal = user[scopeField];
+        if (typeof userScopeVal === 'string' && userScopeVal.length > 0) return userScopeVal;
+        const userSnakeVal = user[snakeField];
+        if (typeof userSnakeVal === 'string' && userSnakeVal.length > 0) return userSnakeVal;
+        if (scopeField.toLowerCase() === 'userid' && typeof user.id === 'string' && user.id.length > 0) return user.id;
+    }
+
+    const metaScopeVal = meta[scopeField];
+    if (typeof metaScopeVal === 'string' && metaScopeVal.length > 0) return metaScopeVal;
+    const metaSnakeVal = meta[snakeField];
+    if (typeof metaSnakeVal === 'string' && metaSnakeVal.length > 0) return metaSnakeVal;
+
+    return undefined;
+}
+
 /**
  * emitNamed: additive, backward-compatible companion to the generic
  * `data.created`/`data.updated`/`data.deleted` events every CRUD write already
@@ -95,6 +121,20 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         let params: Record<string, unknown> = ctx.params;
         let result: unknown;
 
+        const scopedBy = schemaReg.scopedBy;
+        let callerScope: string | undefined;
+
+        if (scopedBy) {
+            callerScope = resolveCallerScope(ctx.meta, scopedBy);
+            if (!callerScope) {
+                throw new MeshError({
+                    code: 'UNAUTHORIZED',
+                    status: 401,
+                    message: `Scoped collection "${domain}" requires a resolved "${scopedBy}" scope, but none was provided in call context.`
+                });
+            }
+        }
+
         const module = broker.getModule(domain);
 
         // Utility to bridge calls without 'any' where possible
@@ -140,8 +180,12 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
         try {
             switch (action) {
                 case 'find': {
+                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    if (scopedBy && callerScope) {
+                        query[scopedBy] = callerScope;
+                    }
                     const options: FindOptions<BaseDoc> = {
-                        query: isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {},
+                        query: query as StrictFilterQuery<BaseDoc>,
                         limit: typeof params.limit === 'number' ? params.limit : 100,
                         offset: typeof params.offset === 'number' ? params.offset : undefined,
                     };
@@ -161,7 +205,10 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     break;
                 }
                 case 'find_one': {
-                    const query = isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {};
+                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    if (scopedBy && callerScope) {
+                        query[scopedBy] = callerScope;
+                    }
                     let sort: FindOptions<BaseDoc>['sort'] = undefined;
                     if (typeof params.sort === 'string' || Array.isArray(params.sort) || isRecord(params.sort)) {
                         sort = params.sort as FindOptions<BaseDoc>['sort'];
@@ -169,17 +216,21 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     const offset = typeof params.offset === 'number' ? params.offset : undefined;
                     const fields = typeof params.fields === 'string' || Array.isArray(params.fields) ? params.fields : undefined;
 
-                    result = await repo.findOne(query, { sort, offset, fields });
+                    result = await repo.findOne(query as StrictFilterQuery<BaseDoc>, { sort, offset, fields });
                     break;
                 }
                 case 'count': {
-                    const query = isRecord(params.query) ? (params.query as StrictFilterQuery<BaseDoc>) : {};
-                    result = await repo.count(query);
+                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    if (scopedBy && callerScope) {
+                        query[scopedBy] = callerScope;
+                    }
+                    result = await repo.count(query as StrictFilterQuery<BaseDoc>);
                     break;
                 }
                 case 'get': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const doc = await repo.get(id);
+                    const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    const doc = await repo.get(id, scopeQuery);
                     if (!doc) {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }
@@ -187,7 +238,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     break;
                 }
                 case 'create': {
-                    const createRes = await repo.create(params as unknown as BaseDoc);
+                    const createData: Record<string, unknown> = { ...params };
+                    if (scopedBy && callerScope) {
+                        createData[scopedBy] = callerScope;
+                    }
+                    const createRes = await repo.create(createData as Omit<BaseDoc, 'id' | 'createdAt' | 'updatedAt'> & Partial<BaseDoc>);
                     broker.emit('data.created', { domain, id: createRes.id, item: createRes as Record<string, unknown> });
                     emitNamed(broker, domain, 'created', createRes as Record<string, unknown>);
                     result = createRes;
@@ -198,7 +253,11 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     const created: BaseDoc[] = [];
                     for (const item of arr) {
                         if (isRecord(item)) {
-                            const res = await repo.create(item as unknown as BaseDoc);
+                            const createData: Record<string, unknown> = { ...item };
+                            if (scopedBy && callerScope) {
+                                createData[scopedBy] = callerScope;
+                            }
+                            const res = await repo.create(createData as Omit<BaseDoc, 'id' | 'createdAt' | 'updatedAt'> & Partial<BaseDoc>);
                             created.push(res);
                             broker.emit('data.created', { domain, id: res.id, item: res as Record<string, unknown> });
                             emitNamed(broker, domain, 'created', res as Record<string, unknown>);
@@ -209,45 +268,58 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 }
                 case 'update': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const updateRes = await repo.update(id, params as unknown as Partial<BaseDoc>);
-                    if (updateRes) {
-                        broker.emit('data.updated', {
-                            domain,
-                            id: updateRes.id,
-                            patch: params as Record<string, unknown>,
-                            item: updateRes as Record<string, unknown>
-                        });
-                        emitNamed(broker, domain, 'updated', {
-                            id: updateRes.id,
-                            patch: params as Record<string, unknown>,
-                            item: updateRes as Record<string, unknown>
-                        });
+                    const updatePatch: Record<string, unknown> = { ...params };
+                    if (scopedBy) {
+                        delete updatePatch[scopedBy];
                     }
+                    const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    const updateRes = await repo.update(id, updatePatch as Partial<BaseDoc>, scopeQuery);
+                    if (!updateRes) {
+                        throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
+                    }
+                    broker.emit('data.updated', {
+                        domain,
+                        id: updateRes.id,
+                        patch: params as Record<string, unknown>,
+                        item: updateRes as Record<string, unknown>
+                    });
+                    emitNamed(broker, domain, 'updated', {
+                        id: updateRes.id,
+                        patch: params as Record<string, unknown>,
+                        item: updateRes as Record<string, unknown>
+                    });
                     result = updateRes;
                     break;
                 }
                 case 'replace': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const replaceRes = await repo.replace(id, params as unknown as BaseDoc);
-                    if (replaceRes) {
-                        broker.emit('data.updated', {
-                            domain,
-                            id: replaceRes.id,
-                            patch: params as Record<string, unknown>,
-                            item: replaceRes as Record<string, unknown>
-                        });
-                        emitNamed(broker, domain, 'updated', {
-                            id: replaceRes.id,
-                            patch: params as Record<string, unknown>,
-                            item: replaceRes as Record<string, unknown>
-                        });
+                    const replaceData: Record<string, unknown> = { ...params };
+                    if (scopedBy && callerScope) {
+                        replaceData[scopedBy] = callerScope;
                     }
+                    const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    const replaceRes = await repo.replace(id, replaceData as Omit<BaseDoc, 'id' | 'createdAt' | 'updatedAt'> & Partial<BaseDoc>, scopeQuery);
+                    if (!replaceRes) {
+                        throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
+                    }
+                    broker.emit('data.updated', {
+                        domain,
+                        id: replaceRes.id,
+                        patch: params as Record<string, unknown>,
+                        item: replaceRes as Record<string, unknown>
+                    });
+                    emitNamed(broker, domain, 'updated', {
+                        id: replaceRes.id,
+                        patch: params as Record<string, unknown>,
+                        item: replaceRes as Record<string, unknown>
+                    });
                     result = replaceRes;
                     break;
                 }
                 case 'delete': {
                     const id = typeof params.id === 'string' ? params.id : '';
-                    const success = await repo.delete(id);
+                    const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    const success = await repo.delete(id, scopeQuery);
                     result = { success };
                     if (success) {
                         broker.emit('data.deleted', { domain, id });
@@ -258,7 +330,8 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 case 'resolve': {
                     // Same lookup as 'get', by the same ID -- never throws NotFound.
                     const id = typeof params.id === 'string' ? params.id : '';
-                    result = await repo.get(id);
+                    const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    result = await repo.get(id, scopeQuery);
                     break;
                 }
                 default:

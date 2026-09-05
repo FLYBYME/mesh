@@ -142,5 +142,45 @@ describe('ICrudContract — defineCrud', () => {
             const crud = defineCrud('item', TestSchema, { idField: 'itemId', dependencies: [] });
             expect(crud.idField).toBe('itemId');
         });
+
+        describe('scopedBy option', () => {
+            const ScopedSchema = z.object({
+                name: z.string(),
+                tenantId: z.string(),
+            });
+
+            it('should record scopedBy on the crud result and on all contracts', () => {
+                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [] });
+                expect(crud.scopedBy).toBe('tenantId');
+                const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
+                for (const action of actions) {
+                    expect(crud[action].scopedBy).toBe('tenantId');
+                }
+            });
+
+            it('should make scopedBy optional in CreateInputSchema', () => {
+                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [] });
+                const parsedWithout = crud.create.inputSchema.safeParse({ name: 'widget' });
+                expect(parsedWithout.success).toBe(true);
+                const parsedWith = crud.create.inputSchema.safeParse({ name: 'widget', tenantId: 'other' });
+                expect(parsedWith.success).toBe(true);
+            });
+
+            it('should throw if scopedBy is not defined in baseSchema', () => {
+                expect(() => defineCrud('item', TestSchema, { scopedBy: 'tenantId', dependencies: [] }))
+                    .toThrow('The scopedBy field "tenantId" must be defined in the Zod baseSchema shape for domain "item".');
+            });
+
+            it('should throw if scopedBy is the same as idField', () => {
+                const SchemaWithId = z.object({ name: z.string() });
+                expect(() => defineCrud('item', SchemaWithId, { idField: 'id', scopedBy: 'id', dependencies: [] }))
+                    .toThrow('The scopedBy field "id" must NOT be the same as the ID field for domain "item".');
+            });
+
+            it('should throw if scopedBy is an empty string', () => {
+                expect(() => defineCrud('item', ScopedSchema, { scopedBy: '  ', dependencies: [] }))
+                    .toThrow('scopedBy option for domain "item" must be a non-empty string.');
+            });
+        });
     });
 });

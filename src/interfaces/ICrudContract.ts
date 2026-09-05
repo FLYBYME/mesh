@@ -45,6 +45,7 @@ export const CrudParamsSchema = z.object({
 export interface AnyCrudContracts extends Record<string, unknown> {
     readonly domain: string;
     readonly idField: string;
+    readonly scopedBy?: string;
     readonly dependencies: readonly string[];
     readonly find: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
     readonly findOne: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
@@ -84,6 +85,7 @@ export type CrudContracts<
 > = {
     readonly domain: string;
     readonly idField: TIdField;
+    readonly scopedBy?: string;
     readonly baseSchema: TBase;
     readonly outputSchema: TOut;
     readonly relations: RelationDefinition[];
@@ -136,6 +138,7 @@ export function defineCrud<
     options: {
         pluralPath?: string;
         idField?: TIdField;
+        scopedBy?: string;
         outputSchema?: z.ZodObject<z.ZodRawShape>;
         relations?: RelationDefinition[];
         actions?: Partial<Record<CrudActionKey, string>>,
@@ -170,6 +173,18 @@ export function defineCrud<
     const idField = options.idField || ('id' as TIdField);
     if (idField in baseSchema.shape) {
         throw new Error(`defineCrud Error: The ID field "${String(idField)}" must NOT be defined in the Zod baseSchema shape for domain "${domain}". Document IDs are handled automatically by the database layer.`);
+    }
+    const scopedBy = options.scopedBy;
+    if (scopedBy !== undefined) {
+        if (typeof scopedBy !== 'string' || scopedBy.trim().length === 0) {
+            throw new Error(`defineCrud Error: scopedBy option for domain "${domain}" must be a non-empty string.`);
+        }
+        if (scopedBy === idField) {
+            throw new Error(`defineCrud Error: The scopedBy field "${scopedBy}" must NOT be the same as the ID field for domain "${domain}". Scoping partitions collections across tenants, while the ID identifies individual documents.`);
+        }
+        if (!(scopedBy in baseSchema.shape)) {
+            throw new Error(`defineCrud Error: The scopedBy field "${scopedBy}" must be defined in the Zod baseSchema shape for domain "${domain}". Scoped collections require a field in their schema to store the scope identifier.`);
+        }
     }
     const outputSchema = options.outputSchema || (baseSchema.extend({
         [idField]: z.string(),
@@ -216,12 +231,12 @@ export function defineCrud<
     // --- Input Schemas ---
     const rawBase = baseSchema as unknown as z.ZodObject<z.ZodRawShape>;
 
-    const CreateInputSchema = rawBase
-        .omit({ id: true, _id: true, createdAt: true, updatedAt: true } as Record<string, true>) as unknown as z.ZodType<
-            CreateIn<z.output<TBase>, TIdField>,
-            z.ZodTypeDef,
-            CreateIn<z.input<TBase>, TIdField>
-        >;
+    const baseCreate = rawBase
+        .omit({ id: true, _id: true, createdAt: true, updatedAt: true } as Record<string, true>);
+    const baseCreateShape = baseCreate.shape as Record<string, z.ZodTypeAny>;
+    const CreateInputSchema = (scopedBy && scopedBy in baseCreateShape
+        ? baseCreate.extend({ [scopedBy]: baseCreateShape[scopedBy].optional() })
+        : baseCreate) as z.ZodTypeAny;
 
     const UpdateInputSchema = rawBase
         .partial()
@@ -231,12 +246,12 @@ export function defineCrud<
             UpdateIn<z.input<TBase>, TIdField>
         >;
 
-    const ReplaceInputSchema = rawBase
-        .extend({ [idField]: z.string() } as Record<string, z.ZodTypeAny>) as unknown as z.ZodType<
-            ReplaceIn<z.output<TBase>, TIdField>,
-            z.ZodTypeDef,
-            ReplaceIn<z.input<TBase>, TIdField>
-        >;
+    const baseReplace = rawBase
+        .extend({ [idField]: z.string() } as Record<string, z.ZodTypeAny>);
+    const baseReplaceShape = baseReplace.shape as Record<string, z.ZodTypeAny>;
+    const ReplaceInputSchema = (scopedBy && scopedBy in baseReplaceShape
+        ? baseReplace.extend({ [scopedBy]: baseReplaceShape[scopedBy].optional() })
+        : baseReplace) as z.ZodTypeAny;
 
     const IdInputSchema = z.object({
         [idField]: z.string()
@@ -268,6 +283,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}` },
         destructive: destructive.find, event: eventNames.find,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.find,
         visibility: visibility.find,
         dependencies,
@@ -282,6 +298,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/one` },
         destructive: destructive.findOne, event: eventNames.findOne,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.findOne,
         visibility: visibility.findOne,
         dependencies,
@@ -296,6 +313,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/count` },
         destructive: destructive.count, event: eventNames.count,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.count,
         visibility: visibility.count,
         dependencies,
@@ -310,6 +328,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/:${idField}` },
         destructive: destructive.get, event: eventNames.get,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.get,
         visibility: visibility.get,
         dependencies,
@@ -324,6 +343,7 @@ export function defineCrud<
         rest: { method: 'GET', path: `/${plural}/:${idField}/resolve` },
         destructive: destructive.resolve, event: eventNames.resolve,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.resolve,
         visibility: visibility.resolve,
         dependencies,
@@ -338,6 +358,7 @@ export function defineCrud<
         rest: { method: 'POST', path: `/${plural}` },
         destructive: destructive.create, event: eventNames.create || true,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.create,
         visibility: visibility.create,
         dependencies,
@@ -352,6 +373,7 @@ export function defineCrud<
         rest: { method: 'POST', path: `/${plural}/create-many` },
         destructive: destructive.createMany, event: eventNames.createMany || true,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.createMany,
         visibility: visibility.createMany,
         dependencies,
@@ -366,6 +388,7 @@ export function defineCrud<
         rest: { method: 'PATCH', path: `/${plural}/:${idField}` },
         destructive: destructive.update, event: eventNames.update || true,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.update,
         visibility: visibility.update,
         dependencies,
@@ -380,6 +403,7 @@ export function defineCrud<
         rest: { method: 'PUT', path: `/${plural}/:${idField}` },
         destructive: destructive.replace, event: eventNames.replace || true,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.replace,
         visibility: visibility.replace,
         dependencies,
@@ -394,6 +418,7 @@ export function defineCrud<
         rest: { method: 'DELETE', path: `/${plural}/:${idField}` },
         destructive: destructive.delete, event: eventNames.delete || true,
         isCrud: true,
+        scopedBy,
         timeout: timeouts.delete,
         visibility: visibility.delete,
         dependencies,
@@ -401,7 +426,7 @@ export function defineCrud<
     });
 
     const crudResult = {
-        domain, idField, baseSchema, outputSchema, relations, dependencies,
+        domain, idField, scopedBy, baseSchema, outputSchema, relations, dependencies,
         find: findContract,
         findOne: findOneContract,
         count: countContract,

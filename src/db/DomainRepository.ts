@@ -161,9 +161,12 @@ export class DomainRepository<T extends { id: string }> {
     /**
      * get: Retrieves a single document by its ID.
      */
-    public async get(id: string): Promise<T | undefined> {
+    public async get(id: string, query?: StrictFilterQuery<T>): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
-        const doc = await this.collection.findOne({ _id: new ObjectId(id) });
+        const filter: Filter<Document> = query
+            ? { ...this.mapQuery(query), _id: new ObjectId(id) }
+            : { _id: new ObjectId(id) };
+        const doc = await this.collection.findOne(filter);
         return doc ? this.mapOutbound(doc) : undefined;
     }
 
@@ -194,7 +197,8 @@ export class DomainRepository<T extends { id: string }> {
 
     public async update(
         id: string,
-        data: Partial<T>
+        data: Partial<T>,
+        query?: StrictFilterQuery<T>
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
 
@@ -204,8 +208,12 @@ export class DomainRepository<T extends { id: string }> {
         };
         const { id: _, ...updateDoc } = updateData;
 
+        const filter: Filter<Document> = query
+            ? { ...this.mapQuery(query), _id: new ObjectId(id) }
+            : { _id: new ObjectId(id) };
+
         const result = await this.collection.findOneAndUpdate(
-            { _id: new ObjectId(id) },
+            filter,
             { $set: updateDoc },
             { returnDocument: 'after' }
         );
@@ -263,11 +271,16 @@ export class DomainRepository<T extends { id: string }> {
 
     public async replace(
         id: string,
-        data: Omit<T, 'id' | 'createdAt' | 'updatedAt'> & Partial<T>
+        data: Omit<T, 'id' | 'createdAt' | 'updatedAt'> & Partial<T>,
+        query?: StrictFilterQuery<T>
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
 
-        const existing = await this.collection.findOne({ _id: new ObjectId(id) });
+        const filter: Filter<Document> = query
+            ? { ...this.mapQuery(query), _id: new ObjectId(id) }
+            : { _id: new ObjectId(id) };
+
+        const existing = await this.collection.findOne(filter);
         if (!existing) return undefined;
 
         const parsed = this.schema.parse({
@@ -285,7 +298,7 @@ export class DomainRepository<T extends { id: string }> {
         };
 
         const result = await this.collection.findOneAndReplace(
-            { _id: new ObjectId(id) },
+            filter,
             updateDoc,
             { returnDocument: 'after' }
         );
@@ -294,10 +307,14 @@ export class DomainRepository<T extends { id: string }> {
         return this.mapOutbound(result as WithId<Document>);
     }
 
-    public async delete(id: string): Promise<boolean> {
+    public async delete(id: string, query?: StrictFilterQuery<T>): Promise<boolean> {
         if (!ObjectId.isValid(id)) return false;
 
-        const result = await this.collection.deleteOne({ _id: new ObjectId(id) });
+        const filter: Filter<Document> = query
+            ? { ...this.mapQuery(query), _id: new ObjectId(id) }
+            : { _id: new ObjectId(id) };
+
+        const result = await this.collection.deleteOne(filter);
         return (result.deletedCount || 0) > 0;
     }
 
