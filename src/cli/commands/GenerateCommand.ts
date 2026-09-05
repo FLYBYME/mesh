@@ -21,6 +21,43 @@ interface EventDiscovery {
 }
 
 /**
+ * Turn the *source text* of a string literal back into the value it denotes.
+ *
+ * Descriptions are read by matching source rather than by parsing it, so what comes back is what was
+ * typed: `a site\'s parts`, with the backslash still in it. Emitting that verbatim is how a value
+ * ending in a backslash escapes the delimiter of whatever literal it is written into.
+ *
+ * Only the escapes that appear in hand-written prose are handled. A description written with a
+ * numeric or unicode escape is not a case worth a parser for.
+ */
+export function unescapeStringLiteral(raw: string): string {
+    return raw.replace(/\\(.)/g, (_, char: string) => {
+        switch (char) {
+            case 'n': return '\n';
+            case 't': return '\t';
+            case 'r': return '\r';
+            // `\'`, `\"`, `` \` `` and `\\` all denote the character itself.
+            default: return char;
+        }
+    });
+}
+
+/**
+ * A template literal that safely holds arbitrary text.
+ *
+ * Three characters can escape a template literal, and all three occur in ordinary prose: a backtick,
+ * a backslash, and `${`. Escaping them here is what makes the emitted file parse regardless of what
+ * a contract author wrote — the check that does not depend on remembering a rule.
+ */
+export function toTemplateLiteral(value: string): string {
+    const escaped = value
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, '\\`')
+        .replace(/\$\{/g, '\\${');
+    return `\`${escaped}\``;
+}
+
+/**
  * GenerateCommand: Core Generator for Mesh Architecture.
  */
 export class GenerateCommand extends BaseCommand {
@@ -350,7 +387,11 @@ export class GenerateCommand extends BaseCommand {
                 }
 
                 const safeVarName = `${domain}_${m.exportName}_${m.action}`.replace(/[^a-zA-Z0-9_]/g, '_');
-                code += `    const cmd_${safeVarName} = ${domain}.command('${m.action}').description(\`${m.description}\`);\n`;
+                // Escaped, not interpolated raw. A description is arbitrary prose from a contract
+                // author and may contain a backtick, a `${`, or a backslash — any of which silently
+                // produces a file that does not parse, with every reported error landing in whatever
+                // command happens to follow rather than in the one that caused it.
+                code += `    const cmd_${safeVarName} = ${domain}.command('${m.action}').description(${toTemplateLiteral(m.description)});\n`;
                 code += `    cmd_${safeVarName}.action(async (o: Record<string, unknown>, cmd: Command) => {\n`;
                 code += `        try {\n`;
                 code += `            await executeCommand('${domain}.${m.action}', o, ${contractRef}, cmd.optsWithGlobals());\n`;
@@ -389,7 +430,13 @@ export class GenerateCommand extends BaseCommand {
 
                 const domainMatch = /\bdomain\s*:\s*['"]([^'"]+)['"]/.exec(body);
                 const actionMatch = /\baction\s*:\s*['"]([^'"]+)['"]/.exec(body);
-                const descMatch = /\bdescription\s*:\s*['"]([^'"]+)['"]/.exec(body) || /\bdescription\s*:\s*`([\s\S]*?)`/.exec(body);
+                // `(?:[^'\\]|\\.)*` rather than `[^']+`: a quote may be escaped inside the string it
+                // delimits, and stopping at the first `'` in `'a site\'s parts'` captures
+                // `a site\` — a value ending in a backslash, which then escapes the closing backtick
+                // of whatever template literal it is emitted into. See `unescape` below.
+                const descMatch = /\bdescription\s*:\s*'((?:[^'\\]|\\.)*)'/.exec(body)
+                    || /\bdescription\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(body)
+                    || /\bdescription\s*:\s*`((?:[^`\\]|\\.)*)`/.exec(body);
                 const restMatch = /\brest\s*:\s*\{([\s\S]*?)\}/.exec(body);
 
                 let method = 'POST';
@@ -419,7 +466,7 @@ export class GenerateCommand extends BaseCommand {
                         exportName,
                         domain,
                         action,
-                        description: descMatch ? (descMatch[1] || descMatch[2] || '') : '',
+                        description: descMatch ? unescapeStringLiteral(descMatch[1] ?? '') : '',
                         method,
                         path: pathStr,
                         isStream
