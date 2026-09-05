@@ -48,7 +48,8 @@ export const MeshToolSchemaRegistry: Map<string, {
     timeout?: number,
     isCrud?: boolean,
     isTimeSeries?: boolean,
-    domain?: string
+    domain?: string,
+    scopedBy?: string
 }> = new Map();
 
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
@@ -305,7 +306,8 @@ export class ServiceBroker implements IServiceBroker {
                 isCrud: contract.isCrud,
                 isTimeSeries: contract.isTimeSeries,
                 domain: contract.domain,
-                timeout: contract.timeout
+                timeout: contract.timeout,
+                scopedBy: contract.scopedBy
             });
 
             this.localTools.set(toolKeyStr, {
