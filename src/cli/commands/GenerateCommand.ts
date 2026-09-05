@@ -12,6 +12,7 @@ interface ContractDiscovery {
     method: string;
     path: string;
     isStream: boolean;
+    filePath: string;
 }
 
 interface EventDiscovery {
@@ -72,30 +73,33 @@ export class GenerateCommand extends BaseCommand {
             .command(this.name)
             .description(this.description)
             .option('--dir <dir>', 'Directory to scan for contracts', './src')
+            .option('--out <dir>', 'Output directory for generated files', './src/generated')
             .option('-I, --include <paths...>', 'Paths or Package Names of external generated api.ts files to include in this project\'s types')
-            .action(async (options: { dir?: string, include?: string[] }) => {
+            .action(async (options: { dir?: string, out?: string, include?: string[] }) => {
                 await this.execute(options);
             });
     }
 
-    protected async execute(options: { dir?: string, include?: string[] } = {}): Promise<void> {
+    public async execute(options: { dir?: string, out?: string, include?: string[] } = {}): Promise<void> {
         const scanDir = path.resolve(options.dir || './src');
         if (!fs.existsSync(scanDir)) {
             throw new Error(`Directory not found: ${scanDir}`);
         }
 
+        const artifactRoot = path.resolve(options.out || this.artifactRoot);
+
         this.logger.info(`--- Generating Mesh Artifacts from ${scanDir} ---`);
         const start = Date.now();
 
-        if (!fs.existsSync(this.artifactRoot)) {
-            fs.mkdirSync(this.artifactRoot, { recursive: true });
+        if (!fs.existsSync(artifactRoot)) {
+            fs.mkdirSync(artifactRoot, { recursive: true });
         }
 
         const { discovery, events, files } = this.discoverContractsAndEvents([scanDir]);
 
-        await this.generateToolRegistry(discovery, files, options.include || []);
-        await this.generateCLI(discovery, files);
-        await this.generateEvents(events, discovery, files, options.include || []);
+        await this.generateToolRegistry(discovery, files, options.include || [], artifactRoot);
+        await this.generateCLI(discovery, files, artifactRoot);
+        await this.generateEvents(events, discovery, files, options.include || [], artifactRoot);
 
         await this.bundleBrowser();
 
@@ -141,10 +145,10 @@ export class GenerateCommand extends BaseCommand {
         }
     }
 
-    private async generateToolRegistry(discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
+    private async generateToolRegistry(discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[], artifactRoot: string = this.artifactRoot): Promise<void> {
         this.logger.info('Generating IServiceToolRegistry augmentation...');
-        const filePath = path.join(this.artifactRoot, 'api.ts');
-        const aliasMap = this.getAliasMap(files, this.artifactRoot);
+        const filePath = path.join(artifactRoot, 'api.ts');
+        const aliasMap = this.getAliasMap(files, artifactRoot);
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
         const isExternal = pkg.name !== '@flybyme/mesh';
 
@@ -158,7 +162,7 @@ export class GenerateCommand extends BaseCommand {
                     code += `import '${includePath}';\n`;
                 } else {
                     const absoluteInclude = path.resolve(includePath);
-                    let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
+                    let rel = path.relative(artifactRoot, absoluteInclude).replace(/\\/g, '/');
                     if (!rel.startsWith('.')) rel = './' + rel;
                     code += `import '${rel}';\n`;
                 }
@@ -178,9 +182,7 @@ export class GenerateCommand extends BaseCommand {
             if (seenTools.has(toolKey)) continue;
             seenTools.add(toolKey);
 
-            const domainFiles = files[m.domain];
-            if (!domainFiles || domainFiles.length === 0) continue;
-            const alias = aliasMap[domainFiles[0]!]?.alias;
+            const alias = aliasMap[m.filePath]?.alias;
             if (!alias) continue;
 
             let inputType = 'unknown', outputType = 'unknown';
@@ -202,10 +204,10 @@ export class GenerateCommand extends BaseCommand {
         fs.writeFileSync(filePath, code);
     }
 
-    private async generateEvents(events: EventDiscovery[], discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[]): Promise<void> {
+    private async generateEvents(events: EventDiscovery[], discovery: ContractDiscovery[], files: Record<string, string[]>, includes: string[], artifactRoot: string = this.artifactRoot): Promise<void> {
         this.logger.info('Generating EventRegistry augmentation...');
-        const filePath = path.join(this.artifactRoot, 'events.ts');
-        const aliasMap = this.getAliasMap(files, this.artifactRoot);
+        const filePath = path.join(artifactRoot, 'events.ts');
+        const aliasMap = this.getAliasMap(files, artifactRoot);
 
         let code = `// GENERATED FILE - DO NOT EDIT\n`;
         code += `import { z } from 'zod';\n`;
@@ -225,7 +227,7 @@ export class GenerateCommand extends BaseCommand {
 
                 if (fs.existsSync(path.resolve(target))) {
                     const absoluteInclude = path.resolve(target);
-                    let rel = path.relative(this.artifactRoot, absoluteInclude).replace(/\\/g, '/');
+                    let rel = path.relative(artifactRoot, absoluteInclude).replace(/\\/g, '/');
                     if (!rel.startsWith('.')) rel = './' + rel;
                     code += `import '${rel}';\n`;
                 }
@@ -258,9 +260,7 @@ export class GenerateCommand extends BaseCommand {
             if (!m.exportName.includes('.')) continue; // only CRUD-derived entries are dotted
             if (namedCrudEvents.has(m.domain)) continue;
 
-            const domainFiles = files[m.domain];
-            if (!domainFiles || domainFiles.length === 0) continue;
-            const alias = aliasMap[domainFiles[0]!]?.alias;
+            const alias = aliasMap[m.filePath]?.alias;
             if (!alias) continue;
 
             const [crudExport] = m.exportName.split('.');
@@ -279,11 +279,11 @@ export class GenerateCommand extends BaseCommand {
         fs.writeFileSync(filePath, code);
     }
 
-    private async generateCLI(discovery: ContractDiscovery[], files: Record<string, string[]>): Promise<void> {
+    private async generateCLI(discovery: ContractDiscovery[], files: Record<string, string[]>, artifactRoot: string = this.artifactRoot): Promise<void> {
         const pkg = JSON.parse(fs.readFileSync(path.resolve('./package.json'), 'utf-8'));
         const isExternal = pkg.name !== '@flybyme/mesh';
         this.logger.info('Generating CLI Command Tree...');
-        const outDir = path.join(this.artifactRoot, 'cli');
+        const outDir = path.join(artifactRoot, 'cli');
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
         const filePath = path.join(outDir, 'ToolCommands.ts');
 
@@ -370,9 +370,7 @@ export class GenerateCommand extends BaseCommand {
                 if (seenActions.has(m.action)) continue;
                 seenActions.add(m.action);
 
-                const domainFiles = files[domain];
-                if (!domainFiles || domainFiles.length === 0) continue;
-                const alias = aliasMap[domainFiles[0]!]?.alias;
+                const alias = aliasMap[m.filePath]?.alias;
                 if (!alias) continue;
 
                 let inputSchema = '';
@@ -469,7 +467,8 @@ export class GenerateCommand extends BaseCommand {
                         description: descMatch ? unescapeStringLiteral(descMatch[1] ?? '') : '',
                         method,
                         path: pathStr,
-                        isStream
+                        isStream,
+                        filePath: file
                     });
                 }
             }
@@ -495,7 +494,8 @@ export class GenerateCommand extends BaseCommand {
                         description: `CRUD ${key} for ${domain} (${exportName})`,
                         method: 'POST',
                         path: `/${domain}/${action}`,
-                        isStream: false
+                        isStream: false,
+                        filePath: file
                     });
                 });
             }
@@ -521,7 +521,8 @@ export class GenerateCommand extends BaseCommand {
                         description: `Time Series ${key} for ${domain} (${exportName})`,
                         method: 'POST',
                         path: `/${domain}/${action}`,
-                        isStream: false
+                        isStream: false,
+                        filePath: file
                     });
                 });
             }
@@ -553,6 +554,7 @@ export class GenerateCommand extends BaseCommand {
             const filePath = path.join(dir, file);
             const stat = fs.statSync(filePath);
             if (stat && stat.isDirectory()) {
+                if (file === 'node_modules' || file === '.git' || file === 'dist' || file === '__tests__') return;
                 results = results.concat(this.walkDir(filePath));
             } else {
                 results.push(filePath);
