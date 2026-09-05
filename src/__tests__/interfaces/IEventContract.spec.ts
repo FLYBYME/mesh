@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import {
     defineEvent,
+    EventContractRegistry,
+    globalEventRegistry,
     DataCreatedSchema,
     DataDeletedSchema,
     DataUpdatedSchema,
+    MeshStartedSchema,
+    MeshStoppedSchema,
     type EventDefinition
 } from '../../interfaces/IEventContract.js';
 
@@ -282,4 +286,216 @@ describe('IEventContract — defineEvent', () => {
             );
         });
     });
+
+    // ─── 6. Auto-registration in globalEventRegistry ───────────────────────────
+
+    describe('auto-registration in globalEventRegistry', () => {
+        beforeEach(() => {
+            globalEventRegistry.clear();
+        });
+
+        it('should auto-register defined event in globalEventRegistry', () => {
+            expect(globalEventRegistry.has('cdn.site_deployed')).toBe(false);
+
+            const SiteDeployedSchema = z.object({ siteId: z.string() });
+            defineEvent('cdn.site_deployed', SiteDeployedSchema, { scopedBy: 'siteId' });
+
+            expect(globalEventRegistry.has('cdn.site_deployed')).toBe(true);
+            const entry = globalEventRegistry.get('cdn.site_deployed');
+            expect(entry).toBeDefined();
+            expect(entry?.name).toBe('cdn.site_deployed');
+            expect(entry?.schema).toBe(SiteDeployedSchema);
+            expect(entry?.scopedBy).toBe('siteId');
+        });
+
+        it('should register unscoped events with undefined scopedBy', () => {
+            const PingSchema = z.object({ ping: z.boolean() });
+            defineEvent('system.ping', PingSchema);
+
+            const entry = globalEventRegistry.get('system.ping');
+            expect(entry).toBeDefined();
+            expect(entry?.name).toBe('system.ping');
+            expect(entry?.scopedBy).toBeUndefined();
+        });
+    });
+
+    // ─── 7. Decision: Duplicate names (first-wins dedup matching ContractRegistry) ──
+
+    describe('Decision: Duplicate event names (first-wins matching ContractRegistry)', () => {
+        let registry: EventContractRegistry;
+
+        beforeEach(() => {
+            registry = new EventContractRegistry();
+        });
+
+        it('should not overwrite an already registered event definition (first-wins)', () => {
+            const SchemaV1 = z.object({ version: z.literal(1), orgId: z.string() });
+            const SchemaV2 = z.object({ version: z.literal(2), orgId: z.string() });
+
+            const event1 = { name: 'dup.event', schema: SchemaV1, scopedBy: 'orgId' };
+            const event2 = { name: 'dup.event', schema: SchemaV2, scopedBy: 'global' };
+
+            registry.register(event1);
+            registry.register(event2);
+
+            expect(registry.size).toBe(1);
+            const registered = registry.get('dup.event');
+            expect(registered?.schema).toBe(SchemaV1);
+            expect(registered?.scopedBy).toBe('orgId');
+        });
+
+        it('should retain first registration when defineEvent is called twice with same name', () => {
+            globalEventRegistry.clear();
+
+            const SchemaA = z.object({ id: z.string() });
+            const SchemaB = z.object({ otherId: z.string() });
+
+            defineEvent('collide.event', SchemaA, { scopedBy: 'id' });
+            defineEvent('collide.event', SchemaB, { scopedBy: 'otherId' });
+
+            expect(globalEventRegistry.size).toBe(1);
+            const registered = globalEventRegistry.get('collide.event');
+            expect(registered?.schema).toBe(SchemaA);
+            expect(registered?.scopedBy).toBe('id');
+        });
+    });
+
+    // ─── 8. Decision: clear() resets registry state for test independence ───────
+
+    describe('Decision: clear() resets registry state for test independence', () => {
+        it('should clear all entries from an EventContractRegistry instance', () => {
+            const registry = new EventContractRegistry();
+            registry.register({ name: 'event.one', schema: z.object({}) });
+            registry.register({ name: 'event.two', schema: z.object({}) });
+
+            expect(registry.size).toBe(2);
+            registry.clear();
+            expect(registry.size).toBe(0);
+            expect(registry.has('event.one')).toBe(false);
+            expect(registry.get('event.one')).toBeUndefined();
+        });
+
+        it('should clear all entries from globalEventRegistry', () => {
+            defineEvent('temp.cleared', z.object({}));
+            expect(globalEventRegistry.has('temp.cleared')).toBe(true);
+
+            globalEventRegistry.clear();
+            expect(globalEventRegistry.size).toBe(0);
+            expect(globalEventRegistry.has('temp.cleared')).toBe(false);
+        });
+    });
+
+    // ─── 9. Decision: Built-in events are not registered in runtime registry ────
+
+    describe('Decision: Built-in events are not registered in runtime registry', () => {
+        beforeEach(() => {
+            globalEventRegistry.clear();
+        });
+
+        it('should not register built-in mesh lifecycle events by default', () => {
+            expect(globalEventRegistry.has('mesh.started')).toBe(false);
+            expect(globalEventRegistry.get('mesh.started')).toBeUndefined();
+
+            expect(globalEventRegistry.has('mesh.stopped')).toBe(false);
+            expect(globalEventRegistry.get('mesh.stopped')).toBeUndefined();
+        });
+
+        it('should not register built-in data persistence events by default', () => {
+            // Built-in data events (data.created, data.updated, data.deleted) cannot be statically scoped
+            // and must never be exposed to browser streams. Registering them would falsely indicate exposability.
+            expect(globalEventRegistry.has('data.created')).toBe(false);
+            expect(globalEventRegistry.get('data.created')).toBeUndefined();
+
+            expect(globalEventRegistry.has('data.updated')).toBe(false);
+            expect(globalEventRegistry.get('data.updated')).toBeUndefined();
+
+            expect(globalEventRegistry.has('data.deleted')).toBe(false);
+            expect(globalEventRegistry.get('data.deleted')).toBeUndefined();
+        });
+    });
+
+    // ─── 10. Decision: Return value of defineEvent is preserved ─────────────────
+
+    describe('Decision: Return value of defineEvent is preserved', () => {
+        it('should return exact EventDefinition shape without mutations for unscoped events', () => {
+            const Schema = z.object({ count: z.number() });
+            const result = defineEvent('count.changed', Schema);
+
+            expect(result).toEqual({
+                name: 'count.changed',
+                schema: Schema
+            });
+            // Verify destructuring works as callers expect
+            const { name, schema, scopedBy } = result;
+            expect(name).toBe('count.changed');
+            expect(schema).toBe(Schema);
+            expect(scopedBy).toBeUndefined();
+        });
+
+        it('should return exact EventDefinition shape without mutations for scoped events', () => {
+            const Schema = z.object({ tenantId: z.string(), count: z.number() });
+            const result = defineEvent('count.tenant_changed', Schema, { scopedBy: 'tenantId' });
+
+            expect(result).toEqual({
+                name: 'count.tenant_changed',
+                schema: Schema,
+                scopedBy: 'tenantId'
+            });
+            const { name, schema, scopedBy } = result;
+            expect(name).toBe('count.tenant_changed');
+            expect(schema).toBe(Schema);
+            expect(scopedBy).toBe('tenantId');
+        });
+    });
+
+    // ─── 11. EventContractRegistry collection methods ──────────────────────────
+
+    describe('EventContractRegistry collection methods', () => {
+        let registry: EventContractRegistry;
+
+        beforeEach(() => {
+            registry = new EventContractRegistry();
+        });
+
+        it('should support entries(), values(), and size', () => {
+            const ev1 = { name: 'domainA.event1', schema: z.object({}) };
+            const ev2 = { name: 'domainA.event2', schema: z.object({}) };
+            const ev3 = { name: 'domainB.event1', schema: z.object({}) };
+
+            registry.register(ev1);
+            registry.register(ev2);
+            registry.register(ev3);
+
+            expect(registry.size).toBe(3);
+
+            const entries = [...registry.entries()];
+            expect(entries).toHaveLength(3);
+            expect(entries.map(([k]) => k)).toEqual(['domainA.event1', 'domainA.event2', 'domainB.event1']);
+
+            const values = [...registry.values()];
+            expect(values).toHaveLength(3);
+            expect(values.map(v => v.name)).toEqual(['domainA.event1', 'domainA.event2', 'domainB.event1']);
+        });
+
+        it('should support byDomain() filtering', () => {
+            registry.register({ name: 'billing.invoice_created', schema: z.object({}) });
+            registry.register({ name: 'billing.payment_received', schema: z.object({}) });
+            registry.register({ name: 'auth.user_logged_in', schema: z.object({}) });
+
+            const billingEvents = registry.byDomain('billing');
+            expect(billingEvents).toHaveLength(2);
+            expect(billingEvents.map(e => e.name)).toEqual([
+                'billing.invoice_created',
+                'billing.payment_received'
+            ]);
+
+            const authEvents = registry.byDomain('auth');
+            expect(authEvents).toHaveLength(1);
+            expect(authEvents[0].name).toBe('auth.user_logged_in');
+
+            const emptyEvents = registry.byDomain('nonexistent');
+            expect(emptyEvents).toEqual([]);
+        });
+    });
 });
+
