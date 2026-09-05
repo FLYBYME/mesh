@@ -87,6 +87,7 @@ function validateEventScope(name: string, schema: z.ZodTypeAny, scopedBy: string
 
 /**
  * defineEvent: Utility to create a strictly typed event definition.
+ * Automatically registers the event definition in the globalEventRegistry.
  * Events declared with this function are discovered by the generator.
  */
 export function defineEvent<T extends z.ZodTypeAny>(
@@ -106,8 +107,71 @@ export function defineEvent<T extends z.ZodTypeAny>(
             validateEventScope(name, schema, scopedBy);
         }
     }
-    return scopedBy !== undefined ? { name, schema, scopedBy } : { name, schema };
+    const def: EventDefinition<T> = scopedBy !== undefined ? { name, schema, scopedBy } : { name, schema };
+    globalEventRegistry.register(def);
+    return def;
 }
+
+// ─── Event Contract Registry ─────────────────────────────────────────────────
+
+/**
+ * EventContractRegistry: A typed map of all registered event definitions.
+ * Populated at import time by defineEvent. Consumed by:
+ *   - API (resolving an event name into its payload schema and scoping rule)
+ *   - Generator (static event discovery)
+ */
+export class EventContractRegistry {
+    private readonly events = new Map<string, EventDefinition<z.ZodTypeAny>>();
+
+    public register<T extends z.ZodTypeAny>(event: EventDefinition<T>): void {
+        if (this.events.has(event.name)) {
+            return;
+        }
+        this.events.set(event.name, event);
+    }
+
+    public has(name: string): boolean {
+        return this.events.has(name);
+    }
+
+    public clear(): void {
+        this.events.clear();
+    }
+
+    public get(name: string): EventDefinition<z.ZodTypeAny> | undefined {
+        return this.events.get(name);
+    }
+
+    public entries(): IterableIterator<[string, EventDefinition<z.ZodTypeAny>]> {
+        return this.events.entries();
+    }
+
+    public values(): IterableIterator<EventDefinition<z.ZodTypeAny>> {
+        return this.events.values();
+    }
+
+    public get size(): number {
+        return this.events.size;
+    }
+
+    /** Every event belonging to one domain (events starting with `${domain}.`). */
+    public byDomain(domain: string): Array<EventDefinition<z.ZodTypeAny>> {
+        const prefix = `${domain}.`;
+        return [...this.events.values()].filter(e => e.name.startsWith(prefix));
+    }
+}
+
+const globalEventKey = 'mesh.globalEventRegistry';
+interface GlobalWithEventRegistry {
+    [globalEventKey]?: EventContractRegistry;
+}
+const globalObj = globalThis as GlobalWithEventRegistry;
+if (!globalObj[globalEventKey]) {
+    globalObj[globalEventKey] = new EventContractRegistry();
+}
+export const globalEventRegistry = globalObj[globalEventKey] as EventContractRegistry;
+
+
 
 // ─── Event Registry ──────────────────────────────────────────────────────────
 

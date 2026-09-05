@@ -213,8 +213,10 @@ export function defineContract<
 
 /**
  * ContractRegistry: A typed map of all registered tool contracts.
- * The server iterates this to auto-generate routes.
- * The generator reads contract files statically.
+ * Populated at import time by defineContract. Consumed by:
+ *   - Server (auto-route registration)
+ *   - API (resolving a contract key into a route and schema)
+ *   - Generator (static contract discovery)
  */
 export class ContractRegistry {
     private readonly contracts = new Map<string, ToolContract>();
