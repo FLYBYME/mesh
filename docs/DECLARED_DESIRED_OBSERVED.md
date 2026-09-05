@@ -151,10 +151,15 @@ two files on purpose; merging them for tidiness would cost the reproducibility.
 
 ## 8. Open
 
-- **When declared is written.** A build produces an artifact that may never deploy. Emitting declared
-  rows at build time makes them a catalogue of everything ever built; emitting at deploy makes them a
-  catalogue of what is deployable. The second is smaller and probably right, but it means the artifact
-  must carry the description so the deploy can register it without a rebuild.
+- ~~**When declared is written.**~~ **Decided 2026-09-05: at build.** The artifact carries its own
+  description, so registering it needs no rebuild and a deploy is a write rather than a compile. This
+  makes declared a catalogue of everything ever built rather than only what is deployable — the larger
+  of the two sets, and the right one, because *"exists but was never deployed anywhere"* (§5) is a
+  question worth being able to ask.
+  It also has to carry **which framework or runtime version the artifact was built against.** With
+  parts built separately there is no single build to catch a mismatch, so this field is the only thing
+  standing between a version skew and a failure that appears in someone else's browser. See
+  [mesh-web A9.1a](https://github.com/FLYBYME/mesh-web/blob/master/spec/roadmap.md).
 - **How declared is keyed across versions.** Two artifacts can declare the same contract with different
   schemas. If declared is keyed by contract alone, an upgrade silently overwrites; keyed by
   `(artifact, contract)`, the diffs in §5 need a notion of which artifact a node is running.
