@@ -24,6 +24,8 @@ export class DatabaseModule implements IMeshModule {
 
     async onStart(app: IMeshApp): Promise<void> {
         await this.db.connect();
+        await this.db.ensureIndexes();
+        this.logger.info(`[DatabaseModule] Unique indexes ensured.`);
         
         if (app.hasProvider('broker')) {
             const broker = app.getProvider<IServiceBroker>('broker');

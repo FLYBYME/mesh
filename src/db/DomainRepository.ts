@@ -1,6 +1,8 @@
 import { Collection, ObjectId, Document, Filter, OptionalId, WithId, Sort } from 'mongodb';
 import { z } from 'zod';
 import { FindOptions, ListResult, StrictFilterQuery } from './types.js';
+import { MeshError } from '../core/MeshError.js';
+import { globalCrudRegistry, type NormalizedUniqueKey } from '../interfaces/ICrudContract.js';
 
 /**
  * DomainRepository: The strictly-typed gateway to a MongoDB collection.
@@ -11,8 +13,107 @@ export class DomainRepository<T extends { id: string }> {
     constructor(
         private collection: Collection<Document>,
         private schema: z.ZodType<T>,
-        private domain: string
-    ) { }
+        private domain: string,
+        private readyPromise?: Promise<void>,
+        private uniqueKeys?: readonly NormalizedUniqueKey[]
+    ) {
+        if (!this.readyPromise) {
+            const keys = this.uniqueKeys ?? globalCrudRegistry.get(domain)?.unique;
+            if (keys && keys.length > 0) {
+                this.readyPromise = this.ensureUniqueIndexes(keys);
+            }
+        }
+    }
+
+    private async ensureUniqueIndexes(keys: readonly NormalizedUniqueKey[]): Promise<void> {
+        for (const u of keys) {
+            const indexSpec: Record<string, 1> = {};
+            for (const f of u.fields) {
+                indexSpec[f] = 1;
+            }
+            const indexName = u.name ?? `uniq_${this.domain}_${u.fields.join('_')}`;
+            try {
+                await this.collection.createIndex(indexSpec, {
+                    unique: true,
+                    name: indexName
+                });
+            } catch (err: unknown) {
+                const errObj = typeof err === 'object' && err !== null ? err as Record<string, unknown> : undefined;
+                const errCode = errObj ? errObj.code : undefined;
+                const errCodeName = errObj ? errObj.codeName : undefined;
+                const errMsg = err instanceof Error ? err.message : String(err);
+
+                if (errCode === 11000 || errCodeName === 'DuplicateKey' || errMsg.includes('E11000 duplicate key error')) {
+                    throw new MeshError({
+                        code: 'INDEX_CREATION_FAILED',
+                        status: 500,
+                        message: `Failed to build unique index on collection "${this.domain}" for fields [${u.fields.join(', ')}]: existing data contains duplicates. Duplicates must be resolved before this unique index can be created.`,
+                        data: { domain: this.domain, fields: u.fields, error: errMsg }
+                    });
+                }
+                throw err;
+            }
+        }
+    }
+
+    private handleDuplicateKeyError(err: unknown): never {
+        const errObj = typeof err === 'object' && err !== null ? err as Record<string, unknown> : undefined;
+        const code = errObj ? errObj.code : undefined;
+        const codeName = errObj ? errObj.codeName : undefined;
+        const msg = err instanceof Error ? err.message : String(err);
+
+        if (code === 11000 || codeName === 'DuplicateKey' || msg.includes('E11000 duplicate key error')) {
+            const keyValue = errObj && typeof errObj.keyValue === 'object' && errObj.keyValue !== null
+                ? errObj.keyValue as Record<string, unknown>
+                : undefined;
+
+            if (keyValue && Object.keys(keyValue).length > 0) {
+                const fields = Object.keys(keyValue);
+                if (fields.length === 1) {
+                    const field = fields[0];
+                    const val = keyValue[field];
+                    throw new MeshError({
+                        code: 'CONFLICT',
+                        status: 409,
+                        message: `Duplicate value ${JSON.stringify(val)} for unique field "${field}" in collection "${this.domain}".`,
+                        data: {
+                            collection: this.domain,
+                            field,
+                            value: val,
+                            keyValue
+                        }
+                    });
+                }
+
+                const formattedValues = fields.map(f => `${f}=${JSON.stringify(keyValue[f])}`).join(', ');
+                throw new MeshError({
+                    code: 'CONFLICT',
+                    status: 409,
+                    message: `Duplicate value (${formattedValues}) for unique compound key (${fields.join(', ')}) in collection "${this.domain}".`,
+                    data: {
+                        collection: this.domain,
+                        fields,
+                        values: keyValue,
+                        keyValue
+                    }
+                });
+            }
+
+            const dupMatch = msg.match(/dup key: \{ (.*) \}/);
+            const rawDup = dupMatch ? dupMatch[1] : msg;
+            throw new MeshError({
+                code: 'CONFLICT',
+                status: 409,
+                message: `Duplicate value for unique key in collection "${this.domain}": { ${rawDup} }.`,
+                data: {
+                    collection: this.domain,
+                    error: msg
+                }
+            });
+        }
+
+        throw err;
+    }
 
     public get rawCollection(): Collection<Document> {
         return this.collection;
@@ -173,6 +274,10 @@ export class DomainRepository<T extends { id: string }> {
     public async create(
         data: Omit<T, 'id' | 'createdAt' | 'updatedAt'> & Partial<T>
     ): Promise<T> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
+
         const inputId = data.id;
         const tempId = typeof inputId === 'string' && ObjectId.isValid(inputId) ? inputId : new ObjectId().toString();
 
@@ -191,7 +296,12 @@ export class DomainRepository<T extends { id: string }> {
             _id: new ObjectId(id as string)
         };
 
-        await this.collection.insertOne(docToInsert);
+        try {
+            await this.collection.insertOne(docToInsert);
+        } catch (err: unknown) {
+            this.handleDuplicateKeyError(err);
+        }
+
         return this.mapOutbound(docToInsert as WithId<Document>);
     }
 
@@ -201,6 +311,9 @@ export class DomainRepository<T extends { id: string }> {
         query?: StrictFilterQuery<T>
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
 
         const updateData = {
             ...data,
@@ -212,11 +325,16 @@ export class DomainRepository<T extends { id: string }> {
             ? { ...this.mapQuery(query), _id: new ObjectId(id) }
             : { _id: new ObjectId(id) };
 
-        const result = await this.collection.findOneAndUpdate(
-            filter,
-            { $set: updateDoc },
-            { returnDocument: 'after' }
-        );
+        let result: Document | null = null;
+        try {
+            result = await this.collection.findOneAndUpdate(
+                filter,
+                { $set: updateDoc },
+                { returnDocument: 'after' }
+            );
+        } catch (err: unknown) {
+            this.handleDuplicateKeyError(err);
+        }
 
         if (!result) return undefined;
         return this.mapOutbound(result as WithId<Document>);
@@ -231,6 +349,10 @@ export class DomainRepository<T extends { id: string }> {
         data: Partial<T> | Record<string, unknown>,
         options: { sort?: string | string[] | Partial<Record<keyof T, 1 | -1>> } = {}
     ): Promise<T | undefined> {
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
+
         const mappedQuery = this.mapQuery(query);
         const isOperatorDoc = Object.keys(data).some(k => k.startsWith('$'));
 
@@ -256,14 +378,19 @@ export class DomainRepository<T extends { id: string }> {
 
         const sort = options.sort ? this.parseSort(options.sort as any) : undefined;
 
-        const result = await this.collection.findOneAndUpdate(
-            mappedQuery,
-            updateDoc,
-            {
-                returnDocument: 'after',
-                ...(sort ? { sort } : {})
-            }
-        );
+        let result: Document | null = null;
+        try {
+            result = await this.collection.findOneAndUpdate(
+                mappedQuery,
+                updateDoc,
+                {
+                    returnDocument: 'after',
+                    ...(sort ? { sort } : {})
+                }
+            );
+        } catch (err: unknown) {
+            this.handleDuplicateKeyError(err);
+        }
 
         if (!result) return undefined;
         return this.mapOutbound(result as WithId<Document>);
@@ -275,6 +402,9 @@ export class DomainRepository<T extends { id: string }> {
         query?: StrictFilterQuery<T>
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
+        if (this.readyPromise) {
+            await this.readyPromise;
+        }
 
         const filter: Filter<Document> = query
             ? { ...this.mapQuery(query), _id: new ObjectId(id) }
@@ -297,11 +427,16 @@ export class DomainRepository<T extends { id: string }> {
             updatedAt: new Date()
         };
 
-        const result = await this.collection.findOneAndReplace(
-            filter,
-            updateDoc,
-            { returnDocument: 'after' }
-        );
+        let result: Document | null = null;
+        try {
+            result = await this.collection.findOneAndReplace(
+                filter,
+                updateDoc,
+                { returnDocument: 'after' }
+            );
+        } catch (err: unknown) {
+            this.handleDuplicateKeyError(err);
+        }
 
         if (!result) return undefined;
         return this.mapOutbound(result as WithId<Document>);
