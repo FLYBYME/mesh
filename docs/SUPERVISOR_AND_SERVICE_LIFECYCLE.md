@@ -89,6 +89,13 @@ A service that throws during `onStart` or crashes its process-wide effects (an u
 
 ### Part 2 — status: built (`mesh` commit `3435ba7`, `src/supervisor/`)
 
+> **Superseded in one respect, 2026-09-05.** The config shape below stays; where it is *read from* does
+> not. `loadManifest` is called once at CLI startup, so the Supervisor has no way to be told the desired
+> state changed — which is why the control surface had to be imperative. Desired state moves into a
+> collection and the Supervisor converges on it: see
+> [SUPERVISOR_AS_DESIRED_STATE.md](./SUPERVISOR_AS_DESIRED_STATE.md). Everything built in this pass is
+> kept and built on.
+
 Built per the config shape and control-surface recommendation above, resolving the two open questions as follows:
 
 - **Control surface**: both, as the doc suggested — `SupervisorService` (`src/supervisor/SupervisorService.ts`) is a real `ServiceModule` mounted first, before any manifest-defined service, exposing `supervisor.service_start`/`service_stop`/`service_restart`/`service_status` as real mesh contracts. The local-only path for the crash-loop case (a Unix socket / loopback control channel reachable even if the Supervisor's own broker is down) was **not built in this pass** — today, if the Supervisor's own broker/network genuinely can't come up, there's no way to reach it at all. Scoped out deliberately (see "What NOT to build" below), flagged here as a real, known gap rather than silently assumed away.
