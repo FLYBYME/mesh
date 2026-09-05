@@ -185,3 +185,39 @@ Either fix alone stops the file being unparseable, and both are worth doing:
 Until then, the workaround is to keep apostrophes out of contract descriptions. That is a rule
 nobody can be expected to remember, which is why this is written down as a defect rather than a
 convention.
+
+---
+
+## Known defect: a domain split across two files generates broken imports
+
+**Found 2026-09-06** in mesh-serve, where the `cdn` domain had contracts in both
+`cdn/contracts/site.contract.ts` and `cdn/contracts/release.contract.ts`.
+
+`generateToolRegistry` and `generateCLI` both resolve a contract's import alias from the **first**
+file registered for its domain:
+
+```js
+const domainFiles = files[m.domain];
+const alias = aliasMap[domainFiles[0]!]?.alias;   // ← always [0]
+```
+
+So every contract in a domain is emitted as `Contract_N.<exportName>` against whichever file happened
+to be scanned first. A contract living in any *other* file of that domain generates a reference to a
+symbol that file does not export:
+
+```
+error TS2551: Property 'siteComposeContract' does not exist on type
+'typeof import(".../cdn/contracts/release.contract")'. Did you mean 'composeContract'?
+```
+
+The error is at least legible — it names the missing symbol and the wrong module — but it points at
+generated code rather than at the cause, and the fix looks like *"rename my contract"* rather than
+*"the generator picked the wrong file"*.
+
+**The fix** is to carry the defining file on each `ContractDiscovery` entry rather than looking it up
+by domain: `discoverContractsAndEvents` already knows which file it read each contract from, and
+discards it. Domain → files is the wrong index for this question; contract → file is the right one.
+
+**Until then**, keep one file per domain. That is a reasonable convention and a bad requirement: a
+domain with a large collection and several explicit contracts has an honest reason to split, and
+nothing warns that it must not.
