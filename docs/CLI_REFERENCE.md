@@ -143,3 +143,45 @@ When you run a generated tool command (e.g., `npx mesh sandbox get --id 123`):
 6. **Teardown**: It stops the `MeshApp` and exits.
 
 Because of this architecture, the CLI node acts as a temporary peer in the network. It does not need a local database connection — it discovers the active backend service and routes the RPC request over WebSockets.
+
+---
+
+## Known defect: a description with an apostrophe emits a file that does not parse
+
+**Found 2026-09-06** by writing a contract in mesh-serve whose description read
+`'Resolve a site\'s parts, generate its page, and record what it now serves.'`. The generated
+`src/generated/cli/ToolCommands.ts` failed to compile with 80 syntax errors, none of them anywhere
+near the contract that caused it.
+
+Two independent bugs compound, in `src/cli/commands/GenerateCommand.ts`:
+
+**The description is read with a regex that stops at the first quote, escaped or not** (line 392):
+
+```js
+/\bdescription\s*:\s*['"]([^'"]+)['"]/
+```
+
+`[^'"]+` cannot skip `\'`, so the match ends inside the string and the captured description is
+`Resolve a site\` — **with a trailing backslash**.
+
+**The captured text is then interpolated into a template literal without escaping** (line 353):
+
+```js
+code += `    const cmd_${safeVarName} = ${domain}.command('${m.action}').description(\`${m.description}\`);\n`;
+```
+
+The trailing backslash escapes the closing backtick. The template literal never terminates and
+swallows everything until the *next* backtick in the file — eleven lines later, in an unrelated
+command — so every reported error is in a command that is not the broken one, and the actual cause
+appears nowhere in the output.
+
+Either fix alone stops the file being unparseable, and both are worth doing:
+
+- the regex should handle escaped quotes, or the description should be read from the parsed AST
+  rather than by matching source text
+- **the emitter must escape whatever it interpolates**, since a description may legitimately contain
+  a backtick or `${` no matter how the regex improves
+
+Until then, the workaround is to keep apostrophes out of contract descriptions. That is a rule
+nobody can be expected to remember, which is why this is written down as a defect rather than a
+convention.

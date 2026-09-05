@@ -197,3 +197,44 @@ app.use(new DatabaseModule({
 ```
 
 If no `uri` is provided, it falls back to `process.env.MONGODB_URI`.
+
+---
+
+## A collection cannot take a natural key
+
+**Recorded 2026-09-06** from mesh-serve, whose artifacts are content-addressed: the sha256 digest
+*is* the identity, and two rows holding the same bytes is the thing the design exists to prevent.
+
+`defineCrud` builds its create input as:
+
+```js
+const CreateInputSchema = rawBase.omit({ id: true, _id: true, createdAt: true, updatedAt: true });
+```
+
+So **nothing can supply an id.** The database mints one, and a domain key — a digest, a hostname, an
+account number — has to live beside it as an ordinary field. The collection then has two identities
+for one thing, only one of which means anything to the domain.
+
+`idField` does not solve this, and is easy to reach for as though it does. It renames the *minted* id
+on the wire: `defineCrud('site', SiteSchema, { idField: 'host' })` produces
+`site.get({ host: '68a1f2c…' })` — a hostname-shaped parameter carrying a mongo id. The framework
+refuses a base schema that declares the id field itself, which is what surfaces the mistake early:
+
+```
+defineCrud Error: The ID field "digest" must NOT be defined in the Zod baseSchema shape
+for domain "artifact". Document IDs are handled automatically by the database layer.
+```
+
+That error is doing its job. It is worth reading as *"this framework does not have natural keys"*
+rather than as *"rename your field"*.
+
+**What a caller has to do instead**, and it is not free:
+
+- look up by query — `find_one({ query: { digest } })` — not by `get`
+- add a unique index on the domain key, because that is the only place uniqueness can be enforced
+- accept that a check-then-create in a tool is a race unless that index backs it
+
+**What would fix it**: an option letting a collection declare that its key comes from the document —
+`naturalKey: 'digest'` — so create requires the field, `get` takes it, and uniqueness is the primary
+key rather than an index somebody remembered to add. Content-addressed collections are the clearest
+case, but any domain with a real key has the same shape.
