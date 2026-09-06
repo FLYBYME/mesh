@@ -1,0 +1,88 @@
+Code lives in:  FLYBYME/mesh — this worktree. All commits and the PR go here.
+
+================================================================================
+THE TASK
+================================================================================
+
+An event cannot say what scopes it. Give `defineEvent` the same `scopedBy` that
+`defineCrud` grew in v2.2.0.
+
+    defineEvent('domains.zone_created', ZoneCreatedSchema, { scopedBy: 'organizationId' })
+
+Optional. Every existing caller must keep working untouched.
+
+================================================================================
+WHY — THIS IS THE SAME BUG ONE LEVEL OVER
+================================================================================
+
+v2.2.0 made a CRUD read stay inside the caller's scope, because authorization
+can refuse a caller but cannot narrow a result set. An event has the same shape
+and a worse failure.
+
+A contract answers the caller who asked. An event is **pushed to everyone
+subscribed** — so the question is not only *may this caller see it* but *can
+this event be narrowed to a caller at all*. And the code that decides has this
+comment, written about a real incident:
+
+    "The declared field is absent or not a string: the contract and the payload
+     disagree. The old code read this as 'unscoped, send to everybody', which is
+     how an organization's data reached every connected browser."
+
+The rule that replaced it: **an event that cannot be scoped is delivered to
+nobody.** That rule is implemented and correct. It needs one input it cannot get
+today — *which field of this payload names the organization* — because
+`EventDefinition` is `{ name, schema }` and nothing else.
+
+Without it, every scoped event is `unscopable` and reaches no one. Fail-closed,
+so nothing leaks, and the feature does not work.
+
+================================================================================
+WHERE
+================================================================================
+
+  src/interfaces/IEventContract.ts    `EventDefinition`, `defineEvent`
+  src/interfaces/ICrudContract.ts     what `scopedBy` looks like when it is done
+                                      right — read this first, and match it
+
+The consumer is `mesh-serve`, in `src/api/methods/delivery.ts` and
+`src/api/schema/events.ts` — both already written, both waiting on this. You do
+not need that repository to do the work, but the shape they expect is:
+
+    scope is either 'global', or a field path into the payload
+
+`'global'` must stay something an author types **deliberately**, because it is
+the one value that means *everyone*. It must never be what you get by omission.
+
+================================================================================
+DECISIONS
+================================================================================
+
+1. What does an event with **no** `scopedBy` mean? Not "global" — that would make
+   the dangerous value the default, which is how the original bug happened. It
+   should mean *unscopable*, and a subscriber gets nothing. Confirm or argue.
+
+2. A **nested** field. `scopedBy: 'site.tenantId'` is a plausible payload shape.
+   Support a dotted path or refuse one, and say which.
+
+3. Should `defineEvent` **check the field exists in the schema**? `defineCrud`
+   refuses a schema that omits its `scopedBy` field, and the same argument applies
+   — a typo in a field name is otherwise an event that silently reaches nobody,
+   which is invisible in exactly the way a fail-closed default is.
+
+4. `data.created` / `data.updated` / `data.deleted` are built in and carry a
+   `domain` and an `item`. Can a *generic* data event be scoped at all, given the
+   scoping field lives on the item and differs per domain? If not, say so plainly:
+   an honest "these cannot be scoped, so they cannot be exposed to a browser" is
+   worth more than a mechanism that half-works.
+
+================================================================================
+HOW TO WORK
+================================================================================
+
+Investigate first. Read how `scopedBy` landed on `defineCrud` — commit
+`eb73ed1` — and match its standard: a refusal that teaches, and a test for every
+decision above whose absence would be invisible.
+
+`npm test` must stay green. 341 tests on master.
+
+Do not add a Co-Authored-By trailer or any Claude/agent attribution to commits.

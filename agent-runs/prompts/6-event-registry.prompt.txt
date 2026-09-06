@@ -1,0 +1,90 @@
+Code lives in:  FLYBYME/mesh — this worktree. All commits and the PR go here.
+
+================================================================================
+THE TASK
+================================================================================
+
+Events have no runtime registry. Contracts do. Give events the same one.
+
+    globalContractRegistry.get('identity.whoami')   // works
+    globalEventRegistry.get('cdn.site_deployed')    // does not exist
+
+`defineEvent` returns `{ name, schema, scopedBy }` and registers it nowhere, so
+nothing can turn an event *name* back into its definition at run time.
+
+================================================================================
+WHY
+================================================================================
+
+`EventRegistry` in this repository is a **type-level** augmentation, written by
+the generator and populated at compile time. That is the right thing for typing
+`broker.emit` and `subscribe`, and it is not readable by code.
+
+The consumer that needs it is `mesh-serve`'s api. A site record lists the events
+a hostname streams to a browser, by name:
+
+    site.mesh[].events[] = [{ key: 'domains.zone_created', auth: 'user' }]
+
+To serve that subscription the api must answer two questions about the name,
+and it can answer neither:
+
+  - **what scopes it** — `scopedBy`, which v2.3.0 added and which decides who
+    may receive each payload. Without it every scoped event is `unscopable`,
+    and the rule is *an event that cannot be scoped is delivered to nobody*, so
+    the stream connects and stays silent.
+  - **what shape it is** — the schema, for the same reason a contract's schema
+    is needed: to describe the subscription to a generated client.
+
+The contract side already solved exactly this. `globalContractRegistry` is
+populated at import time by `defineContract`, and the api reads it to turn a
+contract key into a route. This is the same mechanism for the other half.
+
+Note the framework's own comment says that registry is *read only by codegen*.
+That is no longer true — the api reads it too, and for the same purpose, turning
+a name into a shape. Worth correcting where it says so.
+
+================================================================================
+WHERE
+================================================================================
+
+  src/interfaces/IToolContract.ts   `ContractRegistry`, `globalContractRegistry`,
+                                    and `defineContract` registering into it.
+                                    **Read this first and mirror it.**
+  src/interfaces/IEventContract.ts  `defineEvent`, which returns and forgets
+
+================================================================================
+WHAT IT HAS TO GET RIGHT
+================================================================================
+
+1. **Duplicate names.** `ContractRegistry.register` is strict about duplicates;
+   decide whether two `defineEvent` calls with one name is an error or a
+   last-wins, and match the contract side unless you have a reason not to. Two
+   modules defining one event name is a real possibility and a silent one.
+
+2. **`clear()`**, because the contract registry has it and tests need it. A
+   registry that cannot be reset makes test order significant, which is its own
+   kind of bug.
+
+3. **The built-in events** — `mesh.started`, `data.created` and friends. Are
+   they registered? They are declared as schemas rather than through
+   `defineEvent`, so probably not, and that is probably right: dispatch 4
+   concluded the generic data events **cannot be scoped and must not be exposed
+   to a browser**. Registering them would make them look exposable. Decide and
+   say which.
+
+4. **Do not change what `defineEvent` returns.** Callers destructure it. Adding
+   a side effect is the whole change; altering the shape is not part of it.
+
+================================================================================
+HOW TO WORK
+================================================================================
+
+This is small. The value is in matching the contract registry exactly rather
+than inventing a second style for the same idea — a reader who knows one should
+not have to learn the other.
+
+Read how `scopedBy` landed on `defineEvent` (v2.3.0) so the two fit together.
+
+A test for each decision. `npm test` must stay green; 367 tests on master.
+
+Do not add a Co-Authored-By trailer or any Claude/agent attribution to commits.
