@@ -147,6 +147,40 @@ describe('WSTransport Handshake Authentication', () => {
                 done();
             });
         });
+
+        it('refuses to start listener on non-loopback host (0.0.0.0) without MESH_KEY', async () => {
+            delete process.env.MESH_KEY;
+            serverTransport = new WSTransport(serializer, 0, '0.0.0.0');
+            await expect(serverTransport.connect({
+                nodeID: 'server-node',
+                namespace: 'default',
+                url: '',
+                logger
+            })).rejects.toThrow(/Refusing to start on non-loopback host "0.0.0.0" without authentication key.*MESH_KEY/);
+        });
+
+        it('refuses to start listener on non-loopback IP (198.51.100.1) without MESH_KEY', async () => {
+            delete process.env.MESH_KEY;
+            serverTransport = new WSTransport(serializer, 0, '198.51.100.1');
+            await expect(serverTransport.connect({
+                nodeID: 'server-node',
+                namespace: 'default',
+                url: '',
+                logger
+            })).rejects.toThrow(/Refusing to start on non-loopback host "198.51.100.1" without authentication key.*MESH_KEY/);
+        });
+
+        it('allows starting on non-loopback host when MESH_KEY is set', async () => {
+            process.env.MESH_KEY = 'secret-fleet-key';
+            serverTransport = new WSTransport(serializer, 0, '0.0.0.0');
+            await expect(serverTransport.connect({
+                nodeID: 'server-node',
+                namespace: 'default',
+                url: '',
+                logger
+            })).resolves.toBeUndefined();
+            expect(serverTransport.isConnected()).toBe(true);
+        });
     });
 
     describe('MeshApp & Registry isolation tests', () => {
@@ -245,6 +279,7 @@ describe('WSTransport Handshake Authentication', () => {
 
             await new Promise(r => setTimeout(r, 600));
             expect(serverRegistry.getNode('wrong-key-client')).toBeUndefined();
+            expect(serverRegistry.getNodes().some(n => n.nodeID === 'wrong-key-client')).toBe(false);
 
             // 2. Client with missing key
             delete process.env.MESH_KEY;
@@ -260,6 +295,7 @@ describe('WSTransport Handshake Authentication', () => {
 
             await new Promise(r => setTimeout(r, 600));
             expect(serverRegistry.getNode('missing-key-client')).toBeUndefined();
+            expect(serverRegistry.getNodes().some(n => n.nodeID === 'missing-key-client')).toBe(false);
         });
     });
 });

@@ -4,6 +4,7 @@ import { BaseTransport } from '../transports/BaseTransport.js';
 
 export interface NetworkModuleOptions {
     port?: number;
+    host?: string;
     namespace?: string;
     bootstrapNodes?: string[];
     transports: BaseTransport[];
@@ -30,6 +31,7 @@ export class NetworkModule implements IMeshModule {
         this.network = new MeshNetwork({
             nodeId: app.nodeID,
             port: this.options.port,
+            host: this.options.host,
             namespace: this.options.namespace || app.namespace || 'default',
             bootstrapNodes: this.options.bootstrapNodes || [],
             transports: this.options.transports

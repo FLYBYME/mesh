@@ -58,7 +58,7 @@ describe('WSTransport', () => {
     });
 
     describe('Lifecycle', () => {
-        it('should start a standalone server when connecting', async () => {
+        it('should start a standalone server on loopback when connecting', async () => {
             const mockServer = createMockServer();
             MockedHttp.createServer.mockReturnValue(mockServer as any);
 
@@ -70,8 +70,36 @@ describe('WSTransport', () => {
             });
 
             expect(MockedHttp.createServer).toHaveBeenCalled();
-            expect(mockServer.listen).toHaveBeenCalledWith(5005, '0.0.0.0', expect.any(Function));
+            expect(mockServer.listen).toHaveBeenCalledWith(5005, '127.0.0.1', expect.any(Function));
             expect(transport.isConnected()).toBe(true);
+        });
+
+        it('should refuse to start on non-loopback host without authentication key', async () => {
+            delete process.env.MESH_KEY;
+            const nonLoopbackTransport = new WSTransport(serializer, 5005, '0.0.0.0');
+            await expect(nonLoopbackTransport.connect({
+                nodeID: 'test-node',
+                namespace: 'default',
+                url: '',
+                logger
+            })).rejects.toThrow(/Refusing to start on non-loopback host.*MESH_KEY/);
+        });
+
+        it('should start on non-loopback host when authentication key is provided', async () => {
+            const mockServer = createMockServer();
+            MockedHttp.createServer.mockReturnValue(mockServer as any);
+
+            const nonLoopbackTransport = new WSTransport(serializer, 5005, '0.0.0.0', { authKey: 'secret' });
+            await nonLoopbackTransport.connect({
+                nodeID: 'test-node',
+                namespace: 'default',
+                url: '',
+                logger
+            });
+
+            expect(mockServer.listen).toHaveBeenCalledWith(5005, '0.0.0.0', expect.any(Function));
+            expect(nonLoopbackTransport.isConnected()).toBe(true);
+            await nonLoopbackTransport.disconnect();
         });
 
         it('should attach to a shared server', async () => {
