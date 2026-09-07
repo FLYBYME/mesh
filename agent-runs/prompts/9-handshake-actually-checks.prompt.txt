@@ -1,0 +1,134 @@
+You are **frank**. Sign every GitHub post with a last line of exactly:
+
+— frank
+
+Tracking issue: FLYBYME/surfdns#50
+Code lives in:  FLYBYME/mesh  — this worktree.
+
+**This is a live security bug on a machine on the internet.** It is mitigated by
+a hand-written firewall rule on one box and by nothing else. Read the issue first.
+
+================================================================================
+BEFORE YOU WRITE ANY CODE
+================================================================================
+
+1. gh issue view 50 --repo FLYBYME/surfdns --comments
+2. Read `src/transports/node/WSTransport.ts` end to end, then
+   `src/core/TransportManager.ts` and `src/core/MeshOrchestrator.ts`
+   (`handlePeerConnect` / `handlePeerDisconnect`). You wrote the ping/pong
+   changes in this file earlier today; the `authKey` field is also yours.
+3. **Reproduce both failures before planning.** They are three lines each and a
+   plan written without seeing them is a restatement of the issue.
+4. POST YOUR PLAN as an issue comment, signed, before touching a file. Short.
+   Nobody answers on GitHub: choose, say you chose, keep going.
+
+================================================================================
+THE TASK — two failures, one file
+================================================================================
+
+--- 1. The shared key refuses nobody -----------------------------------------
+
+A node was started with `MESH_KEY` set and port 4001 open. A process with **no
+key at all** dialled it and joined:
+
+    PEERS_SEEN=1 ["surf.surfdns.net"]
+    READABLE user.find     -> []
+    READABLE apiToken.find -> []
+
+Those answered empty only because that database was empty. On a populated one it
+is every user and every API token to anyone who can reach the port.
+
+`WSTransport` sets `this.authKey = options.authKey ?? options.authToken ??
+process.env.MESH_KEY`, so the value is **held**. Nothing checks it on an inbound
+connection.
+
+The key is presented **at the handshake** and checked **before the connection
+becomes a peer**. A dialler that cannot present it must never reach
+`registerNode`, PEX, or the broker — not "is refused when it calls something",
+which is a different and much later thing.
+
+**Three cases, all tested:**
+  - correct key → connects, can call
+  - wrong key → refused, and never appears in `registry.getNodes()`
+  - **no key → refused**, same
+
+A test that only asserts the happy path passes against the code as it stands
+today. That is how this survived.
+
+**Decide and state: what an unset `MESH_KEY` on the *listener* means.** It must
+not mean "accept everybody" — that is the current behaviour and it is the bug.
+I would make an unset key on a listener that is not loopback a **refusal to
+start**, loudly, naming the variable: a node that cannot authenticate its peers
+and is reachable from the internet should not run. Local development binds
+loopback and is unaffected. Argue if you disagree, but pick something that fails
+closed.
+
+Say what a rejected dialler sees. A peer that silently fails to connect and a
+peer with a wrong key must not look identical — that difference is the whole
+diagnosis when six machines are involved.
+
+--- 2. The bind host is ignored ----------------------------------------------
+
+`new WSTransport(serializer, port, host)` takes a host. `bin/node.mjs` in
+mesh-serve passes `127.0.0.1` by default. The socket binds `*:4001` regardless:
+
+    ss -ltn  ->  *:4001
+
+So there is no way to bind the mesh port to loopback, and the topology this whole
+design rests on — **one machine with a public port, every other node on loopback
+dialling out** — is not achievable from the runner. Every node that runs is
+exposed.
+
+Fix the binding. Add a test that a transport told `127.0.0.1` is not reachable on
+another interface.
+
+--- Constraints -------------------------------------------------------------
+
+  * Do not weaken or remove the ping/pong work from dispatch 7. It is in this
+    file and it is correct.
+  * Do not make the fix depend on a firewall, a proxy, or a deployment
+    convention. The invariant belongs in code — that is the entire point of the
+    issue.
+  * No new dependency for this.
+
+DO NOT:
+  - widen scope — a second problem gets a NEW issue on FLYBYME/surfdns
+  - delete, skip, or `.only` past a failing test
+  - push to master
+  - run npm test or npm run build in the background and end your turn.
+    Foreground, wait. THREE dispatches have died that way.
+  - commit only at the end. **Commit each piece as it works.**
+
+A NOTE ON TESTS. Five times in these repositories a test has encoded a known bug
+as intent, with a comment explaining the bug and an assertion demanding it. If a
+test needs a comment explaining why the behaviour is wrong, fix the behaviour.
+
+Timing and socket tests are the flakiest things anyone writes. Prefer an injected
+clock or an explicit signal over `sleep`.
+
+================================================================================
+FINISHING
+================================================================================
+
+In the foreground:  npm run build   then   npm test
+
+    git push origin HEAD:frank/50-handshake-auth
+    gh pr create --repo FLYBYME/mesh --head frank/50-handshake-auth \
+      --title "A peer proves itself before it is a peer, and binds where it is told" --body "<what and why>
+
+    Refs FLYBYME/surfdns#50
+
+    — frank"
+
+**Commit on the branch this worktree is already on and push THAT.** Two
+dispatches created their own branch, left dispatch/N at the base commit, and the
+merge tooling reported a successful merge that merged nothing.
+
+Then comment, signed: link the PR, and state plainly what an unset MESH_KEY does
+on a listener now, and what a rejected dialler sees.
+
+DO NOT MERGE THE PR. The human merges.
+
+Comment at least twice: the plan before any code, and the closing report. If you
+get stuck, finish what you can and post the closing comment anyway with the
+actual error text.
