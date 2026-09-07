@@ -53,4 +53,42 @@ describe('JSONSerializer', () => {
         const deserialized = serializer.deserialize<{ key: string }>(buffer);
         expect(deserialized).toEqual({ key: 'value' });
     });
+
+    it('should round-trip Date objects correctly', () => {
+        const date = new Date('2026-09-07T02:25:59.123Z');
+        const data = { createdAt: date, nested: { updatedAt: date } };
+
+        const serialized = serializer.serialize(data);
+        const deserialized = serializer.deserialize<typeof data>(serialized);
+
+        expect(deserialized.createdAt).toBeInstanceOf(Date);
+        expect(deserialized.createdAt.getTime()).toBe(date.getTime());
+        expect(deserialized.nested.updatedAt).toBeInstanceOf(Date);
+        expect(deserialized.nested.updatedAt.getTime()).toBe(date.getTime());
+    });
+
+    it('should revive ISO 8601 date strings into Date objects', () => {
+        const jsonStr = JSON.stringify({ createdAt: '2026-09-07T02:25:59.000Z' });
+        const deserialized = serializer.deserialize<{ createdAt: Date }>(jsonStr);
+
+        expect(deserialized.createdAt).toBeInstanceOf(Date);
+        expect(deserialized.createdAt.toISOString()).toBe('2026-09-07T02:25:59.000Z');
+    });
+
+    it('should not alter non-date strings that do not match ISO format', () => {
+        const data = {
+            plainString: 'hello world',
+            notADate: '2026-99-99T99:99:99Z',
+            numericString: '12345678'
+        };
+        const serialized = serializer.serialize(data);
+        const deserialized = serializer.deserialize<typeof data>(serialized);
+
+        expect(deserialized.plainString).toBe('hello world');
+        expect(typeof deserialized.plainString).toBe('string');
+        expect(deserialized.notADate).toBe('2026-99-99T99:99:99Z');
+        expect(typeof deserialized.notADate).toBe('string');
+        expect(deserialized.numericString).toBe('12345678');
+        expect(typeof deserialized.numericString).toBe('string');
+    });
 });
