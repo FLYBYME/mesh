@@ -10,7 +10,7 @@ export class RegistryModule implements IMeshModule {
     public serviceBroker!: IServiceBroker;
     private registry!: Registry;
 
-    constructor(private options: { preferLocal?: boolean; dhtEnabled?: boolean; ttl?: number } = {}) {}
+    constructor(private options: { preferLocal?: boolean; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number } = {}) {}
 
     onInit(app: IMeshApp): void {
         this.logger = app.logger;

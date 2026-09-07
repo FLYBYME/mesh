@@ -72,19 +72,21 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     private pruningTimer?: NodeJS.Timeout;
     private metricsTimer?: NodeJS.Timeout;
     private ttl: number;
+    private pruneInterval: number;
 
     private localModules = new Map<string, IServiceModule>();
     private localNamespace: string;
 
     constructor(
         private logger: ILogger,
-        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; namespace?: string } = {}
+        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; namespace?: string } = {}
     ) {
         super();
         this.preferLocal = options.preferLocal ?? true;
         this.localNodeID = options.localNodeID || `node_${Math.random().toString(36).substr(2, 9)}`;
         this.dhtEnabled = options.dhtEnabled ?? false;
         this.ttl = options.ttl || 30000;
+        this.pruneInterval = options.pruneInterval ?? Math.min(5000, Math.max(100, Math.floor(this.ttl / 2)));
         this.localNamespace = options.namespace || 'default';
         this.balancer = new RoundRobinBalancer();
 
@@ -195,7 +197,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
     public async start(): Promise<void> {
         if (this.pruningTimer) return;
-        this.pruningTimer = setInterval(() => this.pruneStaleNodes(this.ttl), 5000);
+        this.pruningTimer = setInterval(() => this.pruneStaleNodes(this.ttl), this.pruneInterval);
         if (this.pruningTimer.unref) this.pruningTimer.unref();
 
         this.metricsTimer = setInterval(() => this.updateLocalMetrics(), 10000);
