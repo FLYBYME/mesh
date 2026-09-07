@@ -12,6 +12,11 @@ interface PendingRPC {
     timeout: NodeJS.Timeout;
 }
 
+export interface WSTransportOptions {
+    pingIntervalMs?: number;
+    pingTimeoutMs?: number;
+}
+
 /**
  * WSTransport — Node.js implementation using 'ws' and 'http'.
  */
@@ -33,14 +38,20 @@ export class WSTransport extends BaseTransport {
     private heartbeatTimer?: NodeJS.Timeout;
     private reconnectionTimers = new Set<NodeJS.Timeout>();
 
-    constructor(serializer: BaseSerializer, port = 0, host: string = '0.0.0.0') {
+    public pingIntervalMs: number;
+    public pingTimeoutMs: number;
+
+    constructor(serializer: BaseSerializer, port = 0, host: string = '0.0.0.0', options: WSTransportOptions = {}) {
         super(serializer);
         this.port = port;
         this.host = host;
+        this.pingIntervalMs = options.pingIntervalMs ?? 30000;
+        this.pingTimeoutMs = options.pingTimeoutMs ?? Math.min(5000, this.pingIntervalMs);
     }
 
     async start(): Promise<void> {
         this.proactiveReplay();
+        this.startHeartbeat();
     }
 
     public getPort(): number {
@@ -60,9 +71,11 @@ export class WSTransport extends BaseTransport {
         // 3. If found, call this.connectToPeer(nodeID, node.address)
     }
 
-    async connect(opts: TransportConnectOptions): Promise<void> {
+    async connect(opts: TransportConnectOptions & WSTransportOptions): Promise<void> {
         this.nodeID = opts.nodeID || this.nodeID;
         this.logger = opts.logger;
+        if (opts.pingIntervalMs !== undefined) this.pingIntervalMs = opts.pingIntervalMs;
+        if (opts.pingTimeoutMs !== undefined) this.pingTimeoutMs = opts.pingTimeoutMs;
 
         if (opts.sharedServer) {
             this.logger?.debug(`[WSTransport] Attaching to shared server...`);
@@ -79,6 +92,7 @@ export class WSTransport extends BaseTransport {
         this.setupWSSHandlers();
         this.connected = true;
         this.emit('connected');
+        this.startHeartbeat();
     }
 
     private async startNodeServer(): Promise<void> {
@@ -106,6 +120,7 @@ export class WSTransport extends BaseTransport {
         if (!this.wss) return;
         this.wss.on('connection', (ws: IWS) => {
             let peerId: string | null = null;
+            this.setupSocketKeepalive(ws, () => peerId);
 
             ws.on('message', (raw: unknown) => {
                 this.handleIncomingMessage(raw, ws, (id) => {
@@ -118,13 +133,12 @@ export class WSTransport extends BaseTransport {
             });
 
             ws.on('close', () => {
+                this.cleanupSocketKeepalive(ws);
                 if (peerId) {
                     this.peers.delete(peerId);
                     this.emit('peer:disconnect', peerId);
                 }
             });
-
-            ws.on('pong', () => { });
         });
     }
 
@@ -340,11 +354,13 @@ export class WSTransport extends BaseTransport {
         this.logger?.info(`[WSTransport] Connecting to peer ${nodeID} at ${url}...`);
         return new Promise((resolve, reject) => {
             const ws = new WebSocket(url) as IWS;
+            this.setupSocketKeepalive(ws, () => nodeID);
 
             ws.on('open', () => {
                 this.reconnectAttempts = 0;
                 this.peers.set(nodeID, ws);
                 this.emit('peer:connect', nodeID);
+                this.startHeartbeat();
                 resolve();
             });
 
@@ -359,6 +375,7 @@ export class WSTransport extends BaseTransport {
             });
 
             ws.on('close', () => {
+                this.cleanupSocketKeepalive(ws);
                 this.peers.delete(nodeID);
                 this.emit('peer:disconnect', nodeID);
                 this.handleReconnection(nodeID, url);
@@ -367,6 +384,7 @@ export class WSTransport extends BaseTransport {
     }
 
     private handleReconnection(nodeID: string, url: string) {
+        if (this.isDraining) return;
         if (this.reconnectAttempts >= WSTransport.MAX_RECONNECT_ATTEMPTS) {
             this.logger?.error(`Max reconnection attempts reached for node ${nodeID}`);
             return;
@@ -387,21 +405,90 @@ export class WSTransport extends BaseTransport {
         timer.unref();
     }
 
-    private startHeartbeat(): void {
-        this.heartbeatTimer = setInterval(() => {
-            for (const ws of this.peers.values()) {
-                if (ws.readyState === 1 && ws.ping) {
+    private setupSocketKeepalive(ws: IWS, getPeerId: () => string | null): void {
+        const socket = ws as any;
+        socket.isAlive = true;
+        socket.awaitingPong = false;
+
+        ws.on('pong', () => {
+            socket.isAlive = true;
+            socket.awaitingPong = false;
+            if (socket._pingTimeoutTimer) {
+                clearTimeout(socket._pingTimeoutTimer);
+                socket._pingTimeoutTimer = undefined;
+            }
+        });
+    }
+
+    private cleanupSocketKeepalive(ws: IWS): void {
+        const socket = ws as any;
+        if (socket._pingTimeoutTimer) {
+            clearTimeout(socket._pingTimeoutTimer);
+            socket._pingTimeoutTimer = undefined;
+        }
+    }
+
+    private sendHeartbeats(): void {
+        for (const [peerId, ws] of this.peers.entries()) {
+            if (ws.readyState !== 1) continue;
+
+            const socket = ws as any;
+            if (socket.awaitingPong) {
+                this.logger?.warn(`[WSTransport] Peer ${peerId} missed pong, terminating socket`);
+                this.cleanupSocketKeepalive(ws);
+                if (ws.terminate) ws.terminate();
+                else if (ws.close) ws.close();
+                continue;
+            }
+
+            socket.awaitingPong = true;
+            socket.isAlive = false;
+
+            if (socket._pingTimeoutTimer) {
+                clearTimeout(socket._pingTimeoutTimer);
+            }
+
+            socket._pingTimeoutTimer = setTimeout(() => {
+                if (socket.awaitingPong) {
+                    this.logger?.warn(`[WSTransport] Peer ${peerId} ping timeout (${this.pingTimeoutMs}ms), terminating socket`);
+                    socket._pingTimeoutTimer = undefined;
+                    if (ws.terminate) ws.terminate();
+                    else if (ws.close) ws.close();
+                }
+            }, this.pingTimeoutMs);
+
+            if (socket._pingTimeoutTimer.unref) {
+                socket._pingTimeoutTimer.unref();
+            }
+
+            if (ws.ping) {
+                try {
                     ws.ping();
+                } catch (err) {
+                    this.logger?.warn(`[WSTransport] Error sending ping to ${peerId}: ${err instanceof Error ? err.message : String(err)}`);
+                    this.cleanupSocketKeepalive(ws);
+                    if (ws.terminate) ws.terminate();
+                    else if (ws.close) ws.close();
                 }
             }
-        }, 30000);
-        if (this.heartbeatTimer) this.heartbeatTimer.unref();
+        }
+    }
+
+    private startHeartbeat(): void {
+        if (this.heartbeatTimer) return;
+        this.heartbeatTimer = setInterval(() => {
+            this.sendHeartbeats();
+        }, this.pingIntervalMs);
+        if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
     }
 
     private stopHeartbeat(): void {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = undefined;
+        }
+        for (const ws of this.peers.values()) {
+            this.cleanupSocketKeepalive(ws);
         }
     }
 }
