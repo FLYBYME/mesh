@@ -37,7 +37,7 @@ export class StartCommand extends BaseCommand {
             .command(this.name)
             .description(this.description)
             .option('-p, --port <number>', 'Port for the WebSocket server')
-            .option('-H, --host <address>', 'Bind address for the WebSocket server (default: 0.0.0.0 -- all interfaces). Set to a private/overlay IP (e.g. a WireGuard address) to keep mesh RPC off any public interface entirely, rather than relying on a firewall rule alone.')
+            .option('-H, --host <address>', 'Bind address for the WebSocket server (default: 127.0.0.1 -- loopback). Set to 0.0.0.0 or a private/overlay IP to accept remote connections with MESH_KEY configured.')
             .option('-i, --node-id <id>', 'Unique Node ID')
             .option('-b, --bootstrap <nodes>', 'Comma-separated bootstrap URLs')
             .option('-s, --services <dirs>', 'Directory list to scan for services (can be comma-separated or specified multiple times)', (val, memo: string[]) => {
@@ -70,7 +70,7 @@ export class StartCommand extends BaseCommand {
             logLevel = LogLevel.ERROR;
         }
 
-        const host = options.host || '0.0.0.0';
+        const host = options.host || '127.0.0.1';
 
         this.logger.info(`${C.blue}${C.bold}Booting Mesh Node "${nodeId}" on ${host}:${port}...${C.reset}`);
 
@@ -95,6 +95,7 @@ export class StartCommand extends BaseCommand {
 
             const networkModule = new NetworkModule({
                 port,
+                host,
                 transports: [wsTransport],
                 bootstrapNodes
             });

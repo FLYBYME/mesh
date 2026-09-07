@@ -18,6 +18,7 @@ export interface MeshNetworkOptions {
     bootstrapNodes?: string[];
     transports: BaseTransport[];
     port?: number;
+    host?: string;
 }
 
 /**
@@ -51,8 +52,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         this.logger = logger;
         this.registry = registry;
 
+        const transportHost = (options.transports?.[0] as any)?.getHost?.() ?? (options.transports?.[0] as any)?.host;
+        const host = options.host ?? transportHost ?? '127.0.0.1';
+
         if (Env.isNode() && options.port !== undefined) {
-            this.server = new UnifiedServer(options.port);
+            this.server = new UnifiedServer(options.port, host);
         }
 
         this.orchestrator = new MeshOrchestrator(this, {
@@ -147,6 +151,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         this.logger.info(`[MeshNetwork] Starting node ${this.nodeID}...`);
 
         let port = this.options.port;
+        const transportHost = (this.options.transports?.[0] as any)?.getHost?.() ?? (this.options.transports?.[0] as any)?.host;
+        const host = this.options.host ?? transportHost ?? '127.0.0.1';
 
         if (this.server) {
             await this.server.listen();
@@ -154,7 +160,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
 
             const localNode = this.registry.getNode(this.nodeID);
             if (localNode) {
-                localNode.addresses = [`ws://127.0.0.1:${port}`];
+                localNode.addresses = [`ws://${host}:${port}`];
                 this.registry.registerNode(localNode);
             }
         }
@@ -167,6 +173,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
             logger: this.logger,
             url: this.options.bootstrapNodes?.[0], // Use primary bootstrap node as connection URL
             port: port,
+            host: host,
             registry: this.registry,
             sharedServer: this.server?.getServer() ?? undefined
         });

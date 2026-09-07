@@ -318,13 +318,14 @@ export class GenerateCommand extends BaseCommand {
         code += `    const app = new MeshApp({ nodeID: nodeId, logger });\n`;
         code += `    const serializer = new JSONSerializer();\n`;
         code += `    const port = parseInt(options.port || '0', 10);\n`;
-        code += `    const host = options.host || '0.0.0.0';\n`;
+        code += `    const host = options.host || '127.0.0.1';\n`;
         code += `    const wsTransport = new WSTransport(serializer, port, host);\n`;
         code += `    \n`;
         code += `    const bootstrapStr = options.bootstrap || 'ws://127.0.0.1:5005';\n`;
         code += `    app.use(new RegistryModule());\n`;
         code += `    app.use(new NetworkModule({\n`;
         code += `        port,\n`;
+        code += `        host,\n`;
         code += `        transports: [wsTransport],\n`;
         code += `        bootstrapNodes: bootstrapStr ? bootstrapStr.split(',').map((s: string) => s.trim()) : []\n`;
         code += `    }));\n`;

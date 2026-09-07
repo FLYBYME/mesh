@@ -45,7 +45,7 @@ export class WSTransport extends BaseTransport {
     public pingIntervalMs: number;
     public pingTimeoutMs: number;
 
-    constructor(serializer: BaseSerializer, port = 0, host: string = '0.0.0.0', options: WSTransportOptions = {}) {
+    constructor(serializer: BaseSerializer, port = 0, host: string = '127.0.0.1', options: WSTransportOptions = {}) {
         super(serializer);
         this.port = port;
         this.host = host;
@@ -68,6 +68,10 @@ export class WSTransport extends BaseTransport {
         throw new Error("Server port not available");
     }
 
+    public getHost(): string {
+        return this.host;
+    }
+
     private proactiveReplay(): void {
         this.logger?.info('[WSTransport] Initializing proactive offline queue replay...');
         // Proactive Replay Implementation:
@@ -81,9 +85,18 @@ export class WSTransport extends BaseTransport {
         this.logger = opts.logger;
         if (opts.pingIntervalMs !== undefined) this.pingIntervalMs = opts.pingIntervalMs;
         if (opts.pingTimeoutMs !== undefined) this.pingTimeoutMs = opts.pingTimeoutMs;
+        if (opts.host !== undefined) this.host = opts.host;
+        if (opts.port !== undefined && opts.port > 0) this.port = opts.port;
         if (opts.authKey !== undefined) this.authKey = opts.authKey;
         else if (opts.authToken !== undefined) this.authKey = opts.authToken;
         else if (!this.authKey && process.env.MESH_KEY) this.authKey = process.env.MESH_KEY;
+
+        if (!this.authKey && !this.isLoopbackAddress(this.host)) {
+            throw new Error(
+                `[WSTransport] Refusing to start on non-loopback host "${this.host}" without authentication key. ` +
+                `Set MESH_KEY environment variable or pass authKey in options to secure the mesh port.`
+            );
+        }
 
         if (opts.sharedServer) {
             this.logger?.debug(`[WSTransport] Attaching to shared server...`);
@@ -94,9 +107,9 @@ export class WSTransport extends BaseTransport {
         return this.startNodeServer();
     }
 
-    private isLoopbackAddress(addr?: string): boolean {
+    public isLoopbackAddress(addr?: string): boolean {
         if (!addr) return false;
-        return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr === 'localhost';
+        return addr === '127.0.0.1' || addr.startsWith('127.') || addr === '::1' || addr.startsWith('::ffff:127.') || addr === 'localhost';
     }
 
     private timingSafeEqual(a: string, b: string): boolean {

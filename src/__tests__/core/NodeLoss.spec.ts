@@ -170,7 +170,7 @@ describe('Node Loss Detection Timing', () => {
             jest.useFakeTimers();
             const serializer = new JSONSerializer();
             // Configure fast detection: 1s ping interval, 1s ping timeout
-            const transport = new WSTransport(serializer, 5005, '0.0.0.0', {
+            const transport = new WSTransport(serializer, 5005, '127.0.0.1', {
                 pingIntervalMs: 1000,
                 pingTimeoutMs: 1000
             });
@@ -210,7 +210,7 @@ describe('Node Loss Detection Timing', () => {
         it('keeps connection alive when peer answers ping with pong', async () => {
             jest.useFakeTimers();
             const serializer = new JSONSerializer();
-            const transport = new WSTransport(serializer, 5005, '0.0.0.0', {
+            const transport = new WSTransport(serializer, 5005, '127.0.0.1', {
                 pingIntervalMs: 1000,
                 pingTimeoutMs: 1000
             });
@@ -258,7 +258,7 @@ describe('Node Loss Detection Timing', () => {
             await registry.start();
 
             const serializer = new JSONSerializer();
-            const transport = new WSTransport(serializer, 5005, '0.0.0.0', {
+            const transport = new WSTransport(serializer, 5005, '127.0.0.1', {
                 pingIntervalMs: 1000,
                 pingTimeoutMs: 1000
             });
