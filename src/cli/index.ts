@@ -5,7 +5,6 @@ import { CommandRegistry } from './core/CommandRegistry.js';
 import { GenerateCommand } from './commands/GenerateCommand.js';
 import { StartCommand } from './commands/StartCommand.js';
 import { StatsCommand } from './commands/StatsCommand.js';
-import { SuperviseCommand } from './commands/SuperviseCommand.js';
 import { Logger } from '../utils/Logger.js';
 import { LogLevel } from '../interfaces/ILogger.js';
 
@@ -33,7 +32,6 @@ const registry = new CommandRegistry();
 registry.register(new GenerateCommand());
 registry.register(new StartCommand());
 registry.register(new StatsCommand());
-registry.register(new SuperviseCommand());
 
 // Attach to Commander
 registry.attachToProgram(program);
