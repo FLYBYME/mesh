@@ -2,6 +2,7 @@ import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
 import type { TransportConnectOptions, IWS, IWSServer, MeshPacket } from '../../interfaces/IMeshNetwork.js';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { nanoid } from 'nanoid';
 import { ILogger } from '../../interfaces/ILogger.js';
@@ -15,6 +16,8 @@ interface PendingRPC {
 export interface WSTransportOptions {
     pingIntervalMs?: number;
     pingTimeoutMs?: number;
+    authKey?: string;
+    authToken?: string;
 }
 
 /**
@@ -30,6 +33,7 @@ export class WSTransport extends BaseTransport {
     private host: string;
     private peers = new Map<string, IWS>();
     public logger?: ILogger;
+    public authKey?: string;
 
     private pendingRPCs = new Map<string, PendingRPC>();
     private static readonly RPC_TIMEOUT_MS = 10000;
@@ -47,6 +51,7 @@ export class WSTransport extends BaseTransport {
         this.host = host;
         this.pingIntervalMs = options.pingIntervalMs ?? 30000;
         this.pingTimeoutMs = options.pingTimeoutMs ?? Math.min(5000, this.pingIntervalMs);
+        this.authKey = options.authKey ?? options.authToken ?? process.env.MESH_KEY;
     }
 
     async start(): Promise<void> {
@@ -76,6 +81,9 @@ export class WSTransport extends BaseTransport {
         this.logger = opts.logger;
         if (opts.pingIntervalMs !== undefined) this.pingIntervalMs = opts.pingIntervalMs;
         if (opts.pingTimeoutMs !== undefined) this.pingTimeoutMs = opts.pingTimeoutMs;
+        if (opts.authKey !== undefined) this.authKey = opts.authKey;
+        else if (opts.authToken !== undefined) this.authKey = opts.authToken;
+        else if (!this.authKey && process.env.MESH_KEY) this.authKey = process.env.MESH_KEY;
 
         if (opts.sharedServer) {
             this.logger?.debug(`[WSTransport] Attaching to shared server...`);
@@ -86,9 +94,92 @@ export class WSTransport extends BaseTransport {
         return this.startNodeServer();
     }
 
+    private isLoopbackAddress(addr?: string): boolean {
+        if (!addr) return false;
+        return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr === 'localhost';
+    }
+
+    private timingSafeEqual(a: string, b: string): boolean {
+        const bufA = Buffer.from(a);
+        const bufB = Buffer.from(b);
+        if (bufA.length !== bufB.length) return false;
+        return crypto.timingSafeEqual(bufA, bufB);
+    }
+
+    public verifyHandshake(
+        info: { origin?: string; secure?: boolean; req: http.IncomingMessage },
+        cb: (res: boolean, code?: number, message?: string, headers?: http.OutgoingHttpHeaders) => void
+    ): void {
+        const req = info.req;
+        const remoteIp = req.socket?.remoteAddress;
+        const isLoopback = this.isLoopbackAddress(remoteIp);
+
+        // Extract key from headers or URL query
+        let clientKey: string | undefined;
+
+        // 1. x-mesh-key header
+        const meshKeyHeader = req.headers ? req.headers['x-mesh-key'] : undefined;
+        if (typeof meshKeyHeader === 'string') {
+            clientKey = meshKeyHeader;
+        }
+
+        // 2. Authorization header (Bearer token)
+        if (!clientKey && req.headers) {
+            const authHeader = req.headers['authorization'];
+            if (typeof authHeader === 'string') {
+                if (authHeader.startsWith('Bearer ')) {
+                    clientKey = authHeader.slice(7).trim();
+                } else {
+                    clientKey = authHeader.trim();
+                }
+            }
+        }
+
+        // 3. URL query parameter (?key=... or ?token=...)
+        if (!clientKey && req.url) {
+            try {
+                const parsedUrl = new URL(req.url, 'http://localhost');
+                const qKey = parsedUrl.searchParams.get('key') || parsedUrl.searchParams.get('token');
+                if (qKey) clientKey = qKey;
+            } catch {
+                // Ignore malformed URL
+            }
+        }
+
+        const expectedKey = this.authKey;
+
+        // If a key is configured on this transport, authentication is mandatory for all connections.
+        if (expectedKey) {
+            if (!clientKey) {
+                this.logger?.warn(`[WSTransport] Handshake rejected: missing authentication key from ${remoteIp || 'unknown'}`);
+                return cb(false, 401, 'Unauthorized: missing authentication key');
+            }
+
+            if (!this.timingSafeEqual(clientKey, expectedKey)) {
+                this.logger?.warn(`[WSTransport] Handshake rejected: invalid authentication key from ${remoteIp || 'unknown'}`);
+                return cb(false, 403, 'Forbidden: invalid authentication key');
+            }
+
+            return cb(true);
+        }
+
+        // If NO key is configured:
+        // Unauthenticated loopback is allowed for local development.
+        if (isLoopback) {
+            return cb(true);
+        }
+
+        // Non-loopback connection without key configured on server is rejected.
+        this.logger?.warn(`[WSTransport] Handshake rejected: non-loopback connection from ${remoteIp || 'unknown'} requires authentication key`);
+        return cb(false, 401, 'Unauthorized: authentication key required for non-loopback connections');
+    }
+
     private async attachToSharedServer(server: http.Server): Promise<void> {
         this.server = server;
-        this.wss = new WebSocketServer({ server: this.server }) as IWSServer;
+        this.wss = new WebSocketServer({
+            server: this.server,
+            verifyClient: (info: any, cb: any) => this.verifyHandshake(info, cb)
+        }) as IWSServer;
         this.setupWSSHandlers();
         this.connected = true;
         this.emit('connected');
@@ -97,7 +188,10 @@ export class WSTransport extends BaseTransport {
 
     private async startNodeServer(): Promise<void> {
         this.server = http.createServer();
-        this.wss = new WebSocketServer({ server: this.server }) as IWSServer;
+        this.wss = new WebSocketServer({
+            server: this.server,
+            verifyClient: (info: any, cb: any) => this.verifyHandshake(info, cb)
+        }) as IWSServer;
         this.setupWSSHandlers();
 
         return new Promise((resolve, reject) => {
@@ -353,8 +447,19 @@ export class WSTransport extends BaseTransport {
     private async internalConnectToPeer(nodeID: string, url: string, attempt = 0): Promise<void> {
         this.logger?.info(`[WSTransport] Connecting to peer ${nodeID} at ${url}...`);
         return new Promise((resolve, reject) => {
-            const ws = new WebSocket(url) as IWS;
+            const key = this.authKey ?? process.env.MESH_KEY;
+            const ws = (key
+                ? new WebSocket(url, {
+                    headers: {
+                        'x-mesh-key': key,
+                        'authorization': `Bearer ${key}`
+                    }
+                })
+                : new WebSocket(url)) as IWS;
+
             this.setupSocketKeepalive(ws, () => nodeID);
+
+            let isAuthFailure = false;
 
             ws.on('open', () => {
                 this.reconnectAttempts = 0;
@@ -365,6 +470,15 @@ export class WSTransport extends BaseTransport {
             });
 
             ws.on('error', (err: unknown) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (msg.includes('401') || msg.includes('403')) {
+                    isAuthFailure = true;
+                    if (msg.includes('401')) {
+                        this.logger?.error(`[WSTransport] Handshake unauthorized (401): authentication key required for peer ${nodeID} at ${url}`);
+                    } else if (msg.includes('403')) {
+                        this.logger?.error(`[WSTransport] Handshake forbidden (403): invalid authentication key for peer ${nodeID} at ${url}`);
+                    }
+                }
                 if (attempt === 0) reject(err);
             });
 
@@ -376,9 +490,13 @@ export class WSTransport extends BaseTransport {
 
             ws.on('close', () => {
                 this.cleanupSocketKeepalive(ws);
-                this.peers.delete(nodeID);
-                this.emit('peer:disconnect', nodeID);
-                this.handleReconnection(nodeID, url);
+                if (this.peers.has(nodeID)) {
+                    this.peers.delete(nodeID);
+                    this.emit('peer:disconnect', nodeID);
+                }
+                if (!isAuthFailure) {
+                    this.handleReconnection(nodeID, url);
+                }
             });
         });
     }

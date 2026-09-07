@@ -214,6 +214,7 @@ export interface TransportConnectOptions {
     nodeID: string;
     namespace: string;
     authToken?: string;
+    authKey?: string;
     sharedServer?: unknown;
     sharedApp?: unknown;
     host?: string;

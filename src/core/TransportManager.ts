@@ -60,7 +60,8 @@ export class TransportManager extends EventEmitter {
                 sharedServer: opts.sharedServer,
                 sharedApp: opts.sharedApp,
                 host: opts.host,
-                authToken: opts.authToken
+                authToken: opts.authToken,
+                authKey: opts.authKey ?? opts.authToken
             });
 
             await t.start();
