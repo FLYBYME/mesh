@@ -219,6 +219,8 @@ export interface AnyCrudContracts extends Record<string, unknown> {
     readonly domain: string;
     readonly idField: string;
     readonly scopedBy?: string;
+    /** `'global'` when the collection declares every reader may see every row. See `defineCrud`. */
+    readonly delivery?: 'global';
     readonly unique?: readonly NormalizedUniqueKey[];
     readonly dependencies: readonly string[];
     readonly find: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
@@ -314,6 +316,31 @@ export function defineCrud<
         pluralPath?: string;
         idField?: TIdField;
         scopedBy?: string;
+        /**
+         * **Who a row's events may be delivered to, when the collection is not scoped.**
+         *
+         * A CRUD write emits `<domain>.created|updated|deleted`, and a host that streams those to
+         * browsers has to answer *which subscribers this row belongs to*. `scopedBy` answers it: the
+         * row names its tenant. A collection with no `scopedBy` has no answer, and the safe reading
+         * of no answer is **nobody** — streaming an unscoped collection means pushing every row to
+         * every subscriber.
+         *
+         * So an unscoped collection's events are not delivered, and that is right by default. But
+         * some collections are *deliberately* global — a catalogue, a fleet, or an application that
+         * is simply not multi-tenant — and until now there was no way for one to say so. The host
+         * (mesh-serve) carried a hardcoded allowlist of its own collection names, which no
+         * application outside that repository could ever join. The decision lived in the wrong repo.
+         *
+         * `delivery: 'global'` moves it here, beside `scopedBy`, where the collection that owns the
+         * data declares what its data is. **It is a statement that every reader of this collection
+         * may see every row**, and it should only be written where `find` already returns every row
+         * to the same audience — it grants a stream nothing the gate does not already grant a query.
+         *
+         * Omitted means undelivered, so a new collection that forgets to say what it is still fails
+         * loudly rather than quietly streaming to everybody. Declaring both is a contradiction and
+         * is refused.
+         */
+        delivery?: 'global';
         unique?: UniqueOption | readonly UniqueOption[];
         outputSchema?: z.ZodObject<z.ZodRawShape>;
         relations?: RelationDefinition[];
@@ -361,6 +388,14 @@ export function defineCrud<
         if (!(scopedBy in baseSchema.shape)) {
             throw new Error(`defineCrud Error: The scopedBy field "${scopedBy}" must be defined in the Zod baseSchema shape for domain "${domain}". Scoped collections require a field in their schema to store the scope identifier.`);
         }
+    }
+    const delivery = options.delivery;
+    if (delivery !== undefined && scopedBy !== undefined) {
+        throw new Error(
+            `defineCrud Error: Domain "${domain}" declares both scopedBy "${scopedBy}" and delivery "global". ` +
+            `They answer the same question and disagree: scopedBy says a row belongs to one tenant, ` +
+            `delivery: 'global' says every reader may see every row. Declare one.`
+        );
     }
     const unique = normalizeUniqueKeys(options.unique, domain, baseSchema, scopedBy, idField);
     const outputSchema = options.outputSchema || (baseSchema.extend({
@@ -603,7 +638,7 @@ export function defineCrud<
     });
 
     const crudResult = {
-        domain, idField, scopedBy, unique, baseSchema, outputSchema, relations, dependencies,
+        domain, idField, scopedBy, delivery, unique, baseSchema, outputSchema, relations, dependencies,
         find: findContract,
         findOne: findOneContract,
         count: countContract,
