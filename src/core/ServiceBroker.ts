@@ -55,6 +55,68 @@ export const MeshToolSchemaRegistry: Map<string, {
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
 
 export class ServiceBroker implements IServiceBroker {
+    /**
+     * **Validate a result against its contract, tolerating a projection but never widening one.**
+     *
+     * Both RPC paths used to do this inline, and both did it wrong in the same way:
+     *
+     *     const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
+     *     if (isCrudProjection) {
+     *         return result;
+     *     }
+     *     return schema.returns.parse(result);
+     *
+     * The parse is what strips keys the output schema does not declare, and a contract that
+     * publishes a collection holding a secret — a password hash, a token — relies on exactly that.
+     * Skipping it on a projected read made the guarantee **one query parameter deep**: ask for
+     * `fields` and the stored document came back untouched, including the field the schema was
+     * written to withhold, because a mongo projection is an allow-list and `fields: 'passwordHash'`
+     * is a legal thing to write.
+     *
+     * The reason for the bypass was real and is kept. A projection returns a *partial* document, so
+     * a schema with required fields rejects it: `find({ fields: 'email' })` carries no `createdAt`
+     * and parsing would fail on a read that is correct. So a projected read is parsed against a
+     * **partial** schema instead of not being parsed at all — missing keys are allowed, extra keys
+     * are still removed, and the two properties stop being traded against each other.
+     *
+     * `deepPartial` rather than `partial` because a projection may name a nested path (`a.b`), which
+     * leaves the parent present and incomplete.
+     *
+     * Static and exported so the behaviour can be tested without standing up a broker, a registry
+     * and a database — see `__tests__/CrudProjection.spec.ts`, which also asserts that both call
+     * sites still route through here.
+     */
+    public static applyReturns(
+        returns: z.ZodTypeAny,
+        projected: boolean,
+        result: unknown,
+    ): unknown {
+        if (!projected) return returns.parse(result);
+        return ServiceBroker.partialised(returns).parse(result);
+    }
+
+    /**
+     * The same schema with its object fields made optional, through the wrappers a crud contract
+     * actually uses: `z.array(...)` for `find`, `.nullable()` for `find_one` and `get`, and a bare
+     * object for the rest. Anything else — `count`'s number, a literal — is returned unchanged,
+     * because there is nothing in it a projection could have omitted.
+     */
+    private static partialised(schema: z.ZodTypeAny): z.ZodTypeAny {
+        if (schema instanceof z.ZodArray) {
+            return z.array(ServiceBroker.partialised(schema.element as z.ZodTypeAny));
+        }
+        if (schema instanceof z.ZodNullable) {
+            return ServiceBroker.partialised(schema.unwrap() as z.ZodTypeAny).nullable();
+        }
+        if (schema instanceof z.ZodOptional) {
+            return ServiceBroker.partialised(schema.unwrap() as z.ZodTypeAny).optional();
+        }
+        if (schema instanceof z.ZodObject) {
+            return schema.deepPartial();
+        }
+        return schema;
+    }
+
     private localTools = new Map<string, LocalTool>();
     private modules: IServiceModule[] = [];
     private isStarted: boolean = false;
@@ -550,11 +612,10 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         if (schema?.returns) {
-            const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
-            if (isCrudProjection) {
-                return result;
-            }
-            return (schema.returns as z.ZodTypeAny).parse(result);
+            // A projected read may be missing declared fields; it may never carry undeclared ones.
+            // See `applyReturns`.
+            const isCrudProjection = Boolean(schema.isCrud && ctx.params && (ctx.params.fields !== undefined));
+            return ServiceBroker.applyReturns(schema.returns as z.ZodTypeAny, isCrudProjection, result);
         }
         return result;
     }
@@ -597,11 +658,10 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         if (schema?.returns) {
-            const isCrudProjection = schema.isCrud && ctx.params && (ctx.params.fields !== undefined);
-            if (isCrudProjection) {
-                return result;
-            }
-            return (schema.returns as z.ZodTypeAny).parse(result);
+            // A projected read may be missing declared fields; it may never carry undeclared ones.
+            // See `applyReturns`.
+            const isCrudProjection = Boolean(schema.isCrud && ctx.params && (ctx.params.fields !== undefined));
+            return ServiceBroker.applyReturns(schema.returns as z.ZodTypeAny, isCrudProjection, result);
         }
         return result;
     }
