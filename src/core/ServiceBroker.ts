@@ -181,8 +181,22 @@ export class ServiceBroker implements IServiceBroker {
         return this.providers.get(name) as T;
     }
 
+    /**
+     * A module can own contracts (and therefore CRUD hooks) under a domain other than its own --
+     * the class comment above already documents this ("`demo` also mounts `demometrics.*`"), and
+     * mountCrudHook is meant to work the same way: `mountCrudHook('serve.part', 'create', ...)`
+     * inside a module whose own `domain` is `'serve.catalog'` is exactly that pattern.
+     *
+     * The exact-`domain` match was the only lookup, so DatabaseMiddleware's
+     * `const module = broker.getModule(domain); if (module) { await module.beforeCrud(...) }`
+     * silently found nothing for any such secondary domain -- not an error, just a hook that
+     * never ran. Checked second (the common case, one module registered under its own real
+     * domain, still resolves without scanning every module's contract list).
+     */
     public getModule(domain: string): IServiceModule | undefined {
-        return this.modules.find(m => m.domain === domain);
+        const exact = this.modules.find(m => m.domain === domain);
+        if (exact) return exact;
+        return this.modules.find(m => m.getContracts().some(c => c.domain === domain));
     }
 
     /**
