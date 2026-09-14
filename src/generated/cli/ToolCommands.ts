@@ -12,27 +12,40 @@ import { Logger } from '../../utils/Logger.js';
 import * as Contract_0 from '../../examples/demo/demo.contract.js';
 
 async function executeCommand(toolName: string, args: Record<string, unknown>, contract: any, options: any) {
-    const logger = new Logger(3); // Error level to avoid cluttering CLI output
+    const logger = new Logger(3);
     const nodeId = options.nodeId || `cli-${Math.random().toString(36).substring(2, 9)}`;
     const app = new MeshApp({ nodeID: nodeId, logger });
     const serializer = new JSONSerializer();
     const port = parseInt(options.port || '0', 10);
-    const wsTransport = new WSTransport(serializer, port);
+    const host = options.host || '127.0.0.1';
+    const wsTransport = new WSTransport(serializer, port, host);
     
     const bootstrapStr = options.bootstrap || 'ws://127.0.0.1:5005';
     app.use(new RegistryModule());
     app.use(new NetworkModule({
         port,
-        transports: [wsTransport] as any,
+        host,
+        transports: [wsTransport],
         bootstrapNodes: bootstrapStr ? bootstrapStr.split(',').map((s: string) => s.trim()) : []
     }));
     app.use(new BrokerModule());
 
     await app.start();
     
-    // Wait briefly for discovery if bootstrap is provided
     if (bootstrapStr) {
-        await new Promise(r => setTimeout(r, 2000)); // wait for registry sync (PEX)
+        // Wait for the actual tool to become resolvable (event-driven, via
+        // Registry's own 'changed' event -- see Registry.waitForTool) instead of
+        // a blind fixed sleep. A hardcoded 2000ms guess raced peer-exchange sync
+        // on any connection slower than a fast local/LAN path (found for real over
+        // a higher-latency tunnel: 'Local tool not found' with an empty registry,
+        // even though the peer had genuinely connected -- PEX just hadn't finished
+        // propagating yet). 15s ceiling matches waitForTool's own default.
+        try {
+            await app.registry.waitForTool(toolName, 15000);
+        } catch {
+            // Let the real call fail with its own real error below rather than
+            // failing here on a timeout that may itself be stale.
+        }
     }
 
     try {
@@ -50,11 +63,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoHelloContract_hello.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.hello', o, Contract_0.demoHelloContract, cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoHelloContract_hello, Contract_0.demoHelloContract.inputSchema);
@@ -62,11 +73,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoStatusContract_status.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.status', o, Contract_0.demoStatusContract, cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoStatusContract_status, Contract_0.demoStatusContract.inputSchema);
@@ -74,11 +83,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoNotifyContract_notify.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.notify', o, Contract_0.demoNotifyContract, cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoNotifyContract_notify, Contract_0.demoNotifyContract.inputSchema);
@@ -86,11 +93,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_create_create.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.create', o, Contract_0.demoCrud['create'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_create_create, Contract_0.demoCrud['create'].inputSchema);
@@ -98,11 +103,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_find_find.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.find', o, Contract_0.demoCrud['find'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_find_find, Contract_0.demoCrud['find'].inputSchema);
@@ -110,11 +113,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_findOne_find_one.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.find_one', o, Contract_0.demoCrud['findOne'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_findOne_find_one, Contract_0.demoCrud['findOne'].inputSchema);
@@ -122,11 +123,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_count_count.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.count', o, Contract_0.demoCrud['count'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_count_count, Contract_0.demoCrud['count'].inputSchema);
@@ -134,23 +133,29 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_get_get.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.get', o, Contract_0.demoCrud['get'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_get_get, Contract_0.demoCrud['get'].inputSchema);
+    const cmd_demo_demoCrud_resolve_resolve = demo.command('resolve').description(`CRUD resolve for demo (demoCrud)`);
+    cmd_demo_demoCrud_resolve_resolve.action(async (o: Record<string, unknown>, cmd: Command) => {
+        try {
+            await executeCommand('demo.resolve', o, Contract_0.demoCrud['resolve'], cmd.optsWithGlobals());
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(C.red + 'Error:' + C.reset, message);
+        }
+    });
+    ZodToCliMapper.applyOptions(cmd_demo_demoCrud_resolve_resolve, Contract_0.demoCrud['resolve'].inputSchema);
     const cmd_demo_demoCrud_update_update = demo.command('update').description(`CRUD update for demo (demoCrud)`);
     cmd_demo_demoCrud_update_update.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.update', o, Contract_0.demoCrud['update'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_update_update, Contract_0.demoCrud['update'].inputSchema);
@@ -158,11 +163,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demo_demoCrud_delete_delete.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demo.delete', o, Contract_0.demoCrud['delete'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demo_demoCrud_delete_delete, Contract_0.demoCrud['delete'].inputSchema);
@@ -171,11 +174,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demometrics_demoTimeSeries_insert_insert.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demometrics.insert', o, Contract_0.demoTimeSeries['insert'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_insert_insert, Contract_0.demoTimeSeries['insert'].inputSchema);
@@ -183,11 +184,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demometrics_demoTimeSeries_query_query.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demometrics.query', o, Contract_0.demoTimeSeries['query'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_query_query, Contract_0.demoTimeSeries['query'].inputSchema);
@@ -195,11 +194,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demometrics_demoTimeSeries_aggregate_aggregate.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demometrics.aggregate', o, Contract_0.demoTimeSeries['aggregate'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_aggregate_aggregate, Contract_0.demoTimeSeries['aggregate'].inputSchema);
@@ -207,11 +204,9 @@ export function registerGeneratedCommands(program: Command) {
     cmd_demometrics_demoTimeSeries_latest_latest.action(async (o: Record<string, unknown>, cmd: Command) => {
         try {
             await executeCommand('demometrics.latest', o, Contract_0.demoTimeSeries['latest'], cmd.optsWithGlobals());
-            process.exit(0);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(C.red + 'Error:' + C.reset, message);
-            process.exit(1);
         }
     });
     ZodToCliMapper.applyOptions(cmd_demometrics_demoTimeSeries_latest_latest, Contract_0.demoTimeSeries['latest'].inputSchema);

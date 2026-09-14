@@ -12,6 +12,7 @@ declare global {
         'demo.find_one': { params: z.input<typeof Contract_0.demoCrud['findOne']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['findOne']['outputSchema']> };
         'demo.count': { params: z.input<typeof Contract_0.demoCrud['count']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['count']['outputSchema']> };
         'demo.get': { params: z.input<typeof Contract_0.demoCrud['get']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['get']['outputSchema']> };
+        'demo.resolve': { params: z.input<typeof Contract_0.demoCrud['resolve']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['resolve']['outputSchema']> };
         'demo.update': { params: z.input<typeof Contract_0.demoCrud['update']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['update']['outputSchema']> };
         'demo.delete': { params: z.input<typeof Contract_0.demoCrud['delete']['inputSchema']>, returns: z.infer<typeof Contract_0.demoCrud['delete']['outputSchema']> };
         'demometrics.insert': { params: z.input<typeof Contract_0.demoTimeSeries['insert']['inputSchema']>, returns: z.infer<typeof Contract_0.demoTimeSeries['insert']['outputSchema']> };

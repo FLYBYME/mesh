@@ -365,7 +365,8 @@ export class GenerateCommand extends BaseCommand {
         });
 
         for (const [domain, methods] of Object.entries(byDomain)) {
-            code += `    const ${domain} = program.command('${domain}').description('${domain} tools');\n`;
+            const groupVar = domain.replace(/[^a-zA-Z0-9_]/g, '_');
+            code += `    const ${groupVar} = program.command('${domain}').description('${domain} tools');\n`;
             const seenActions = new Set<string>();
             for (const m of methods) {
                 if (seenActions.has(m.action)) continue;
@@ -390,7 +391,7 @@ export class GenerateCommand extends BaseCommand {
                 // author and may contain a backtick, a `${`, or a backslash — any of which silently
                 // produces a file that does not parse, with every reported error landing in whatever
                 // command happens to follow rather than in the one that caused it.
-                code += `    const cmd_${safeVarName} = ${domain}.command('${m.action}').description(${toTemplateLiteral(m.description)});\n`;
+                code += `    const cmd_${safeVarName} = ${groupVar}.command('${m.action}').description(${toTemplateLiteral(m.description)});\n`;
                 code += `    cmd_${safeVarName}.action(async (o: Record<string, unknown>, cmd: Command) => {\n`;
                 code += `        try {\n`;
                 code += `            await executeCommand('${domain}.${m.action}', o, ${contractRef}, cmd.optsWithGlobals());\n`;
