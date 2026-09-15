@@ -1,6 +1,6 @@
 {
   "name": "@flybyme/mesh",
-  "version": "2.4.3",
+  "version": "2.5.0",
   "description": "Mesh network framework",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,12 +23,8 @@
       "import": "./dist/contracts.js"
     }
   },
-  "bin": {
-    "mesh": "./bin/mesh.js"
-  },
   "files": [
     "dist",
-    "bin",
     "src",
     "tsconfig.json"
   ],
@@ -49,9 +45,7 @@
     "@types/express": "4.17.25",
     "@types/node": "20.19.41",
     "@types/ws": "8.18.1",
-    "commander": "latest",
     "dotenv": "latest",
-    "esbuild": "latest",
     "eventemitter3": "latest",
     "express": "latest",
     "mongodb": "latest",

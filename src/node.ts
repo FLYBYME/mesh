@@ -14,11 +14,5 @@ export * from './db/TimeSeriesRepository.js';
 // Modules (Node-specific)
 export * from './modules/DatabaseModule.js';
 
-// CLI Core
-export * from './cli/core/BaseCommand.js';
-export * from './cli/core/CommandRegistry.js';
-export * from './cli/core/ZodToCliMapper.js';
-export * from './cli/core/Utils.js';
-
 // Testing Utilities (Node-specific)
 export * from './testing/index.js';
