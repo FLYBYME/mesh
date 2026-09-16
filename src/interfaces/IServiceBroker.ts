@@ -63,6 +63,10 @@ export interface IServiceBroker {
         options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
+    /** Per-process, per-key promise chain -- see IServiceContext.withLock for the full reasoning;
+     *  this is the same thing at the broker level. */
+    withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+
     /** Typed event emit. */
     emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
 

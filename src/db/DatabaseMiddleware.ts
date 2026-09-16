@@ -171,6 +171,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 p: IServiceToolRegistry[K]['params'],
                 o?: { timeout?: number }
             ) => broker.callOnLeader(leaderDomain, a, p, o),
+            withLock: <T>(key: string, fn: () => Promise<T>): Promise<T> => broker.withLock(key, fn),
             emit: <K extends keyof EventRegistry>(
                 e: K,
                 p: EventRegistry[K],

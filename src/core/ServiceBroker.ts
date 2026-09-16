@@ -407,6 +407,7 @@ export class ServiceBroker implements IServiceBroker {
                             params: IServiceToolRegistry[K]['params'],
                             options?: { timeout?: number }
                         ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
+                        withLock: <T>(key: string, fn: () => Promise<T>): Promise<T> => this.withLock(key, fn),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -452,6 +453,7 @@ export class ServiceBroker implements IServiceBroker {
                             params: IServiceToolRegistry[K]['params'],
                             options?: { timeout?: number }
                         ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
+                        withLock: <T>(key: string, fn: () => Promise<T>): Promise<T> => this.withLock(key, fn),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -567,6 +569,43 @@ export class ServiceBroker implements IServiceBroker {
             });
         }
         return this.call(tool, params, { ...options, nodeID: leader.nodeID });
+    }
+
+    /**
+     * callOnLeader's other half. Pinning an operation to one node answers "which process may run
+     * this," not "what happens when two callers reach that same process for the same key at
+     * (almost) the same moment" -- two overlapping `await`s on that one process can still
+     * interleave a read and a write from different callers, which is exactly the shape of race
+     * `callOnLeader` alone doesn't close. This is what does: a plain per-process, per-key promise
+     * chain -- `fn` for a given `key` never overlaps another `fn` for the *same* key, while
+     * different keys never wait on each other at all. No storage-layer atomicity assumed or
+     * required; this is a JS-level guarantee, true regardless of what Database ends up configured
+     * underneath it.
+     *
+     * Deliberately not shared across nodes and not persisted -- a process restart clears every
+     * lock, which is correct: nothing was actually still "held" once the process holding it is
+     * gone. Combined with callOnLeader (one node runs this domain's claims; withLock serializes
+     * that node's own concurrent callers for one key), that's the whole primitive: no assumption
+     * anywhere about what "the database" is or whether it has atomic operations.
+     */
+    private locks = new Map<string, Promise<unknown>>();
+
+    public async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+        const tail = this.locks.get(key) ?? Promise.resolve();
+        // `.then(fn, fn)`, not `.then(fn)`: fn must run next regardless of whether the previous
+        // holder's own fn resolved or rejected -- otherwise one failed claim permanently wedges
+        // every caller queued behind it on the same key.
+        const result = tail.then(fn, fn);
+        // Value-erased so it's usable purely as a synchronization signal; the real result/error
+        // below goes to this call's own caller, not to whoever queues in next.
+        const settled = result.then(() => undefined, () => undefined);
+        this.locks.set(key, settled);
+        settled.finally(() => {
+            // Only remove it if nothing has queued in behind this call since -- a newer settled
+            // promise already registered for this key means someone else is still waiting.
+            if (this.locks.get(key) === settled) this.locks.delete(key);
+        });
+        return result;
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {

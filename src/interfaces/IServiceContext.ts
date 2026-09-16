@@ -74,6 +74,17 @@ export interface IServiceContext<TMeta = IMeshMeta> {
         options?: { timeout?: number }
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
+    /**
+     * callOnLeader's other half: a per-process, per-key promise chain, not a database lock. Two
+     * calls to `withLock(key, fn)` for the *same* key on this process never run `fn` concurrently
+     * -- a second caller's `fn` starts only once the first's has settled, regardless of whether it
+     * resolved or rejected. Different keys never wait on each other. Combined with callOnLeader
+     * (one node runs this domain's claims), that closes the same-node race callOnLeader alone
+     * doesn't: two overlapping calls reaching that one process for the same key can still
+     * interleave a read and a write without this.
+     */
+    withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+
     /** Strictly typed event dispatch. */
     emit<K extends keyof EventRegistry>(
         event: K,
