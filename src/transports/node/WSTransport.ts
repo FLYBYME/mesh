@@ -4,7 +4,7 @@ import type { TransportConnectOptions, IWS, IWSServer, MeshPacket } from '../../
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { nanoid } from 'nanoid';
+import { randomUUID } from 'node:crypto';
 import { ILogger } from '../../interfaces/ILogger.js';
 
 interface PendingRPC {
@@ -388,13 +388,13 @@ export class WSTransport extends BaseTransport {
 
         packet.version = WSTransport.PROTOCOL_VERSION;
 
-        const correlationId = (packet.id as string) || nanoid();
+        const correlationId = (packet.id as string) || randomUUID();
         const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
         ws.send(new TextDecoder().decode(buf));
     }
 
     async call(nodeID: string, topic: string, data: Record<string, unknown>): Promise<unknown> {
-        const id = nanoid();
+        const id = randomUUID();
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 if (this.pendingRPCs.has(id)) {

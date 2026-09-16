@@ -12,11 +12,11 @@ import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { IServiceContext, ICallOptions } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
-import { nanoid } from 'nanoid';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
-import { ClientError } from './MeshError.js';
+import { ClientError, MeshError } from './MeshError.js';
 
 /**
  * formatZodIssues: renders a params validation failure as "field: reason; field: reason".
@@ -391,7 +391,7 @@ export class ServiceBroker implements IServiceBroker {
                     const serviceCtx = {
                         broker: this,
                         meta: ctx.meta,
-                        correlationId: ctx.correlationID || nanoid(),
+                        correlationId: ctx.correlationID || randomUUID(),
                         nodeID: this.nodeID,
                         call: async <K extends keyof IServiceToolRegistry>(
                             tool: K,
@@ -401,6 +401,12 @@ export class ServiceBroker implements IServiceBroker {
                             const result = await this.call(tool, params, options);
                             return result as IServiceToolRegistry[K]['returns'];
                         },
+                        callOnLeader: async <K extends keyof IServiceToolRegistry>(
+                            leaderDomain: string,
+                            tool: K,
+                            params: IServiceToolRegistry[K]['params'],
+                            options?: { timeout?: number }
+                        ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -429,7 +435,7 @@ export class ServiceBroker implements IServiceBroker {
                 const listener = (data: unknown, packet?: IMeshPacket) => {
                     const ctx = {
                         broker: this,
-                        correlationId: packet?.id || nanoid(),
+                        correlationId: packet?.id || randomUUID(),
                         nodeID: this.nodeID,
                         meta: packet?.meta,
                         call: async <K extends keyof IServiceToolRegistry>(
@@ -440,6 +446,12 @@ export class ServiceBroker implements IServiceBroker {
                             const result = await this.call(tool, params, options);
                             return result as IServiceToolRegistry[K]['returns'];
                         },
+                        callOnLeader: async <K extends keyof IServiceToolRegistry>(
+                            leaderDomain: string,
+                            tool: K,
+                            params: IServiceToolRegistry[K]['params'],
+                            options?: { timeout?: number }
+                        ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -525,9 +537,41 @@ export class ServiceBroker implements IServiceBroker {
         return this.internalCall(tool as string, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
     }
 
+    /**
+     * The other half of Registry.leaderFor: that method only answers "who should handle domain" --
+     * this is what actually gets a call there. `options.nodeID` already exists on `call()` (used,
+     * before this, only for the framework's own remote-dispatch bookkeeping) and already means
+     * exactly "run this on that specific node, not wherever the load balancer would otherwise
+     * pick" -- internalCall's own routing only consults the balancer when `options.nodeID` is
+     * unset. So this needed no new dispatch mechanism, only naming the existing one for this use:
+     * resolve the leader, force the call there.
+     *
+     * This is what makes a claim (serve.hold, serve.queue, an infer.provider acquire) safe under
+     * real multi-node concurrency without assuming anything about the storage layer's own
+     * atomicity -- the claim only ever executes on one physical process at a time (whichever one
+     * leaderFor currently names), which is safe by construction (one JS heap, one event loop), not
+     * by luck about what database happens to be configured underneath it.
+     */
+    public async callOnLeader<K extends keyof IServiceToolRegistry>(
+        domain: string,
+        tool: K,
+        params: IServiceToolRegistry[K]['params'],
+        options?: ICallOptions<IMeshMeta>
+    ): Promise<IServiceToolRegistry[K]['returns']> {
+        const leader = this.registry?.leaderFor(domain);
+        if (!leader) {
+            throw new MeshError({
+                message: `No node currently runs domain "${domain}".`,
+                code: 'UNAVAILABLE',
+                status: 503,
+            });
+        }
+        return this.call(tool, params, { ...options, nodeID: leader.nodeID });
+    }
+
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
         const packet: IMeshPacket = {
-            id: nanoid(),
+            id: randomUUID(),
             topic: event as string,
             data: payload,
             senderNodeID: this.nodeID,
@@ -587,15 +631,15 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         const activeCtx = parentCtx || this.getContext();
-        const traceId = activeCtx?.traceId || nanoid();
+        const traceId = activeCtx?.traceId || randomUUID();
         const parentId = activeCtx?.spanId;
-        const spanId = nanoid();
+        const spanId = randomUUID();
 
         const timeout = options?.timeout !== undefined ? options.timeout : schema?.timeout;
 
         const ctx: IContext<Record<string, unknown>, IMeshMeta> = {
-            id: nanoid(),
-            correlationID: activeCtx?.correlationID || nanoid(),
+            id: randomUUID(),
+            correlationID: activeCtx?.correlationID || randomUUID(),
             toolName,
             params: params,
             meta: { ...(activeCtx?.meta as IMeshMeta), ...(options?.meta as IMeshMeta), timeout },
@@ -647,8 +691,8 @@ export class ServiceBroker implements IServiceBroker {
             callerID: packet.senderNodeID,
             nodeID: this.nodeID,
             targetNodeID: targetNodeID,
-            traceId: (meta.traceId as string) || nanoid(),
-            spanId: (meta.spanId as string) || nanoid(),
+            traceId: (meta.traceId as string) || randomUUID(),
+            spanId: (meta.spanId as string) || randomUUID(),
             parentId: meta.parentId as string,
         };
 
@@ -790,7 +834,7 @@ export class ServiceBroker implements IServiceBroker {
     public async executeRemote(nodeID: string, toolName: string, params: unknown, meta: Record<string, unknown> = {}): Promise<unknown> {
         if (!this.network) throw new Error('[ServiceBroker] Network not initialized');
 
-        const requestId = (meta.correlationID as string) || (meta.id as string) || nanoid();
+        const requestId = (meta.correlationID as string) || (meta.id as string) || randomUUID();
 
         const currentCtx = this.getContext();
         const tracingMeta = {

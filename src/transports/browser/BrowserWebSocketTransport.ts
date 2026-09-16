@@ -1,9 +1,13 @@
 import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
 import type { TransportConnectOptions, MeshPacket } from '../../interfaces/IMeshNetwork.js';
-import { nanoid } from 'nanoid';
 import { OfflineStorageEngine } from '../../utils/OfflineStorageEngine.js';
 import { ILogger } from '../../interfaces/ILogger.js';
+
+// Global crypto.randomUUID, not a `nanoid` import -- this file bundles for the browser, where
+// `node:crypto` doesn't resolve; `crypto.randomUUID()` is a real Web Crypto API method (and, for
+// the same reason, works unimported in Node >=19 too), unlike a package that has to be resolved.
+const randomUUID = (): string => crypto.randomUUID();
 
 
 interface PendingRPC {
@@ -80,7 +84,7 @@ export class BrowserWebSocketTransport extends BaseTransport {
         if (!ws || ws.readyState !== 1) {
             if (packet.type === 'REQUEST') {
                 await this.offlineStorage.queue({
-                    id: (packet.id as string) || nanoid(),
+                    id: (packet.id as string) || randomUUID(),
                     targetId: nodeID,
                     topic: packet.topic as string,
                     data: packet.data as Record<string, unknown>,
@@ -92,13 +96,13 @@ export class BrowserWebSocketTransport extends BaseTransport {
             return;
         }
 
-        const correlationId = (packet.id as string) || nanoid();
+        const correlationId = (packet.id as string) || randomUUID();
         const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
         ws.send(new TextDecoder().decode(buf));
     }
 
     async call(nodeID: string, topic: string, data: Record<string, unknown>): Promise<unknown> {
-        const id = nanoid();
+        const id = randomUUID();
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 if (this.pendingRPCs.has(id)) {

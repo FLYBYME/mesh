@@ -53,6 +53,16 @@ export interface IServiceBroker {
         options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
+    /** Forces `tool` onto whichever node `registry.leaderFor(domain)` currently names. See
+     *  IServiceContext.callOnLeader for the full reasoning; this is the same thing at the broker
+     *  level, for callers that hold a broker directly rather than a tool handler's ctx. */
+    callOnLeader<K extends keyof IServiceToolRegistry>(
+        domain: string,
+        tool: K,
+        params: IServiceToolRegistry[K]['params'],
+        options?: ICallOptions<IMeshMeta>
+    ): Promise<IServiceToolRegistry[K]['returns']>;
+
     /** Typed event emit. */
     emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void;
 

@@ -60,6 +60,20 @@ export interface IServiceContext<TMeta = IMeshMeta> {
         options?: ICallOptions<TMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
+    /**
+     * Forces `tool` to run on whichever node Registry.leaderFor(domain) currently names, instead
+     * of wherever the load balancer would otherwise pick. This is what makes a conditional claim
+     * (a hold, a queue lease, a concurrency-limited acquire) safe under real multi-node
+     * concurrency without assuming anything about the storage layer's own atomicity: the call only
+     * ever executes on one physical process at a time. Throws if no node currently runs `domain`.
+     */
+    callOnLeader<K extends keyof IServiceToolRegistry>(
+        domain: string,
+        tool: K,
+        params: IServiceToolRegistry[K]['params'],
+        options?: { timeout?: number }
+    ): Promise<IServiceToolRegistry[K]['returns']>;
+
     /** Strictly typed event dispatch. */
     emit<K extends keyof EventRegistry>(
         event: K,

@@ -162,6 +162,15 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 p: IServiceToolRegistry[K]['params'],
                 o?: { nodeID?: string; timeout?: number }
             ) => broker.call(a, p, o),
+            // Added, not part of the guarded block above -- callOnLeader is new on
+            // IServiceContext (ServiceBroker.callOnLeader), a hook needs it for the same reason
+            // any other tool handler would.
+            callOnLeader: <K extends keyof IServiceToolRegistry>(
+                leaderDomain: string,
+                a: K,
+                p: IServiceToolRegistry[K]['params'],
+                o?: { timeout?: number }
+            ) => broker.callOnLeader(leaderDomain, a, p, o),
             emit: <K extends keyof EventRegistry>(
                 e: K,
                 p: EventRegistry[K],
