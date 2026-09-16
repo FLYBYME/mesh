@@ -75,15 +75,25 @@ export interface IServiceContext<TMeta = IMeshMeta> {
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /**
-     * callOnLeader's other half: a per-process, per-key promise chain, not a database lock. Two
-     * calls to `withLock(key, fn)` for the *same* key on this process never run `fn` concurrently
-     * -- a second caller's `fn` starts only once the first's has settled, regardless of whether it
-     * resolved or rejected. Different keys never wait on each other. Combined with callOnLeader
-     * (one node runs this domain's claims), that closes the same-node race callOnLeader alone
-     * doesn't: two overlapping calls reaching that one process for the same key can still
-     * interleave a read and a write without this.
+     * callOnLeader's other half: a per-process, per-key lock with a real TTL (default 10s, capped
+     * at 30s -- a lock is not a place to hold state for minutes) and a fencing token. `acquire`
+     * throws if `key` is still held once `waitMs` (default 5s) elapses -- not an unbounded wait.
+     * `release` only actually releases when `token` still matches the current holder, so a late
+     * release from a holder whose TTL already expired can never tear down whoever holds it now.
      */
-    withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+    acquire(key: string, options?: { ttlMs?: number; waitMs?: number }): Promise<{ token: string }>;
+
+    /** A no-op if `token` isn't the current holder's -- see `acquire`. */
+    release(key: string, token: string): void;
+
+    /**
+     * `acquire`, run `fn`, `release` -- guaranteed by `finally`, not by remembering to call
+     * `release`. Prefer this over a bare acquire/release pair; code between them has to be held to
+     * the same discipline as an interrupt handler (fast, nothing that can hang), and this is the
+     * version that can't leak a lock for the rest of its TTL just because a code path in between
+     * forgot to release it.
+     */
+    withLock<T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T>;
 
     /** Strictly typed event dispatch. */
     emit<K extends keyof EventRegistry>(

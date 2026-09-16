@@ -1,3 +1,4 @@
+import { MeshError } from '../../core/MeshError.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -76,5 +77,56 @@ describe('ServiceBroker.withLock', () => {
         const start = Date.now();
         await broker.withLock('reusable', async () => undefined);
         expect(Date.now() - start).toBeLessThan(50);
+    });
+});
+
+describe('ServiceBroker.acquire/release: TTL and fencing', () => {
+    let broker: ServiceBroker;
+
+    beforeEach(() => {
+        broker = new ServiceBroker('lock-ttl-test-node', new Logger(LogLevel.ERROR));
+    });
+
+    it('acquire throws if the key is still held once waitMs elapses', async () => {
+        await broker.acquire('busy-key', { ttlMs: 5000 });
+        await expect(broker.acquire('busy-key', { waitMs: 50 })).rejects.toThrow(/Could not acquire lock "busy-key"/);
+    });
+
+    it('a lock becomes claimable again once its TTL passes, with no release ever called -- the crash/bug case', async () => {
+        const { token: firstToken } = await broker.acquire('abandoned-key', { ttlMs: 30 });
+        // Simulate a holder that crashed or hung: never call release.
+        await new Promise((r) => setTimeout(r, 60));
+        const { token: secondToken } = await broker.acquire('abandoned-key', { waitMs: 200 });
+        expect(secondToken).not.toBe(firstToken);
+    });
+
+    it('a stale token\'s release is a no-op -- it can never tear down whoever holds the lock now', async () => {
+        const { token: staleToken } = await broker.acquire('fenced-key', { ttlMs: 20 });
+        await new Promise((r) => setTimeout(r, 40)); // let it expire
+        const { token: currentToken } = await broker.acquire('fenced-key', { ttlMs: 5000 });
+
+        broker.release('fenced-key', staleToken); // the late, stale release
+
+        // The current holder's own lock must still be intact -- a third party can't acquire it.
+        await expect(broker.acquire('fenced-key', { waitMs: 50 })).rejects.toThrow(/Could not acquire/);
+
+        // The real holder's own release still works, using its own real token.
+        broker.release('fenced-key', currentToken);
+        await expect(broker.acquire('fenced-key', { waitMs: 50 })).resolves.toBeDefined();
+    });
+
+    it('refuses a ttlMs beyond the hard cap rather than silently clamping it', async () => {
+        await expect(broker.acquire('capped-key', { ttlMs: 60_000 })).rejects.toThrow(MeshError);
+    });
+
+    it('withLock still respects ttlMs/waitMs options passed through it', async () => {
+        // Hold the lock past its own short TTL by never resolving -- withLock's own release (in
+        // `finally`) races the fn itself, but the TTL is what frees the key for the next waiter
+        // regardless of whether fn ever finishes.
+        const stuck = broker.withLock('wl-ttl-key', () => new Promise(() => { /* never resolves */ }), { ttlMs: 30 });
+        void stuck.catch(() => { /* this call itself is expected to hang; only its lock matters here */ });
+
+        await new Promise((r) => setTimeout(r, 60));
+        await expect(broker.withLock('wl-ttl-key', async () => 'freed', { waitMs: 200 })).resolves.toBe('freed');
     });
 });

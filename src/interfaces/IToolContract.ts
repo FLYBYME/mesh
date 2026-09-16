@@ -70,6 +70,17 @@ export interface ToolContract<
     readonly rest: RestMeta;
     /** Whether this tool is destructive (modifies state or performs high-risk actions) */
     readonly destructive?: boolean;
+    /**
+     * Whether this call must run on the deterministic leader for its own module's domain
+     * (Registry.leaderFor(module.domain), the module that actually mounts this contract -- not
+     * necessarily this contract's own `domain`, e.g. a crud mounted under a different sub-domain
+     * than the module that owns it). Set this instead of hand-checking `ctx.broker.registry
+     * ?.leaderFor(...)` inside the handler: ServiceBroker resolves the owning module's domain
+     * itself at dispatch time and forwards via callOnLeader before the handler ever runs, so the
+     * handler body never has to know it's not already on the right node -- and never has a
+     * hand-typed domain string that can name the wrong thing.
+     */
+    readonly leaderScoped?: boolean;
     /** Whether this tool is a CRUD operation */
     readonly isCrud?: boolean;
     /** Whether this tool is a Time Series operation */

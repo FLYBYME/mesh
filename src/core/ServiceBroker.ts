@@ -407,7 +407,9 @@ export class ServiceBroker implements IServiceBroker {
                             params: IServiceToolRegistry[K]['params'],
                             options?: { timeout?: number }
                         ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
-                        withLock: <T>(key: string, fn: () => Promise<T>): Promise<T> => this.withLock(key, fn),
+                        acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
+                        release: (key: string, token: string) => this.release(key, token),
+                        withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -415,6 +417,21 @@ export class ServiceBroker implements IServiceBroker {
                         ) => this.emit(event, payload, options),
                         logger: this.logger
                     };
+                    // Resolved and forwarded here, once, rather than inside every handler that
+                    // needs it: `domain` (closed over from registerModule's own parameter, the
+                    // module's real domain) is what leaderFor actually has to be asked about, not
+                    // `contract.domain` -- a crud's own domain can be a different sub-domain than
+                    // the module that mounts it (serve.catalog mounts serve.repo/serve.part/...),
+                    // and asking leaderFor about the wrong one always returns undefined, which
+                    // looks exactly like "nobody runs this" rather than failing loudly. Runs again,
+                    // harmlessly, once this same call actually reaches the leader (this check sees
+                    // `leader.nodeID === this.nodeID` there and falls through).
+                    if (contract.leaderScoped === true) {
+                        const leader = this.registry?.leaderFor(domain);
+                        if (leader !== undefined && leader.nodeID !== this.nodeID) {
+                            return this.callOnLeader(domain, toolKeyStr as keyof IServiceToolRegistry, ctx.params as never);
+                        }
+                    }
                     return await module.execute(contract.domain, contract.action, ctx.params, serviceCtx as never);
                 },
                 highSecurity: contract.destructive === true
@@ -453,7 +470,9 @@ export class ServiceBroker implements IServiceBroker {
                             params: IServiceToolRegistry[K]['params'],
                             options?: { timeout?: number }
                         ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
-                        withLock: <T>(key: string, fn: () => Promise<T>): Promise<T> => this.withLock(key, fn),
+                        acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
+                        release: (key: string, token: string) => this.release(key, token),
+                        withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
                         emit: <K extends keyof EventRegistry>(
                             event: K,
                             payload: EventRegistry[K],
@@ -576,36 +595,103 @@ export class ServiceBroker implements IServiceBroker {
      * this," not "what happens when two callers reach that same process for the same key at
      * (almost) the same moment" -- two overlapping `await`s on that one process can still
      * interleave a read and a write from different callers, which is exactly the shape of race
-     * `callOnLeader` alone doesn't close. This is what does: a plain per-process, per-key promise
-     * chain -- `fn` for a given `key` never overlaps another `fn` for the *same* key, while
-     * different keys never wait on each other at all. No storage-layer atomicity assumed or
-     * required; this is a JS-level guarantee, true regardless of what Database ends up configured
-     * underneath it.
+     * `callOnLeader` alone doesn't close. This closes it: a per-process, per-key lock with a real
+     * TTL and a fencing token, not a database lock and not an unbounded wait.
+     *
+     * **Why a TTL is mandatory, not optional.** A contract's own timeout can fire before code
+     * holding a lock finishes -- and a timed-out call doesn't actually stop running (JS has no
+     * real cancellation for a plain Promise; a timeout only stops *waiting* for it). Without a
+     * hard maximum lifetime, a lock behind a timed-out or crashed holder would never free, and
+     * everyone queued behind that key waits forever. `MAX_LOCK_TTL_MS` refuses a caller's request
+     * to hold one longer than that outright, rather than silently doing something other than what
+     * was asked.
+     *
+     * **Why acquire returns a token, and release requires it back.** A lock that expired via TTL
+     * can already have a *different*, legitimate holder by the time the original one gets around
+     * to calling release -- without a token, that late release would tear down the new holder's
+     * lock, not its own. `release` only actually releases when the token still matches the
+     * current holder; otherwise it's a safe no-op, because whatever it thought it held, it
+     * doesn't anymore.
+     *
+     * **What this does not do:** a TTL bounds how long the *queue* waits, not how long the
+     * original holder's own code keeps running in the background after it expires -- there is no
+     * way to force that in plain JS. This is why code inside `withLock` has to be held to the same
+     * discipline as an interrupt handler: fast, and nothing in it that can hang. The TTL is a
+     * safety net for a bug or a crash, not permission to do slow work while holding the lock.
      *
      * Deliberately not shared across nodes and not persisted -- a process restart clears every
      * lock, which is correct: nothing was actually still "held" once the process holding it is
-     * gone. Combined with callOnLeader (one node runs this domain's claims; withLock serializes
-     * that node's own concurrent callers for one key), that's the whole primitive: no assumption
-     * anywhere about what "the database" is or whether it has atomic operations.
+     * gone.
      */
-    private locks = new Map<string, Promise<unknown>>();
+    private locks = new Map<string, { token: string; expiresAt: number }>();
 
-    public async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-        const tail = this.locks.get(key) ?? Promise.resolve();
-        // `.then(fn, fn)`, not `.then(fn)`: fn must run next regardless of whether the previous
-        // holder's own fn resolved or rejected -- otherwise one failed claim permanently wedges
-        // every caller queued behind it on the same key.
-        const result = tail.then(fn, fn);
-        // Value-erased so it's usable purely as a synchronization signal; the real result/error
-        // below goes to this call's own caller, not to whoever queues in next.
-        const settled = result.then(() => undefined, () => undefined);
-        this.locks.set(key, settled);
-        settled.finally(() => {
-            // Only remove it if nothing has queued in behind this call since -- a newer settled
-            // promise already registered for this key means someone else is still waiting.
-            if (this.locks.get(key) === settled) this.locks.delete(key);
-        });
-        return result;
+    private static readonly DEFAULT_LOCK_TTL_MS = 10_000;
+    private static readonly MAX_LOCK_TTL_MS = 30_000;
+    private static readonly DEFAULT_LOCK_WAIT_MS = 5_000;
+    private static readonly LOCK_POLL_INTERVAL_MS = 20;
+
+    /**
+     * Claims `key`, waiting up to `waitMs` (default 5s) for it to free up if someone else
+     * currently holds it. Throws if it's still held once `waitMs` elapses -- "throws if you don't
+     * get it in time," not an unbounded wait. `ttlMs` (default 10s, hard-capped at 30s -- a lock
+     * is not a place to hold state for minutes) is how long *this* acquisition is allowed to last
+     * before it's treated as abandoned and made claimable again, released or not.
+     */
+    public async acquire(key: string, options?: { ttlMs?: number; waitMs?: number }): Promise<{ token: string }> {
+        const ttlMs = options?.ttlMs ?? ServiceBroker.DEFAULT_LOCK_TTL_MS;
+        if (ttlMs > ServiceBroker.MAX_LOCK_TTL_MS) {
+            throw new MeshError({
+                message: `Lock ttlMs ${ttlMs} exceeds the maximum of ${ServiceBroker.MAX_LOCK_TTL_MS}ms.`,
+                code: 'BAD_REQUEST',
+                status: 400,
+            });
+        }
+        const waitMs = options?.waitMs ?? ServiceBroker.DEFAULT_LOCK_WAIT_MS;
+        const deadline = Date.now() + waitMs;
+
+        for (;;) {
+            const now = Date.now();
+            const existing = this.locks.get(key);
+            if (existing === undefined || existing.expiresAt <= now) {
+                const token = randomUUID();
+                this.locks.set(key, { token, expiresAt: now + ttlMs });
+                return { token };
+            }
+            if (now >= deadline) {
+                throw new MeshError({
+                    message: `Could not acquire lock "${key}" within ${waitMs}ms.`,
+                    code: 'LOCK_TIMEOUT',
+                    status: 503,
+                });
+            }
+            await new Promise((resolve) => {
+                setTimeout(resolve, Math.min(ServiceBroker.LOCK_POLL_INTERVAL_MS, deadline - now));
+            });
+        }
+    }
+
+    /** A no-op if `token` isn't the current holder's -- see the class doc above for why that has
+     *  to be true rather than releasing unconditionally by key. */
+    public release(key: string, token: string): void {
+        const existing = this.locks.get(key);
+        if (existing !== undefined && existing.token === token) {
+            this.locks.delete(key);
+        }
+    }
+
+    /**
+     * The version almost everything should use: `acquire`, run `fn`, `release` -- guaranteed by
+     * `finally`, not by the caller remembering to. A bare `acquire`/`release` pair leaks its lock
+     * for the rest of that key's TTL the moment any code path between them forgets to call
+     * `release` (an early return, a rethrow past it); `withLock` cannot do that by construction.
+     */
+    public async withLock<T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> {
+        const { token } = await this.acquire(key, options);
+        try {
+            return await fn();
+        } finally {
+            this.release(key, token);
+        }
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
