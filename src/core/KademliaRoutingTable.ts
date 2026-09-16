@@ -5,6 +5,30 @@ interface InternalNodeInfo extends NodeInfo {
 }
 
 /**
+ * A string (a node ID, a domain name, anything) to a point in the same 256-bit XOR-distance space
+ * every node already hashes its own ID into below. Exported, not private to the class, so anything
+ * that needs a deterministic "which of these known things is closest to this key" answer -- most
+ * concretely, Registry.leaderFor's domain-to-node assignment -- computes it the same way, without
+ * needing a KademliaRoutingTable instance (which is optional, dhtEnabled-gated) just to hash a
+ * string consistently.
+ */
+export function idToBigInt(id: string): bigint {
+    return BigInt('0x' + idToHex(id));
+}
+
+export function idToHex(str: string): string {
+    let res = '';
+    for (let i = 0; i < str.length; i++) {
+        res += str.charCodeAt(i).toString(16).padStart(2, '0');
+    }
+    return res.padEnd(64, '0').slice(0, 64);
+}
+
+export function xorDistance(a: bigint, b: bigint): bigint {
+    return a ^ b;
+}
+
+/**
  * KademliaRoutingTable — XOR-distance based node organization.
  */
 export class KademliaRoutingTable {
@@ -27,7 +51,7 @@ export class KademliaRoutingTable {
     private getBigIntID(id: string, node?: NodeInfo): bigint {
         const cachedNode = node as InternalNodeInfo | undefined;
         if (cachedNode && cachedNode.cachedBigIntID) return BigInt(cachedNode.cachedBigIntID);
-        const bi = BigInt('0x' + this.toHex(id));
+        const bi = idToBigInt(id);
         if (cachedNode) cachedNode.cachedBigIntID = bi.toString();
         return bi;
     }
@@ -104,13 +128,5 @@ export class KademliaRoutingTable {
     private getBucketIndex(distance: bigint): number {
         if (distance === BigInt(0)) return 0;
         return Math.min(255, distance.toString(2).length - 1);
-    }
-
-    private toHex(str: string): string {
-        let res = '';
-        for (let i = 0; i < str.length; i++) {
-            res += str.charCodeAt(i).toString(16).padStart(2, '0');
-        }
-        return res.padEnd(64, '0').slice(0, 64);
     }
 }

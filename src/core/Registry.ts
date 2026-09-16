@@ -4,7 +4,7 @@ import type { NodeInfo as RegistryNodeInfo, ServiceInfo as RegistryServiceInfo, 
 import type { ILogger } from '../interfaces/ILogger.js';
 import { BaseBalancer } from '../balancers/BaseBalancer.js';
 import { RoundRobinBalancer } from '../balancers/RoundRobinBalancer.js';
-import { KademliaRoutingTable } from './KademliaRoutingTable.js';
+import { KademliaRoutingTable, idToBigInt, xorDistance } from './KademliaRoutingTable.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import type { NodeInfo as CoreNodeInfo, IServiceNode } from '../interfaces/IMeshNetwork.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
@@ -584,6 +584,46 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         }
 
         return undefined;
+    }
+
+    /**
+     * Deterministic, not elected: every node computes this the same way from the same registry
+     * state it already maintains (heartbeat/presence, the same data getNextToolEndpoint already
+     * scans) -- no vote, no extra round trip, no new protocol chatter. Among the nodes currently
+     * running `domain`, the leader is whichever one's nodeID is closest, by the same XOR distance
+     * KademliaRoutingTable uses for peer routing, to hash(domain). If the current leader
+     * disappears (pruneStaleNodes ages it out the same as any other dead node), every node's next
+     * call to this function picks someone else automatically -- fault tolerance falls out of it
+     * being a pure function over already-converging state, not out of anything failover-specific.
+     *
+     * This does not itself make anything safe to run on more than one node at once -- it only
+     * answers "which one node should." A caller still has to actually route the sensitive
+     * operation to that node (or refuse to run it locally when it isn't the leader) for the
+     * guarantee to mean anything.
+     */
+    public leaderFor(domain: string): CoreNodeInfo | undefined {
+        const candidates: RegistryNodeInfo[] = [];
+        for (const node of this.nodes.values()) {
+            if (!node.available) continue;
+            if ((node.namespace || 'default') !== this.localNamespace) continue;
+            if (node.services.some((svc) => svc.name === domain)) {
+                candidates.push(node);
+            }
+        }
+        if (candidates.length === 0) return undefined;
+
+        const targetID = idToBigInt(domain);
+        let closest = candidates[0]!;
+        let closestDistance = xorDistance(targetID, idToBigInt(closest.nodeID));
+        for (const candidate of candidates.slice(1)) {
+            const distance = xorDistance(targetID, idToBigInt(candidate.nodeID));
+            if (distance < closestDistance) {
+                closest = candidate;
+                closestDistance = distance;
+            }
+        }
+
+        return closest as unknown as CoreNodeInfo;
     }
 
     private pruneStaleNodes(ttlMs: number): void {

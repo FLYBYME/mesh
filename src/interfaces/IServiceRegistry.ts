@@ -28,6 +28,15 @@ export interface IServiceRegistry {
     
     getNextToolEndpoint(toolName: string): { nodeID: string; tool: ToolInfo } | undefined;
 
+    /**
+     * Deterministic single-node assignment for a domain -- every node computes the same answer
+     * from the same presence data (no election, no extra messages), and it changes automatically
+     * as nodes join/leave. Answers "which one node should handle this," not itself a guarantee
+     * anything is safe -- a caller has to actually route to (or defer to) that node for the
+     * guarantee to hold.
+     */
+    leaderFor(domain: string): NodeInfo | undefined;
+
     /** Tool registration */
     registerTool(contract: ToolContract): void;
     getTool(key: string): ToolContract | undefined;

@@ -3,6 +3,7 @@ import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import { DemoSkill } from '../../examples/demo/demo.service.js';
 import type { NodeInfo } from '../../interfaces/IMeshNetwork.js';
+import { idToBigInt, xorDistance } from '../../core/KademliaRoutingTable.js';
 
 describe('Registry', () => {
     let registry: Registry;
@@ -227,6 +228,86 @@ describe('Registry', () => {
             const selected = registry.selectNode('demo.hello', { toolName: 'demo.hello', params: {} });
             expect(selected).toBeDefined();
             expect(selected!.nodeID).toBe(localNodeID);
+        });
+    });
+
+    // ─── leaderFor ──────────────────────────────────────────────────────────
+
+    describe('leaderFor()', () => {
+        it('returns undefined when nothing offers the domain', () => {
+            expect(registry.leaderFor('infer.provider')).toBeUndefined();
+        });
+
+        it('returns the sole candidate when only one node offers the domain', () => {
+            registry.registerNode(createNodeInfo('infer-node-1', [{ name: 'infer.provider' }]));
+            const leader = registry.leaderFor('infer.provider');
+            expect(leader?.nodeID).toBe('infer-node-1');
+        });
+
+        it('is deterministic: repeated calls over the same state agree', () => {
+            registry.registerNode(createNodeInfo('infer-node-1', [{ name: 'infer.provider' }]));
+            registry.registerNode(createNodeInfo('infer-node-2', [{ name: 'infer.provider' }]));
+            registry.registerNode(createNodeInfo('infer-node-3', [{ name: 'infer.provider' }]));
+
+            const first = registry.leaderFor('infer.provider');
+            for (let i = 0; i < 10; i++) {
+                expect(registry.leaderFor('infer.provider')?.nodeID).toBe(first?.nodeID);
+            }
+        });
+
+        it('picks the candidate closest to hash(domain) by XOR distance, not just the first one registered', () => {
+            const domain = 'infer.provider';
+            registry.registerNode(createNodeInfo('aaa', [{ name: domain }]));
+            registry.registerNode(createNodeInfo('bbb', [{ name: domain }]));
+            registry.registerNode(createNodeInfo('ccc', [{ name: domain }]));
+
+            const target = idToBigInt(domain);
+            const expected = [localNodeID, 'aaa', 'bbb', 'ccc']
+                .map((nodeID) => ({ nodeID, distance: xorDistance(target, idToBigInt(nodeID)) }))
+                .sort((a, b) => (a.distance < b.distance ? -1 : a.distance > b.distance ? 1 : 0))[0];
+
+            // The local node doesn't offer the domain, so it's never a real candidate even if it
+            // would have won on distance -- confirms leaderFor respects presence, not just distance.
+            const candidateExpected = expected.nodeID === localNodeID
+                ? [localNodeID, 'aaa', 'bbb', 'ccc']
+                    .filter((id) => id !== localNodeID)
+                    .map((nodeID) => ({ nodeID, distance: xorDistance(target, idToBigInt(nodeID)) }))
+                    .sort((a, b) => (a.distance < b.distance ? -1 : a.distance > b.distance ? 1 : 0))[0]
+                : expected;
+
+            expect(registry.leaderFor(domain)?.nodeID).toBe(candidateExpected.nodeID);
+        });
+
+        it('ignores an unavailable node even if it would otherwise win', () => {
+            registry.registerNode(createNodeInfo('infer-node-1', [{ name: 'infer.provider' }]));
+            const other = createNodeInfo('infer-node-2', [{ name: 'infer.provider' }]);
+            other.available = false;
+            registry.registerNode(other);
+
+            const leader = registry.leaderFor('infer.provider');
+            expect(leader?.nodeID).not.toBe('infer-node-2');
+        });
+
+        it('ignores a node in a different namespace', () => {
+            const other = createNodeInfo('infer-node-foreign', [{ name: 'infer.provider' }]);
+            other.namespace = 'other-namespace';
+            registry.registerNode(other);
+
+            expect(registry.leaderFor('infer.provider')).toBeUndefined();
+        });
+
+        it('picks a different leader automatically once the current one is removed -- no failover-specific code needed', () => {
+            registry.registerNode(createNodeInfo('infer-node-1', [{ name: 'infer.provider' }]));
+            registry.registerNode(createNodeInfo('infer-node-2', [{ name: 'infer.provider' }]));
+
+            const before = registry.leaderFor('infer.provider');
+            expect(before).toBeDefined();
+
+            registry.unregisterNode(before!.nodeID);
+
+            const after = registry.leaderFor('infer.provider');
+            expect(after).toBeDefined();
+            expect(after!.nodeID).not.toBe(before!.nodeID);
         });
     });
 
