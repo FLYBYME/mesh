@@ -244,6 +244,19 @@ export class ContractRegistry {
         return this.contracts.has(key);
     }
 
+    /**
+     * The other half `register`'s first-write-wins guard needs and never had: a module that stops
+     * (ServiceBroker.unregisterModule) leaves its entries here forever, so a later rebuild-and-
+     * restart of the same service registers a fresh, correct contract object that `register` then
+     * silently discards in favor of the stale one -- `update`/`delete` visibility flipped `public`
+     * in source stayed `internal` here indefinitely, no matter how many times the service was
+     * rebuilt, because nothing had ever removed the original entry. Called from the same place
+     * MeshToolSchemaRegistry.delete/localTools.delete already are, for the same reason.
+     */
+    public delete(key: string): boolean {
+        return this.contracts.delete(key);
+    }
+
     public clear(): void {
         this.contracts.clear();
     }

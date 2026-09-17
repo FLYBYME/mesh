@@ -5,7 +5,7 @@ import { IServiceModule } from '../../interfaces/IServiceModule.js';
 import { IServiceContext } from '../../interfaces/IServiceContext.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
 import { ServiceModule } from '../../core/ServiceModule.js';
-import { defaultPrint, defineContract } from '../../interfaces/IToolContract.js';
+import { defaultPrint, defineContract, globalContractRegistry } from '../../interfaces/IToolContract.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { Database } from '../../db/Database.js';
 import { MongoClient } from 'mongodb';
@@ -219,6 +219,53 @@ describe('ServiceBroker', () => {
 
         it('throws a real error when unregistering a domain that was never registered', async () => {
             await expect((broker as ServiceBroker).unregisterModule('never-registered')).rejects.toThrow(/not registered/i);
+        });
+
+        /**
+         * Real bug, found live: `serve.part.stop`/`start` (mesh-serve's hot-reload path for a
+         * `kind: 'service'` part) rebuilds and re-imports a module, but globalContractRegistry's own
+         * `register()` is first-write-wins -- so a contract whose visibility changed from `internal`
+         * to `public` in a later build stayed stuck as `internal` in this registry forever, no matter
+         * how many times the service was rebuilt and restarted, because nothing had ever removed the
+         * stale first entry. unregisterModule already tore down localTools/MeshToolSchemaRegistry/
+         * toolMountKeys on stop; globalContractRegistry was the one it forgot.
+         */
+        it('lets a re-registered contract actually replace the stale one after unregisterModule', async () => {
+            const reloadKey = 'reload-demo.check';
+            const makeContract = (visibility: 'internal' | 'public') => defineContract({
+                domain: 'reload-demo',
+                action: 'check',
+                description: 'Whether a rebuilt module\'s new visibility actually takes effect.',
+                inputSchema: z.object({}),
+                outputSchema: z.object({ ok: z.boolean() }),
+                rest: { method: 'GET', path: '/reload-demo/check' },
+                destructive: false,
+                visibility,
+                print: defaultPrint,
+            });
+
+            class ReloadModule extends ServiceModule {
+                public readonly domain = 'reload-demo';
+                constructor(visibility: 'internal' | 'public') {
+                    super();
+                    this.mountTool(makeContract(visibility), async () => ({ ok: true }));
+                }
+            }
+
+            const first = new ReloadModule('internal');
+            await (broker as ServiceBroker).registerModule(first as unknown as IServiceModule);
+            expect(globalContractRegistry.get(reloadKey)?.visibility).toBe('internal');
+
+            await (broker as ServiceBroker).unregisterModule('reload-demo');
+            // The bug: without unregisterModule also clearing globalContractRegistry, this stays
+            // 'internal' below, forever, regardless of what the next registration declares.
+            expect(globalContractRegistry.has(reloadKey)).toBe(false);
+
+            const second = new ReloadModule('public');
+            await (broker as ServiceBroker).registerModule(second as unknown as IServiceModule);
+            expect(globalContractRegistry.get(reloadKey)?.visibility).toBe('public');
+
+            await (broker as ServiceBroker).unregisterModule('reload-demo');
         });
     });
 

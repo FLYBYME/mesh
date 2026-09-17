@@ -11,6 +11,7 @@ import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { IServiceContext, ICallOptions } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
+import { globalContractRegistry } from '../interfaces/IToolContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -526,6 +527,13 @@ export class ServiceBroker implements IServiceBroker {
             this.localTools.delete(toolKeyStr);
             MeshToolSchemaRegistry.delete(toolKeyStr);
             this.toolMountKeys.delete(toolKeyStr);
+            // The other registry a stopped module leaves entries in -- globalContractRegistry backs
+            // describe/exposure/generateClient, not RPC dispatch, so it's easy to forget it needs the
+            // same teardown. Without this, a rebuilt-and-restarted service's fresh contract object
+            // was silently discarded by register()'s first-write-wins guard in favor of the stale one
+            // registered on this process's very first load of that service, no matter how many times
+            // it was rebuilt afterward.
+            globalContractRegistry.delete(toolKeyStr);
         }
         this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${mountKey}'`);
 
