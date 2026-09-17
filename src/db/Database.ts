@@ -27,7 +27,13 @@ export class Database {
         } catch (e) {
             // Keep default dbName if URL parsing fails
         }
-        this.client = new MongoClient(uri);
+        // Without this, the driver's own default BSON-encodes an `undefined` property as `null`
+        // rather than omitting it -- every `.optional()` schema in this codebase means "absent",
+        // never "null" (nothing here uses `.nullable()`), so a field left unset at create time gets
+        // silently written as `null` and then fails its own schema on the very next read. Found
+        // live: `serve.hold.create`/`update` writing an unset `reason` field, invisible until the
+        // row was read back and re-parsed.
+        this.client = new MongoClient(uri, { ignoreUndefined: true });
     }
 
     /**
