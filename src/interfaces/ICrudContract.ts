@@ -28,8 +28,16 @@ export interface RelationDefinition {
  * CrudParamsSchema: Standard parameters for queries.
  */
 export const CrudParamsSchema = z.object({
-    limit: z.number().optional().default(100).describe("Max count of rows."),
-    offset: z.number().optional().default(0).describe("Number of skipped rows."),
+    // z.coerce, not z.number(): a GET request's query string only ever carries strings.
+    // api.service.ts's own decodeQueryValue deliberately leaves an ordinary numeric-looking scalar
+    // (limit=100) as a string rather than guessing it should be parsed -- only a value that round-
+    // trips through JSON as an object/array gets decoded -- so limit/offset always arrive here as
+    // "100"/"0" over real HTTP. Plain z.number() rejected that outright ("Expected number, received
+    // string") on every find/findOne/count call made over GET with an explicit limit or offset.
+    // z.coerce.number() still accepts a real number unchanged (an in-process ctx.call), so this
+    // costs nothing there.
+    limit: z.coerce.number().optional().default(100).describe("Max count of rows."),
+    offset: z.coerce.number().optional().default(0).describe("Number of skipped rows."),
     fields: z.union([z.string(), z.array(z.string())]).optional().describe("Fields to return."),
     sort: z.union([z.string(), z.array(z.string())]).optional().describe("Sorted fields. Use '-' prefix for descending."),
     search: z.string().optional().describe("Search text."),
