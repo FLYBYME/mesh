@@ -45,18 +45,18 @@
     "@types/express": "4.17.25",
     "@types/node": "20.19.41",
     "@types/ws": "8.18.1",
-    "dotenv": "latest",
-    "eventemitter3": "latest",
-    "express": "latest",
-    "mongodb": "latest",
+    "dotenv": "^17.4.2",
+    "eventemitter3": "^5.0.4",
+    "express": "^5.2.1",
+    "mongodb": "^6.21.0",
     "typescript": "5.9.3",
-    "ws": "latest",
+    "ws": "^8.21.3",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
-    "@types/jest": "latest",
-    "jest": "latest",
-    "ts-jest": "latest"
+    "@types/jest": "^30.0.0",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12"
   }
 }
