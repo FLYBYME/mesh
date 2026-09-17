@@ -221,6 +221,8 @@ export interface AnyCrudContracts extends Record<string, unknown> {
     readonly scopedBy?: string;
     /** `'global'` when the collection declares every reader may see every row. See `defineCrud`. */
     readonly delivery?: 'global';
+    /** Field names `DatabaseMiddleware` strips from every CRUD result and event payload. See `defineCrud`. */
+    readonly hidden?: readonly string[];
     readonly unique?: readonly NormalizedUniqueKey[];
     readonly dependencies: readonly string[];
     readonly find: ToolContract<z.ZodTypeAny, z.ZodTypeAny, never>;
@@ -263,8 +265,12 @@ export type CrudContracts<
     readonly idField: TIdField;
     readonly scopedBy?: string;
     readonly unique?: readonly NormalizedUniqueKey[];
+    /** Field names `DatabaseMiddleware` strips from every CRUD result and event payload. See `defineCrud`. */
+    readonly hidden?: readonly (keyof z.output<TBase> & string)[];
     readonly baseSchema: TBase;
     readonly outputSchema: TOut;
+    /** `outputSchema` with `hidden`'s fields omitted -- the shape a generic caller actually receives. */
+    readonly publicOutputSchema: z.ZodObject<z.ZodRawShape>;
     readonly relations: RelationDefinition[];
     /** The contract keys this collection's handlers depend on, as declared at definition time. */
     readonly dependencies: readonly string[];
@@ -341,6 +347,24 @@ export function defineCrud<
          * is refused.
          */
         delivery?: 'global';
+        /**
+         * **Field names never returned by this collection's own generated contracts, or carried in
+         * its CRUD events.** A schema field that must be written (a registrar API key, a password
+         * hash, a DNSSEC private key) but never read back by a generic caller.
+         *
+         * `visibility` answers *who may call an action*; this answers *what an action may say*, and
+         * the two do not substitute for each other -- a perfectly scoped, perfectly gated `find`
+         * still returns every column on every row it is allowed to return. `hidden` is enforced by
+         * `DatabaseMiddleware` itself, once, for every action and every event this collection emits
+         * -- not a convention a reader has to remember to apply with `afterCrud` or a hand-written
+         * projection.
+         *
+         * A caller with a genuine need for the real value (the service that actually calls the
+         * registrar's API) reads it with its own `database.repo(schema, domain)` call built from a
+         * schema it declares itself -- never through this domain's own generated contracts, which is
+         * the whole point of marking the field hidden here.
+         */
+        hidden?: readonly (keyof z.output<TBase> & string)[];
         unique?: UniqueOption | readonly UniqueOption[];
         outputSchema?: z.ZodObject<z.ZodRawShape>;
         relations?: RelationDefinition[];
@@ -404,6 +428,21 @@ export function defineCrud<
         updatedAt: z.coerce.date()
     } as unknown as Record<string, z.ZodTypeAny>) as unknown as TOut);
     const relations = options.relations || [];
+
+    const hidden = Object.freeze([...(options.hidden ?? [])]);
+    for (const field of hidden) {
+        if (field === idField || field === 'createdAt' || field === 'updatedAt') {
+            throw new Error(`defineCrud Error: "${field}" cannot be declared hidden for domain "${domain}" -- it is a structural field, not data.`);
+        }
+        if (!(field in baseSchema.shape)) {
+            throw new Error(`defineCrud Error: hidden field "${field}" is not defined in the Zod baseSchema shape for domain "${domain}".`);
+        }
+    }
+    const publicOutputSchema: z.ZodObject<z.ZodRawShape> = hidden.length > 0
+        ? (outputSchema as unknown as z.ZodObject<z.ZodRawShape>).omit(
+            Object.fromEntries(hidden.map((field) => [field, true])) as Record<string, true>
+        )
+        : (outputSchema as unknown as z.ZodObject<z.ZodRawShape>);
 
     assertValidDependencies(options.dependencies, `defineCrud("${domain}")`);
     const dependencies = Object.freeze([...options.dependencies]);
@@ -491,7 +530,7 @@ export function defineCrud<
         domain, action: actionNames.find,
         description: `Find ${plural} by query.`,
         inputSchema: FindInputSchema,
-        outputSchema: z.array(outputSchema),
+        outputSchema: z.array(publicOutputSchema),
         rest: { method: 'GET', path: `/${plural}` },
         destructive: destructive.find, event: eventNames.find,
         isCrud: true,
@@ -506,7 +545,7 @@ export function defineCrud<
         domain, action: actionNames.findOne,
         description: `Find a single ${domain} by query.`,
         inputSchema: FindOneInputSchema,
-        outputSchema: outputSchema.optional(),
+        outputSchema: publicOutputSchema.optional(),
         rest: { method: 'GET', path: `/${plural}/one` },
         destructive: destructive.findOne, event: eventNames.findOne,
         isCrud: true,
@@ -536,7 +575,7 @@ export function defineCrud<
         domain, action: actionNames.get,
         description: `Get a specific ${domain} by ID.`,
         inputSchema: GetInputSchema,
-        outputSchema,
+        outputSchema: publicOutputSchema,
         rest: { method: 'GET', path: `/${plural}/:${idField}` },
         destructive: destructive.get, event: eventNames.get,
         isCrud: true,
@@ -551,7 +590,7 @@ export function defineCrud<
         domain, action: actionNames.resolve,
         description: `Get a specific ${domain} by ID. Unlike get, returns undefined instead of throwing when it doesn't exist.`,
         inputSchema: GetInputSchema,
-        outputSchema: outputSchema.optional(),
+        outputSchema: publicOutputSchema.optional(),
         rest: { method: 'GET', path: `/${plural}/:${idField}/resolve` },
         destructive: destructive.resolve, event: eventNames.resolve,
         isCrud: true,
@@ -566,7 +605,7 @@ export function defineCrud<
         domain, action: actionNames.create,
         description: `Create a new ${domain}.`,
         inputSchema: CreateInputSchema,
-        outputSchema,
+        outputSchema: publicOutputSchema,
         rest: { method: 'POST', path: `/${plural}` },
         destructive: destructive.create, event: eventNames.create || true,
         isCrud: true,
@@ -581,7 +620,7 @@ export function defineCrud<
         domain, action: actionNames.createMany,
         description: `Create multiple ${plural}.`,
         inputSchema: z.array(CreateInputSchema),
-        outputSchema: z.array(outputSchema),
+        outputSchema: z.array(publicOutputSchema),
         rest: { method: 'POST', path: `/${plural}/create-many` },
         destructive: destructive.createMany, event: eventNames.createMany || true,
         isCrud: true,
@@ -596,7 +635,7 @@ export function defineCrud<
         domain, action: actionNames.update,
         description: `Update an existing ${domain}. Only specified fields will be updated.`,
         inputSchema: UpdateInputSchema,
-        outputSchema,
+        outputSchema: publicOutputSchema,
         rest: { method: 'PATCH', path: `/${plural}/:${idField}` },
         destructive: destructive.update, event: eventNames.update || true,
         isCrud: true,
@@ -611,7 +650,7 @@ export function defineCrud<
         domain, action: actionNames.replace,
         description: `Replace an existing ${domain}. Entire entity will be replaced.`,
         inputSchema: ReplaceInputSchema,
-        outputSchema,
+        outputSchema: publicOutputSchema,
         rest: { method: 'PUT', path: `/${plural}/:${idField}` },
         destructive: destructive.replace, event: eventNames.replace || true,
         isCrud: true,
@@ -638,7 +677,7 @@ export function defineCrud<
     });
 
     const crudResult = {
-        domain, idField, scopedBy, delivery, unique, baseSchema, outputSchema, relations, dependencies,
+        domain, idField, scopedBy, delivery, unique, hidden, baseSchema, outputSchema, publicOutputSchema, relations, dependencies,
         find: findContract,
         findOne: findOneContract,
         count: countContract,

@@ -7,6 +7,7 @@ import { FindOptions, StrictFilterQuery } from './types.js';
 import { z } from 'zod';
 import { IServiceModule } from '../interfaces/IServiceModule.js';
 import { MeshError } from '../core/MeshError.js';
+import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 interface BaseDoc {
     id: string;
     createdAt?: Date;
@@ -26,6 +27,25 @@ function isRecord(obj: unknown): obj is Record<string, unknown> {
 
 function isStringArray(obj: unknown): obj is string[] {
     return Array.isArray(obj) && obj.every(i => typeof i === 'string');
+}
+
+/**
+ * `defineCrud`'s `hidden` field, enforced. Applied to every CRUD result (find/get/create/update/...)
+ * and every event payload this middleware emits -- the one place, so a collection's hidden fields
+ * stay hidden regardless of which action or event carried the document. Not a `.parse()` against
+ * `publicOutputSchema`: that would re-validate the whole document against every read, and a plain
+ * delete of known field names is both cheaper and cannot itself reject an otherwise-valid document.
+ */
+function stripHidden(domain: string, value: unknown): unknown {
+    const hidden = globalCrudRegistry.get(domain)?.hidden;
+    if (!hidden || hidden.length === 0) return value;
+    const omit = (doc: Record<string, unknown>): Record<string, unknown> => {
+        const copy = { ...doc };
+        for (const field of hidden) delete copy[field];
+        return copy;
+    };
+    if (Array.isArray(value)) return value.map((item) => (isRecord(item) ? omit(item) : item));
+    return isRecord(value) ? omit(value) : value;
 }
 
 function toSnakeCase(str: string): string {
@@ -105,10 +125,17 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             return await handleTimeSeries(ctx, broker, effectiveDb, domain, action);
         }
 
-        // Try to find the base schema from a tool that returns it
+        // The repo needs the collection's FULL schema, hidden fields included -- `create`/`update`
+        // parse a write through this same schema (DomainRepository.create/update), and a schema
+        // missing a hidden field would silently strip it before it ever reaches the database. Prefer
+        // globalCrudRegistry's own `outputSchema`, which `defineCrud` never narrows regardless of
+        // `hidden` (see ICrudContract.ts) -- falling back to inferring one from a tool's own
+        // registered `returns` only for a schemaReg.isCrud domain that somehow isn't in that
+        // registry (not expected for anything actually produced by defineCrud).
+        const crudDef = globalCrudRegistry.get(domain);
         const getToolReg = MeshToolSchemaRegistry.get(`${domain}.get`);
         const createToolReg = MeshToolSchemaRegistry.get(`${domain}.create`);
-        const possibleSchema = getToolReg?.returns || createToolReg?.returns;
+        const possibleSchema = crudDef?.outputSchema || getToolReg?.returns || createToolReg?.returns;
 
         if (!possibleSchema) {
             broker.logger.warn(`[DatabaseMiddleware] Could not find schema for domain ${domain}. Proceeding to next handler.`);
@@ -255,8 +282,9 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                         createData[scopedBy] = callerScope;
                     }
                     const createRes = await repo.create(createData as Omit<BaseDoc, 'id' | 'createdAt' | 'updatedAt'> & Partial<BaseDoc>);
-                    broker.emit('data.created', { domain, id: createRes.id, item: createRes as Record<string, unknown> });
-                    emitNamed(broker, domain, 'created', createRes as Record<string, unknown>);
+                    const strippedCreateRes = stripHidden(domain, createRes as Record<string, unknown>) as Record<string, unknown>;
+                    broker.emit('data.created', { domain, id: createRes.id, item: strippedCreateRes });
+                    emitNamed(broker, domain, 'created', strippedCreateRes);
                     result = createRes;
                     break;
                 }
@@ -271,8 +299,9 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                             }
                             const res = await repo.create(createData as Omit<BaseDoc, 'id' | 'createdAt' | 'updatedAt'> & Partial<BaseDoc>);
                             created.push(res);
-                            broker.emit('data.created', { domain, id: res.id, item: res as Record<string, unknown> });
-                            emitNamed(broker, domain, 'created', res as Record<string, unknown>);
+                            const strippedRes = stripHidden(domain, res as Record<string, unknown>) as Record<string, unknown>;
+                            broker.emit('data.created', { domain, id: res.id, item: strippedRes });
+                            emitNamed(broker, domain, 'created', strippedRes);
                         }
                     }
                     result = created;
@@ -289,16 +318,17 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     if (!updateRes) {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }
+                    const strippedUpdateRes = stripHidden(domain, updateRes as Record<string, unknown>) as Record<string, unknown>;
                     broker.emit('data.updated', {
                         domain,
                         id: updateRes.id,
                         patch: params as Record<string, unknown>,
-                        item: updateRes as Record<string, unknown>
+                        item: strippedUpdateRes
                     });
                     emitNamed(broker, domain, 'updated', {
                         id: updateRes.id,
                         patch: params as Record<string, unknown>,
-                        item: updateRes as Record<string, unknown>
+                        item: strippedUpdateRes
                     });
                     result = updateRes;
                     break;
@@ -314,16 +344,17 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                     if (!replaceRes) {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }
+                    const strippedReplaceRes = stripHidden(domain, replaceRes as Record<string, unknown>) as Record<string, unknown>;
                     broker.emit('data.updated', {
                         domain,
                         id: replaceRes.id,
                         patch: params as Record<string, unknown>,
-                        item: replaceRes as Record<string, unknown>
+                        item: strippedReplaceRes
                     });
                     emitNamed(broker, domain, 'updated', {
                         id: replaceRes.id,
                         patch: params as Record<string, unknown>,
-                        item: replaceRes as Record<string, unknown>
+                        item: strippedReplaceRes
                     });
                     result = replaceRes;
                     break;
@@ -354,7 +385,7 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
                 result = await module.afterCrud(domain, action, result, serviceCtx);
             }
 
-            return result;
+            return stripHidden(domain, result);
         } catch (error) {
             broker.logger.error(`[DatabaseMiddleware] Failed to execute CRUD action ${action} for domain ${domain}`, { error: error instanceof Error ? error.message : String(error) });
             throw error;
