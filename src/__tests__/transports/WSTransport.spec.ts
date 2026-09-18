@@ -176,6 +176,73 @@ describe('WSTransport', () => {
             expect(MockedWebSocket).toHaveBeenCalledTimes(2);
             jest.useRealTimers();
         });
+
+        it('should re-key a peer once identified instead of double-tracking the same socket', async () => {
+            const mockWS = createMockWS();
+            let messageHandler: ((data: unknown) => void) | undefined;
+            mockWS.on.mockImplementation((event: string, cb: any) => {
+                if (event === 'open') setTimeout(cb, 0);
+                if (event === 'message') messageHandler = cb;
+            });
+            MockedWebSocket.mockReturnValue(mockWS as any);
+
+            await transport.connect({ nodeID: 'test-node', namespace: 'default', url: '', logger });
+            // A bootstrap connection opens under a temporary placeholder id, same as
+            // MeshOrchestrator.bootstrap()'s `bootstrap_<rand>`.
+            await transport.connectToPeer('bootstrap_abc12', 'ws://remote:5005');
+            expect((transport as any).peers.has('bootstrap_abc12')).toBe(true);
+
+            const identifyPacket: MeshPacket = {
+                id: 'p1', topic: '$node.presence', data: {}, senderNodeID: 'remote-node',
+                type: 'EVENT', timestamp: Date.now(), version: 1, priority: 1, meta: {},
+            };
+            messageHandler!(Buffer.from(serializer.serialize(identifyPacket)));
+
+            // Re-keyed, not double-tracked under both ids -- the bug this regresses had this
+            // socket pinged twice, once per key, every single heartbeat tick.
+            expect((transport as any).peers.has('bootstrap_abc12')).toBe(false);
+            expect((transport as any).peers.get('remote-node')).toBe(mockWS);
+            expect((transport as any).peers.size).toBe(1);
+        });
+
+        it('should clean up the identified peer, not the stale placeholder, on close', async () => {
+            jest.useFakeTimers();
+            const mockWS = createMockWS();
+            let messageHandler: ((data: unknown) => void) | undefined;
+            let closeHandler: (() => void) | undefined;
+            mockWS.on.mockImplementation((event: string, cb: any) => {
+                if (event === 'open') setTimeout(cb, 0);
+                if (event === 'message') messageHandler = cb;
+                if (event === 'close') closeHandler = cb;
+            });
+            MockedWebSocket.mockReturnValue(mockWS as any);
+
+            await transport.connect({ nodeID: 'test-node', namespace: 'default', url: '', logger });
+            const connectPromise = transport.connectToPeer('bootstrap_xyz99', 'ws://remote:5005');
+            jest.runOnlyPendingTimers();
+            await connectPromise;
+
+            const identifyPacket: MeshPacket = {
+                id: 'p1', topic: '$node.presence', data: {}, senderNodeID: 'remote-node-2',
+                type: 'EVENT', timestamp: Date.now(), version: 1, priority: 1, meta: {},
+            };
+            messageHandler!(Buffer.from(serializer.serialize(identifyPacket)));
+            expect((transport as any).peers.has('remote-node-2')).toBe(true);
+
+            const disconnectSpy = jest.fn();
+            transport.on('peer:disconnect', disconnectSpy);
+
+            closeHandler!();
+
+            // The real, learned identity is what gets cleaned up -- not the placeholder id this
+            // connection started as (the old bug: peers['remote-node-2'] would have been left
+            // behind forever, a zombie entry pointing at an already-closed socket).
+            expect((transport as any).peers.has('remote-node-2')).toBe(false);
+            expect(disconnectSpy).toHaveBeenCalledWith('remote-node-2');
+            expect(disconnectSpy).not.toHaveBeenCalledWith('bootstrap_xyz99');
+
+            jest.useRealTimers();
+        });
     });
 
     describe('Message Handling', () => {

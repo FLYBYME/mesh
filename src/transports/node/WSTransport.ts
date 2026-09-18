@@ -250,6 +250,10 @@ export class WSTransport extends BaseTransport {
     }
 
     private handleIncomingMessage(raw: unknown, socket: IWS, onIdentify?: (id: string) => void) {
+        // Any real inbound frame is stronger liveness evidence than a control-frame pong --
+        // sendHeartbeats() reads this to avoid killing a socket that's actively exchanging
+        // application data but happened to lose one ping/pong round-trip (see its own comment).
+        (socket as any).lastMessageAt = Date.now();
         try {
             const payloadString = this.decodePayload(raw);
             const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
@@ -470,14 +474,20 @@ export class WSTransport extends BaseTransport {
                 })
                 : new WebSocket(url)) as IWS;
 
-            this.setupSocketKeepalive(ws, () => nodeID);
+            // A bootstrap connection opens under a temporary placeholder id (MeshOrchestrator's
+            // `bootstrap_<rand>`) and only learns the peer's real nodeID once its first message
+            // arrives. currentPeerId tracks whichever key this socket is *actually* filed under
+            // in `this.peers` right now, so identifying it and cleaning it up both operate on the
+            // same, current key -- not two different ones.
+            let currentPeerId = nodeID;
+            this.setupSocketKeepalive(ws, () => currentPeerId);
 
             let isAuthFailure = false;
 
             ws.on('open', () => {
                 this.reconnectAttempts = 0;
-                this.peers.set(nodeID, ws);
-                this.emit('peer:connect', nodeID);
+                this.peers.set(currentPeerId, ws);
+                this.emit('peer:connect', currentPeerId);
                 this.startHeartbeat();
                 resolve();
             });
@@ -497,18 +507,36 @@ export class WSTransport extends BaseTransport {
 
             ws.on('message', (data: unknown) => {
                 this.handleIncomingMessage(data, ws, (id) => {
-                    this.peers.set(id, ws);
+                    if (id === currentPeerId) return;
+                    // Identified as someone other than the placeholder (or a previous identity)
+                    // it was filed under -- move the entry, don't just add a second one. The old
+                    // client-side bug here: this only ever *added* peers[id], leaving
+                    // peers[<old placeholder>] pointing at the same live socket forever, so
+                    // sendHeartbeats() pinged the same connection under two keys at once (and
+                    // 'close' below, closed over the original `nodeID`, only ever cleaned up one
+                    // of them) -- found live as a repeating "bootstrap_XXXXX missed pong,
+                    // terminating socket" that never stopped, once every heartbeat tick, for as
+                    // long as the process ran.
+                    if (this.peers.get(currentPeerId) === ws) {
+                        this.peers.delete(currentPeerId);
+                    }
+                    currentPeerId = id;
+                    this.peers.set(currentPeerId, ws);
                 });
             });
 
             ws.on('close', () => {
                 this.cleanupSocketKeepalive(ws);
-                if (this.peers.has(nodeID)) {
-                    this.peers.delete(nodeID);
-                    this.emit('peer:disconnect', nodeID);
+                if (this.peers.get(currentPeerId) === ws) {
+                    this.peers.delete(currentPeerId);
+                    this.emit('peer:disconnect', currentPeerId);
                 }
                 if (!isAuthFailure) {
-                    this.handleReconnection(nodeID, url);
+                    // Reconnect under the identity this socket last proved, not the placeholder
+                    // it started as -- otherwise every reconnect forgets the real nodeID this
+                    // connection already learned and starts back over as an anonymous bootstrap
+                    // peer, every time.
+                    this.handleReconnection(currentPeerId, url);
                 }
             });
         });
@@ -540,6 +568,7 @@ export class WSTransport extends BaseTransport {
         const socket = ws as any;
         socket.isAlive = true;
         socket.awaitingPong = false;
+        socket.lastMessageAt = Date.now();
 
         ws.on('pong', () => {
             socket.isAlive = true;
@@ -559,17 +588,56 @@ export class WSTransport extends BaseTransport {
         }
     }
 
+    /** Real inbound data more recent than a full ping interval is stronger proof of life than one
+     *  missed pong (see terminatePeerForPingFailure's own comment) -- shared by both places that
+     *  decide whether a missed pong/timeout is real. */
+    private hasRecentTraffic(ws: IWS): boolean {
+        const lastMessageAt = (ws as any).lastMessageAt as number | undefined;
+        return lastMessageAt !== undefined && (Date.now() - lastMessageAt) < this.pingIntervalMs;
+    }
+
+    /**
+     * The one place a ping failure actually kills a connection, so `this.peers` is always
+     * consistent with "will this be pinged again" the instant we decide to terminate -- not
+     * whenever (if ever) the async `ws.on('close')` handler happens to fire.
+     *
+     * A socket stuck in a half-handshaked state (an unidentified `bootstrap_<rand>` entry that
+     * never completed identification, in particular) can fail to emit `'close'` at all from
+     * `ws.terminate()` -- found live: node-1 relaying `[WSTransport] Peer bootstrap_XXXXX missed
+     * pong, terminating socket` on every single heartbeat tick for 5+ minutes straight, the exact
+     * same peer id never changing, because the entry was never actually removed from `this.peers`
+     * between calls -- sendHeartbeats() just kept re-discovering and re-killing the same zombie.
+     * Deleting it here, synchronously, means the next tick has nothing left to re-kill regardless
+     * of whether the socket's own 'close' event ever fires.
+     */
+    private terminatePeerForPingFailure(peerId: string, ws: IWS, reason: string): void {
+        this.logger?.warn(`[WSTransport] Peer ${peerId} ${reason}`);
+        this.cleanupSocketKeepalive(ws);
+        if (this.peers.get(peerId) === ws) {
+            this.peers.delete(peerId);
+            this.emit('peer:disconnect', peerId);
+        }
+        if (ws.terminate) ws.terminate();
+        else if (ws.close) ws.close();
+    }
+
     private sendHeartbeats(): void {
         for (const [peerId, ws] of this.peers.entries()) {
             if (ws.readyState !== 1) continue;
 
             const socket = ws as any;
             if (socket.awaitingPong) {
-                this.logger?.warn(`[WSTransport] Peer ${peerId} missed pong, terminating socket`);
-                this.cleanupSocketKeepalive(ws);
-                if (ws.terminate) ws.terminate();
-                else if (ws.close) ws.close();
-                continue;
+                // A pong is one control-frame round-trip on the same connection real request/
+                // response traffic flows over -- under sustained load it can lose a single race
+                // against that traffic without the connection actually being dead. Real inbound
+                // data more recent than a full ping interval is stronger proof of life than one
+                // missed pong, so don't kill a socket that's demonstrably still exchanging
+                // messages; just fall through and send it a fresh ping this tick instead.
+                if (!this.hasRecentTraffic(ws)) {
+                    this.terminatePeerForPingFailure(peerId, ws, 'missed pong, terminating socket');
+                    continue;
+                }
+                socket.awaitingPong = false;
             }
 
             socket.awaitingPong = true;
@@ -580,12 +648,17 @@ export class WSTransport extends BaseTransport {
             }
 
             socket._pingTimeoutTimer = setTimeout(() => {
-                if (socket.awaitingPong) {
-                    this.logger?.warn(`[WSTransport] Peer ${peerId} ping timeout (${this.pingTimeoutMs}ms), terminating socket`);
-                    socket._pingTimeoutTimer = undefined;
-                    if (ws.terminate) ws.terminate();
-                    else if (ws.close) ws.close();
+                if (!socket.awaitingPong) return;
+                socket._pingTimeoutTimer = undefined;
+                // Same escape hatch as the missed-pong branch above -- this timer fires
+                // independently of sendHeartbeats()'s own tick, and previously had no such check
+                // at all: a socket that was demonstrably still exchanging real traffic got killed
+                // anyway the moment this specific ping/pong round-trip alone was slow.
+                if (this.hasRecentTraffic(ws)) {
+                    socket.awaitingPong = false;
+                    return;
                 }
+                this.terminatePeerForPingFailure(peerId, ws, `ping timeout (${this.pingTimeoutMs}ms), terminating socket`);
             }, this.pingTimeoutMs);
 
             if (socket._pingTimeoutTimer.unref) {
@@ -596,10 +669,7 @@ export class WSTransport extends BaseTransport {
                 try {
                     ws.ping();
                 } catch (err) {
-                    this.logger?.warn(`[WSTransport] Error sending ping to ${peerId}: ${err instanceof Error ? err.message : String(err)}`);
-                    this.cleanupSocketKeepalive(ws);
-                    if (ws.terminate) ws.terminate();
-                    else if (ws.close) ws.close();
+                    this.terminatePeerForPingFailure(peerId, ws, `error sending ping, terminating socket: ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
         }
