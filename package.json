@@ -1,6 +1,6 @@
 {
   "name": "@flybyme/mesh",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "Mesh network framework",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,19 +8,23 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./node": {
       "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
+      "import": "./dist/node.js",
+      "default": "./dist/node.js"
     },
     "./browser": {
       "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.js"
+      "import": "./dist/browser.js",
+      "default": "./dist/browser.js"
     },
     "./contracts": {
       "types": "./dist/contracts.d.ts",
-      "import": "./dist/contracts.js"
+      "import": "./dist/contracts.js",
+      "default": "./dist/contracts.js"
     }
   },
   "files": [
