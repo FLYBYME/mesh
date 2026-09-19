@@ -200,16 +200,35 @@ function with no change event; nothing today notices "I just became the leader f
    membership-change events the `Registry` already emits as nodes join/leave) and run that same
    load sequence once, the first time a node becomes leader for a `long-running`/`interval` domain
    it doesn't have loaded yet.
-3. **Eviction is bookkeeping-only, not true memory reclamation.** `ServiceBroker.unregisterModule()`
-   (`ServiceBroker.ts:509`) already exists and is thorough -- runs `onStop`, removes the module from
-   `localTools`/`MeshToolSchemaRegistry`/`toolMountKeys`/`globalContractRegistry`, unregisters from
-   the local `Registry`. It does **not**, and in plain Node/V8 *cannot*, actually unload the imported
-   ES module from the process's memory -- `import()` has no matching "forget this module" primitive
-   without something heavier (a `vm.Module` in an isolated context, a worker thread that gets torn
-   down entirely). An "evicted" on-demand contract stops being routable and stops being called, but
-   its code and any module-level state stay resident until the whole process exits. Worth deciding
-   deliberately whether that's acceptable (probably fine for small, stateless tools) or whether truly
-   memory-bounded eviction needs process/worker-level isolation, which is a much bigger addition.
+3. **Eviction -- resolved: CJS output + `require.cache` deletion, not worker_threads (for now).**
+   `ServiceBroker.unregisterModule()` (`ServiceBroker.ts:509`) is thorough -- runs `onStop`, removes
+   the module from `localTools`/`MeshToolSchemaRegistry`/`toolMountKeys`/`globalContractRegistry`,
+   unregisters from the local `Registry` -- but it's bookkeeping only. It does **not**, and in plain
+   Node/V8 *cannot*, unload an ES module (`import()`) from memory: tested directly (Node 22.22.1),
+   re-importing the identical specifier always returns the same cached object, and there's no public
+   `import.meta.cache` or equivalent to clear. CommonJS is different and was also tested directly:
+   `delete require.cache[resolvedPath]` genuinely works -- a subsequent `require()` re-executes the
+   file and returns a fresh object, and once nothing references the old one, V8 collects it like any
+   other unreferenced object, no special-casing needed.
+
+   So: on-demand contracts should build as CJS specifically (`runEsbuild`'s `format: 'esm'`,
+   `build.ts:123`, is hardcoded -- adding a `format` parameter is trivial; esbuild bundles/rewrites
+   everything from the entry point regardless of target format, so the choice is free at build time,
+   no cost either way), loaded via `require()` (reachable from this codebase's ESM-throughout code
+   via `createRequire`) instead of `import()`, specifically so they can be evicted for real via cache
+   deletion. `long-running`/kernel/browser artifacts have no reason to change.
+
+   One real caveat, downstream of the build, not the build itself: the external `@flybyme/mesh`
+   dependency stays a bare `require('@flybyme/mesh')` in CJS output either way (`external` means
+   esbuild leaves the reference alone, regardless of format) -- and `@flybyme/mesh`'s own package is
+   ESM-only. Tested directly against the real installed package: `require('@flybyme/mesh')` **does**
+   work, but only because Node 22 added synchronous `require()`-of-ESM support -- version-sensitive,
+   not guaranteed on whatever Node version the cluster actually deploys on (`runEsbuild` targets
+   `node20`). Confirm the real deployed Node version before relying on this, the same class of gap
+   that broke `tsx`'s own resolution of this exact package earlier the same day this doc was written.
+
+   worker_threads remains the answer if/when true isolation (crash containment, not just memory)
+   becomes a real, measured need -- not the starting point.
 
 ## Open forks -- real decisions, not details
 
@@ -262,7 +281,7 @@ function with no change event; nothing today notices "I just became the leader f
       `registerModule()`, reusing the exact sequence `startService.ts` already proves out
 - [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
       `interval` domains a node newly becomes leader for
-- [ ] Decide eviction policy given it's bookkeeping-only (`unregisterModule` stops routing, does not
-      free memory) -- accept that for small/stateless on-demand contracts, or scope real
-      process/worker-level isolation as a separate, bigger piece of work
+- [ ] Eviction -- **resolved**: build on-demand contracts as CJS (`format` param on `runEsbuild`),
+      load via `require()`, evict via `delete require.cache[path]`. Confirm the real deployed Node
+      version supports `require()`-of-ESM before relying on it for the external `@flybyme/mesh` ref
 - [ ] Resolve the remaining open forks above before or during implementation, not after
