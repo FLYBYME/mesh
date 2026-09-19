@@ -430,8 +430,12 @@ export class ServiceBroker implements IServiceBroker {
                             payload: EventRegistry[K],
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
+                        // Shallow merge, same as ServiceBroker.call's own `{ ...activeCtx?.meta, ...options?.meta }`
+                        // -- an override replaces top-level keys (e.g. a whole `user` object) rather than
+                        // silently keeping the ambient one underneath it, exactly matching what
+                        // `ctx.call(tool, params, { meta })` already does for the same override.
                         db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, meta ?? ctx.meta),
+                            this.makeCrudRepo(domain, meta ? { ...ctx.meta, ...meta } : ctx.meta),
                         logger: this.logger
                     };
                     // Resolved and forwarded here, once, rather than inside every handler that
@@ -496,7 +500,7 @@ export class ServiceBroker implements IServiceBroker {
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
                         db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, meta ?? packet?.meta),
+                            this.makeCrudRepo(domain, meta ? { ...packet?.meta, ...meta } : packet?.meta),
                         logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {

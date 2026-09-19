@@ -115,9 +115,14 @@ export interface IServiceContext<TMeta = IMeshMeta> {
      * same ambient context). Pass it explicitly only when a handler genuinely needs a *different*
      * scope than its own caller's -- e.g. resolving a part that belongs to some other tenant than
      * whoever is calling this handler right now, the same case `ctx.call(tool, params, { meta })`
-     * already covers. This is not the "forget to pass meta" foot-gun `ctx.db()` exists to remove:
-     * omitting the parameter is what removes it; passing one explicitly is a deliberate choice, made
-     * once per lookup, not per method call.
+     * already covers. An explicit override is *shallow-merged* over `ctx.meta`, matching
+     * `ServiceBroker.call`'s own `{ ...activeCtx?.meta, ...options?.meta }` exactly -- passing
+     * `{ user: {...} }` replaces the whole ambient `user` object (the shape every real override in
+     * this codebase already uses, precisely because a merge that only touched `tenant_id` would
+     * leave the caller's own ambient `user.id` masking the intended one underneath it). This is not
+     * the "forget to pass meta" foot-gun `ctx.db()` exists to remove: omitting the parameter is what
+     * removes it; passing one explicitly is a deliberate choice, made once per lookup, not per
+     * method call.
      *
      * `db(domain).find(p)` and `call(\`${domain}.find\`, p)` are typed identically -- both read off
      * the same generated `IServiceToolRegistry['<domain>.find']` entry -- and behave identically;
