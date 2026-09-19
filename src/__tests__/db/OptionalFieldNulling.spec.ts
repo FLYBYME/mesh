@@ -11,7 +11,7 @@ const NoteSchema = z.object({
     tag: z.string().optional(),
 });
 
-export const noteCrud = defineCrud('note', NoteSchema, { dependencies: [] });
+export const noteCrud = defineCrud('note', NoteSchema, { dependencies: [], filePath: 'src/__tests__/db/OptionalFieldNulling.spec.ts', permissions: [] });
 
 class NoteModule extends ServiceModule {
     public readonly domain = 'note';

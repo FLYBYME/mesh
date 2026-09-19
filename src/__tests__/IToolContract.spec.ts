@@ -37,6 +37,9 @@ describe('IToolContract', () => {
                 outputSchema: z.object({}),
                 rest: { method: 'GET' as const, path: '/' },
                 destructive: false,
+                filePath: 'src/__tests__/IToolContract.spec.ts',
+                concurrency: 'on-demand' as const,
+                permissions: [],
                 print: defaultPrint
             };
 
@@ -56,6 +59,9 @@ describe('IToolContract', () => {
                 outputSchema: z.object({}),
                 rest: { method: 'GET' as const, path: '/' },
                 destructive: false,
+                filePath: 'src/__tests__/IToolContract.spec.ts',
+                concurrency: 'on-demand' as const,
+                permissions: [],
                 print: defaultPrint
             };
 
@@ -71,6 +77,9 @@ describe('IToolContract', () => {
                 outputSchema: z.object({}),
                 rest: { method: 'GET' as const, path: '/' },
                 destructive: false,
+                filePath: 'src/__tests__/IToolContract.spec.ts',
+                concurrency: 'on-demand' as const,
+                permissions: [],
                 timeout: 5000,
                 print: defaultPrint
             };

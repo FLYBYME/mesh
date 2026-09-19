@@ -214,7 +214,7 @@ describe('WSTransport Handshake Authentication', () => {
                 description: 'Add numbers',
                 inputSchema: z.object({ a: z.number(), b: z.number() }),
                 outputSchema: z.object({ sum: z.number() }),
-                dependencies: []
+                dependencies: [], filePath: 'src/__tests__/transports/WSTransportAuth.spec.ts', permissions: [], concurrency: 'on-demand'
             });
 
             class MathService extends ServiceModule {

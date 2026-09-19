@@ -45,7 +45,10 @@ describe('TimeSeries Contracts & Integration', () => {
         temp: z.number()
     });
 
-    const TelemetryContracts = defineTimeSeries('telemetry', MetricSchema);
+    const TelemetryContracts = defineTimeSeries('telemetry', MetricSchema, {
+        filePath: 'src/__tests__/TimeSeries.spec.ts',
+        permissions: [],
+    });
 
     describe('defineTimeSeries()', () => {
         it('should generate all standard TS contracts', () => {

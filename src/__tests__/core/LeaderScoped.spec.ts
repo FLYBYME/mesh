@@ -37,7 +37,7 @@ describe('leaderScoped contracts', () => {
         description: 'Reports which node actually executed this -- must always be the leader',
         inputSchema: whereInputSchema,
         outputSchema: whereOutputSchema,
-        dependencies: [],
+        dependencies: [], filePath: 'src/__tests__/core/LeaderScoped.spec.ts', permissions: [], concurrency: 'on-demand',
         leaderScoped: true,
     });
 
@@ -47,7 +47,7 @@ describe('leaderScoped contracts', () => {
         description: 'Reports which node actually executed this -- no leaderScoped, runs wherever called',
         inputSchema: whereInputSchema,
         outputSchema: whereOutputSchema,
-        dependencies: [],
+        dependencies: [], filePath: 'src/__tests__/core/LeaderScoped.spec.ts', permissions: [], concurrency: 'on-demand',
     });
 
     class PinnableService extends ServiceModule {

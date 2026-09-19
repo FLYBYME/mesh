@@ -21,6 +21,7 @@ const greetContract = defineContract({
     inputSchema: z.object({ name: z.string(), times: z.number().optional() }),
     outputSchema: z.object({ greeting: z.string() }),
     rest: { method: 'POST', path: '/validationdemo/greet' },
+    filePath: 'src/__tests__/core/ParamsValidationError.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
 });
 

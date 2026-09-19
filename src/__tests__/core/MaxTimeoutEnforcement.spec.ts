@@ -28,6 +28,7 @@ const infiniteToolContract = defineContract({
     inputSchema: z.object({ delay: z.number() }),
     outputSchema: z.object({ success: z.boolean() }),
     rest: { method: 'POST', path: '/timeout/infinite' },
+    filePath: 'src/__tests__/core/MaxTimeoutEnforcement.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
     timeout: 50 // Short default to ensure we are overriding it
 });

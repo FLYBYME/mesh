@@ -29,7 +29,7 @@ const RecordSchema = z.object({
     label: z.string(),
 });
 
-const scopedCrud = defineCrud('scoped', RecordSchema, { dependencies: [] });
+const scopedCrud = defineCrud('scoped', RecordSchema, { dependencies: [], filePath: 'src/__tests__/db/CrudHookMeta.spec.ts', permissions: [] });
 
 /**
  * A plain tool that turns around and calls the scoped collection.
@@ -46,6 +46,7 @@ const scopedViaToolContract = defineContract({
     rest: { method: 'POST', path: '/scoped/via_tool' },
     destructive: true,
     dependencies: ['scoped.create'],
+    filePath: 'src/__tests__/db/CrudHookMeta.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
 });
 

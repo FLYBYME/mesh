@@ -21,6 +21,7 @@ describe('IToolContract', () => {
                 outputSchema: z.object({ message: z.string() }),
                 rest: { method: 'POST', path: '/test/greet' },
                 destructive: false,
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
 
@@ -37,6 +38,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/test' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             })).toThrow('must not contain underscores');
         });
@@ -49,6 +51,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/test' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             })).not.toThrow();
         });
@@ -61,6 +64,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({ ok: z.boolean() }),
                 rest: { method: 'GET', path: '/autoreg/check' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
 
@@ -80,6 +84,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.number(),
                 rest: { method: 'POST', path: '/math/add' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
             expect(toolKey(contract)).toBe('math.add');
@@ -140,6 +145,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/reg/test' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
 
@@ -156,6 +162,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/dedup/test' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
 
@@ -172,6 +179,7 @@ describe('IToolContract', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/clearable/test' },
+                filePath: 'src/__tests__/interfaces/IToolContract.spec.ts', concurrency: 'on-demand' as const, permissions: [],
                 print: defaultPrint
             });
 

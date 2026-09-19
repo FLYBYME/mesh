@@ -100,7 +100,7 @@ describe('ServiceModule', () => {
                 constructor() {
                     super();
                     const schema = z.object({ name: z.string() });
-                    const crud = defineCrud('hooked', schema, { dependencies: [] });
+                    const crud = defineCrud('hooked', schema, { dependencies: [], filePath: 'src/__tests__/core/ServiceModule.spec.ts', permissions: [] });
                     this.mountCrud(crud);
 
                     this.mountCrudHook('hooked', 'create', {

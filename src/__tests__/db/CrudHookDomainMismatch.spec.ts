@@ -27,7 +27,7 @@ const widgetSchema = z.object({
     label: z.string(),
 });
 
-const widgetCrud = defineCrud('widget', widgetSchema, { dependencies: [] });
+const widgetCrud = defineCrud('widget', widgetSchema, { dependencies: [], filePath: 'src/__tests__/db/CrudHookDomainMismatch.spec.ts', permissions: [] });
 
 declare global {
     interface IServiceToolRegistry {

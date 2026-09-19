@@ -29,6 +29,7 @@ const slowToolContract = defineContract({
     inputSchema: z.object({ delay: z.number() }),
     outputSchema: z.object({ success: z.boolean() }),
     rest: { method: 'POST', path: '/timeout/slow' },
+    filePath: 'src/__tests__/core/Timeouts.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
     timeout: 50 // The contract has a short default timeout
 });

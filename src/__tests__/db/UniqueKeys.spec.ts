@@ -24,7 +24,7 @@ const ArtifactSchema = z.object({
 
 export const artifactCrud = defineCrud('artifact', ArtifactSchema, {
     unique: ['digest'],
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: [],
 });
 
 const PartVersionSchema = z.object({
@@ -35,7 +35,7 @@ const PartVersionSchema = z.object({
 
 export const partVersionCrud = defineCrud('partVersion', PartVersionSchema, {
     unique: [['partName', 'version']],
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: [],
 });
 
 const ReversePartVersionSchema = z.object({
@@ -45,7 +45,7 @@ const ReversePartVersionSchema = z.object({
 
 export const reversePartVersionCrud = defineCrud('reversePartVersion', ReversePartVersionSchema, {
     unique: [['version', 'partName']],
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: [],
 });
 
 const MultiTenantSiteSchema = z.object({
@@ -61,7 +61,7 @@ export const multiTenantSiteCrud = defineCrud('multiTenantSite', MultiTenantSite
         { fields: 'host', scope: 'global' },
         { fields: 'slug', scope: 'scoped' },
     ],
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: [],
 });
 
 class ArtifactModule extends ServiceModule {
@@ -131,7 +131,7 @@ describe('Unique Key Constraints', () => {
             const LazySchema = z.object({ code: z.string() });
             const lazyCrud = defineCrud('artifactlazy', LazySchema, {
                 unique: ['code'],
-                dependencies: []
+                dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: []
             });
 
             const repo = db.repo(lazyCrud.outputSchema, 'artifactlazy');
@@ -311,7 +311,7 @@ describe('Unique Key Constraints', () => {
             const DirtySchema = z.object({ digest: z.string(), size: z.number() });
             defineCrud('dirtyartifact', DirtySchema, {
                 unique: ['digest'],
-                dependencies: []
+                dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: []
             });
 
             let error: MeshError | undefined;

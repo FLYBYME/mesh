@@ -33,6 +33,7 @@ const echoContract = defineContract({
     inputSchema: z.object({ msg: z.string() }),
     outputSchema: z.object({ msg: z.string() }),
     rest: { method: 'POST', path: '/nsdemo/echo' },
+    filePath: 'src/__tests__/core/NamespaceIsolation.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
 });
 
@@ -43,6 +44,7 @@ const echo2Contract = defineContract({
     inputSchema: z.object({ msg: z.string() }),
     outputSchema: z.object({ msg: z.string() }),
     rest: { method: 'POST', path: '/nsdemo/echo2' },
+    filePath: 'src/__tests__/core/NamespaceIsolation.spec.ts', concurrency: 'on-demand', permissions: [],
     print: defaultPrint,
 });
 

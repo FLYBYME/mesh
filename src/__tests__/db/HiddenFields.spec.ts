@@ -13,7 +13,7 @@ const ProviderSchema = z.object({
 
 export const providerCrud = defineCrud('hiddenprovider', ProviderSchema, {
     hidden: ['apiKey'],
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/HiddenFields.spec.ts', permissions: [],
 });
 
 class ProviderModule extends ServiceModule {
@@ -54,12 +54,12 @@ describe('defineCrud: hidden fields', () => {
     });
 
     it('rejects a hidden field that is not on the base schema', () => {
-        expect(() => defineCrud('bad', ProviderSchema, { hidden: ['nope' as never], dependencies: [] }))
+        expect(() => defineCrud('bad', ProviderSchema, { hidden: ['nope' as never], dependencies: [], filePath: 'src/__tests__/db/HiddenFields.spec.ts', permissions: [] }))
             .toThrow(/hidden field "nope" is not defined/);
     });
 
     it('rejects id/createdAt/updatedAt as hidden -- structural, not data', () => {
-        expect(() => defineCrud('bad2', ProviderSchema, { hidden: ['createdAt' as never], dependencies: [] }))
+        expect(() => defineCrud('bad2', ProviderSchema, { hidden: ['createdAt' as never], dependencies: [], filePath: 'src/__tests__/db/HiddenFields.spec.ts', permissions: [] }))
             .toThrow(/cannot be declared hidden/);
     });
 

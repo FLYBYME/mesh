@@ -13,7 +13,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('defineCrud()', () => {
         it('should generate all standard CRUD contracts', () => {
-            const crud = defineCrud('item', TestSchema, { dependencies: [] });
+            const crud = defineCrud('item', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
 
             expect(crud.domain).toBe('item');
             expect(crud.idField).toBe('id');
@@ -30,7 +30,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should set correct action names', () => {
-            const crud = defineCrud('item', TestSchema, { dependencies: [] });
+            const crud = defineCrud('item', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
 
             expect(crud.find.action).toBe('find');
             expect(crud.findOne.action).toBe('find_one');
@@ -42,7 +42,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should set correct domain on all contracts', () => {
-            const crud = defineCrud('widget', TestSchema, { dependencies: [] });
+            const crud = defineCrud('widget', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
             const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
 
             for (const action of actions) {
@@ -55,7 +55,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('REST route generation', () => {
         it('should generate correct REST paths using plural', () => {
-            const crud = defineCrud('item', TestSchema, { dependencies: [] });
+            const crud = defineCrud('item', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
 
             expect(crud.find.rest.method).toBe('GET');
             expect(crud.find.rest.path).toBe('/items');
@@ -70,7 +70,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should use custom plural path', () => {
-            const crud = defineCrud('person', TestSchema, { pluralPath: 'people', dependencies: [] });
+            const crud = defineCrud('person', TestSchema, { pluralPath: 'people', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
             expect(crud.find.rest.path).toBe('/people');
         });
     });
@@ -79,7 +79,7 @@ describe('ICrudContract — defineCrud', () => {
 
     describe('schema shapes', () => {
         it('should include id, createdAt, updatedAt in output schema', () => {
-            const crud = defineCrud('item', TestSchema, { dependencies: [] });
+            const crud = defineCrud('item', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
             const outputShape = (crud.outputSchema as z.ZodObject<z.ZodRawShape>).shape;
 
             expect(outputShape.id).toBeDefined();
@@ -97,7 +97,7 @@ describe('ICrudContract — defineCrud', () => {
                 updatedAt: z.coerce.date(),
             });
 
-            expect(() => defineCrud('bad', BadSchema, { dependencies: [] })).toThrow('must NOT be defined');
+            expect(() => defineCrud('bad', BadSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] })).toThrow('must NOT be defined');
         });
     });
 
@@ -131,7 +131,7 @@ describe('ICrudContract — defineCrud', () => {
     describe('custom options', () => {
         it('should support custom action names', () => {
             const crud = defineCrud('item', TestSchema, {
-                dependencies: [],
+                dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [],
                 actions: { find: 'search', create: 'add' }
             });
             expect(crud.find.action).toBe('search');
@@ -139,7 +139,7 @@ describe('ICrudContract — defineCrud', () => {
         });
 
         it('should support custom id field', () => {
-            const crud = defineCrud('item', TestSchema, { idField: 'itemId', dependencies: [] });
+            const crud = defineCrud('item', TestSchema, { idField: 'itemId', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
             expect(crud.idField).toBe('itemId');
         });
 
@@ -150,7 +150,7 @@ describe('ICrudContract — defineCrud', () => {
             });
 
             it('should record scopedBy on the crud result and on all contracts', () => {
-                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [] });
+                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
                 expect(crud.scopedBy).toBe('tenantId');
                 const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
                 for (const action of actions) {
@@ -159,7 +159,7 @@ describe('ICrudContract — defineCrud', () => {
             });
 
             it('should make scopedBy optional in CreateInputSchema', () => {
-                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [] });
+                const crud = defineCrud('item', ScopedSchema, { scopedBy: 'tenantId', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
                 const parsedWithout = crud.create.inputSchema.safeParse({ name: 'widget' });
                 expect(parsedWithout.success).toBe(true);
                 const parsedWith = crud.create.inputSchema.safeParse({ name: 'widget', tenantId: 'other' });
@@ -167,18 +167,18 @@ describe('ICrudContract — defineCrud', () => {
             });
 
             it('should throw if scopedBy is not defined in baseSchema', () => {
-                expect(() => defineCrud('item', TestSchema, { scopedBy: 'tenantId', dependencies: [] }))
+                expect(() => defineCrud('item', TestSchema, { scopedBy: 'tenantId', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] }))
                     .toThrow('The scopedBy field "tenantId" must be defined in the Zod baseSchema shape for domain "item".');
             });
 
             it('should throw if scopedBy is the same as idField', () => {
                 const SchemaWithId = z.object({ name: z.string() });
-                expect(() => defineCrud('item', SchemaWithId, { idField: 'id', scopedBy: 'id', dependencies: [] }))
+                expect(() => defineCrud('item', SchemaWithId, { idField: 'id', scopedBy: 'id', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] }))
                     .toThrow('The scopedBy field "id" must NOT be the same as the ID field for domain "item".');
             });
 
             it('should throw if scopedBy is an empty string', () => {
-                expect(() => defineCrud('item', ScopedSchema, { scopedBy: '  ', dependencies: [] }))
+                expect(() => defineCrud('item', ScopedSchema, { scopedBy: '  ', dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] }))
                     .toThrow('scopedBy option for domain "item" must be a non-empty string.');
             });
         });
@@ -202,7 +202,7 @@ describe('ICrudContract — defineCrud', () => {
             });
 
             it('should record a single unique field as a global unique key', () => {
-                const crud = defineCrud('artifact', ArtifactSchema, { unique: ['digest'], dependencies: [] });
+                const crud = defineCrud('artifact', ArtifactSchema, { unique: ['digest'], dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: [] });
                 expect(crud.unique).toEqual([
                     { fields: ['digest'], scope: 'global' }
                 ]);
@@ -211,7 +211,7 @@ describe('ICrudContract — defineCrud', () => {
             it('should record a compound unique key preserving field order', () => {
                 const crud1 = defineCrud('partVersion', PartVersionSchema, {
                     unique: [['partName', 'version']],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud1.unique).toEqual([
                     { fields: ['partName', 'version'], scope: 'global' }
@@ -219,7 +219,7 @@ describe('ICrudContract — defineCrud', () => {
 
                 const crud2 = defineCrud('partVersion', PartVersionSchema, {
                     unique: [['version', 'partName']],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud2.unique).toEqual([
                     { fields: ['version', 'partName'], scope: 'global' }
@@ -229,7 +229,7 @@ describe('ICrudContract — defineCrud', () => {
             it('should support multiple unique constraints on one collection', () => {
                 const crud = defineCrud('partVersion', PartVersionSchema, {
                     unique: ['tarball', ['partName', 'version']],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud.unique).toEqual([
                     { fields: ['tarball'], scope: 'global' },
@@ -241,7 +241,7 @@ describe('ICrudContract — defineCrud', () => {
                 const crud = defineCrud('site', SiteSchema, {
                     scopedBy: 'tenantId',
                     unique: [{ fields: 'slug', scope: 'scoped' }],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud.unique).toEqual([
                     { fields: ['tenantId', 'slug'], scope: 'scoped' }
@@ -252,7 +252,7 @@ describe('ICrudContract — defineCrud', () => {
                 const crud = defineCrud('site', SiteSchema, {
                     scopedBy: 'tenantId',
                     unique: [{ fields: 'host', scope: 'global' }],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud.unique).toEqual([
                     { fields: ['host'], scope: 'global' }
@@ -266,7 +266,7 @@ describe('ICrudContract — defineCrud', () => {
                         { fields: 'host', scope: 'global' },
                         { fields: 'slug', scope: 'scoped' }
                     ],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud.unique).toEqual([
                     { fields: ['host'], scope: 'global' },
@@ -278,7 +278,7 @@ describe('ICrudContract — defineCrud', () => {
                 const crud = defineCrud('site', SiteSchema, {
                     scopedBy: 'tenantId',
                     unique: [['tenantId', 'slug']],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 });
                 expect(crud.unique).toEqual([
                     { fields: ['tenantId', 'slug'], scope: 'scoped' }
@@ -289,42 +289,42 @@ describe('ICrudContract — defineCrud', () => {
                 expect(() => defineCrud('site', SiteSchema, {
                     scopedBy: 'tenantId',
                     unique: ['slug'],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('Collection "site" is scoped by "tenantId". Unique key "slug" must explicitly declare scope: \'scoped\' or scope: \'global\'');
             });
 
             it('should refuse scope: "scoped" on an unscoped collection', () => {
                 expect(() => defineCrud('artifact', ArtifactSchema, {
                     unique: [{ fields: 'digest', scope: 'scoped' }],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('declared scope: \'scoped\', but collection "artifact" does not declare scopedBy.');
             });
 
             it('should refuse declaring ID field as unique key', () => {
                 expect(() => defineCrud('artifact', ArtifactSchema, {
                     unique: ['id'],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('The ID field "id" must NOT be declared as a unique key');
             });
 
             it('should refuse declaring non-existent fields as unique key', () => {
                 expect(() => defineCrud('artifact', ArtifactSchema, {
                     unique: ['nonExistent'],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('Unique field "nonExistent" is not defined in the Zod baseSchema shape');
             });
 
             it('should refuse duplicate fields in a compound key', () => {
                 expect(() => defineCrud('partVersion', PartVersionSchema, {
                     unique: [['partName', 'partName']],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('Unique compound key for domain "partVersion" contains duplicate field "partName".');
             });
 
             it('should refuse an empty compound key array', () => {
                 expect(() => defineCrud('partVersion', PartVersionSchema, {
                     unique: [[]],
-                    dependencies: []
+                    dependencies: [], filePath: 'src/__tests__/interfaces/ICrudContract.spec.ts', permissions: []
                 })).toThrow('Unique key for domain "partVersion" must specify at least one field.');
             });
         });

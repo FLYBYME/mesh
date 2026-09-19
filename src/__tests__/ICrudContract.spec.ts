@@ -10,7 +10,7 @@ describe('ICrudContract', () => {
     describe('defineCrud()', () => {
         it('should generate all standard CRUD contracts', () => {
             const crud = defineCrud('user', TestBaseSchema, {
-                dependencies: [], dependencies: [] });
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [], dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
 
             expect(crud.domain).toBe('user');
             expect(crud.idField).toBe('id');
@@ -28,7 +28,7 @@ describe('ICrudContract', () => {
 
         it('should ensure all generated contracts have isCrud: true and correct domain', () => {
             const crud = defineCrud('user', TestBaseSchema, {
-                dependencies: [], dependencies: [] });
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [], dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
 
             const actions = ['find', 'findOne', 'count', 'get', 'create', 'createMany', 'update', 'replace', 'delete', 'resolve'] as const;
             for (const action of actions) {
@@ -45,12 +45,12 @@ describe('ICrudContract', () => {
             });
 
             expect(() => {
-                defineCrud('bad', BadSchema, { dependencies: [] });
+                defineCrud('bad', BadSchema, { dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
             }).toThrow('must NOT be defined in the Zod baseSchema');
         });
 
         it('should allow custom idField without conflict', () => {
-            const crud = defineCrud('item', TestBaseSchema, { idField: 'uuid', dependencies: [] });
+            const crud = defineCrud('item', TestBaseSchema, { idField: 'uuid', dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
 
             expect(crud.idField).toBe('uuid');
 
@@ -61,7 +61,7 @@ describe('ICrudContract', () => {
 
         it('should allow custom action names via options.actions', () => {
             const crud = defineCrud('user', TestBaseSchema, {
-                dependencies: [],
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [],
                 actions: { create: 'make' }
             });
 
@@ -71,7 +71,7 @@ describe('ICrudContract', () => {
 
         it('should omit auto-generated fields from CreateInputSchema', () => {
             const crud = defineCrud('user', TestBaseSchema, {
-                dependencies: [], dependencies: [] });
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [], dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
             const createSchema = crud.create.inputSchema as any;
 
             // Should require name and age
@@ -85,7 +85,7 @@ describe('ICrudContract', () => {
 
         it('should allow custom timeouts via options.timeout', () => {
             const crud = defineCrud('user', TestBaseSchema, {
-                dependencies: [],
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [],
                 timeout: { create: 5000 }
             });
 

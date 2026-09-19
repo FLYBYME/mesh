@@ -30,7 +30,7 @@ describe('Remote call date preservation', () => {
         description: 'Find users',
         inputSchema: z.object({}),
         outputSchema: z.array(UserSchema),
-        dependencies: []
+        dependencies: [], filePath: 'src/__tests__/core/RemoteDateCall.spec.ts', permissions: [], concurrency: 'on-demand'
     });
 
     const fixedDate = new Date('2026-09-07T02:00:00.000Z');

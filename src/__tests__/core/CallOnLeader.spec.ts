@@ -35,7 +35,7 @@ describe('ServiceBroker.callOnLeader', () => {
         description: 'Reports which node actually executed this',
         inputSchema: whereInputSchema,
         outputSchema: whereOutputSchema,
-        dependencies: [],
+        dependencies: [], filePath: 'src/__tests__/core/CallOnLeader.spec.ts', permissions: [], concurrency: 'on-demand',
     });
 
     class ClaimableService extends ServiceModule {

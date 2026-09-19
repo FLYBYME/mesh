@@ -14,7 +14,7 @@ const SiteSchema = z.object({
 
 export const siteCrud = defineCrud('site', SiteSchema, {
     scopedBy: 'tenantId',
-    dependencies: [],
+    dependencies: [], filePath: 'src/__tests__/db/ScopedCrud.spec.ts', permissions: [],
 });
 
 class SiteModule extends ServiceModule {

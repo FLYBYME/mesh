@@ -150,6 +150,7 @@ describe('ServiceBroker', () => {
             outputSchema: z.object({ count: z.number() }),
             rest: { method: 'POST', path: '/ticker/tick_count' },
             destructive: false,
+            filePath: 'src/__tests__/core/ServiceBroker.spec.ts', concurrency: 'on-demand', permissions: [],
             print: defaultPrint,
         });
 
@@ -241,6 +242,7 @@ describe('ServiceBroker', () => {
                 rest: { method: 'GET', path: '/reload-demo/check' },
                 destructive: false,
                 visibility,
+                filePath: 'src/__tests__/core/ServiceBroker.spec.ts', concurrency: 'on-demand', permissions: [],
                 print: defaultPrint,
             });
 
@@ -286,6 +288,7 @@ describe('ServiceBroker', () => {
             inputSchema: z.object({}),
             outputSchema: z.object({ instanceId: z.string() }),
             rest: { method: 'GET', path: '/md-primary/ping' },
+            filePath: 'src/__tests__/core/ServiceBroker.spec.ts', concurrency: 'on-demand', permissions: [],
             print: defaultPrint,
         });
 
@@ -296,6 +299,7 @@ describe('ServiceBroker', () => {
             inputSchema: z.object({}),
             outputSchema: z.object({ instanceId: z.string() }),
             rest: { method: 'GET', path: '/md-secondary/ping' },
+            filePath: 'src/__tests__/core/ServiceBroker.spec.ts', concurrency: 'on-demand', permissions: [],
             print: defaultPrint,
         });
 
@@ -361,6 +365,7 @@ describe('ServiceBroker', () => {
                 inputSchema: z.object({}),
                 outputSchema: z.object({ ok: z.boolean() }),
                 rest: { method: 'GET', path: '/md-primary/other' },
+                filePath: 'src/__tests__/core/ServiceBroker.spec.ts', concurrency: 'on-demand', permissions: [],
                 print: defaultPrint,
             });
 
@@ -405,7 +410,7 @@ describe('ServiceBroker', () => {
             createdAt: z.coerce.date(),
             updatedAt: z.coerce.date(),
         });
-        const widgetCrud = defineCrud('widget', WidgetSchema, { dependencies: [] });
+        const widgetCrud = defineCrud('widget', WidgetSchema, { dependencies: [], filePath: 'src/__tests__/core/ServiceBroker.spec.ts', permissions: [] });
 
         class WidgetModule extends ServiceModule {
             public readonly domain = 'widget';

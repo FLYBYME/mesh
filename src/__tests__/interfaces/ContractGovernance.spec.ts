@@ -27,13 +27,14 @@ describe('contract governance', () => {
 
     describe('defineCrud dependencies', () => {
         it('accepts an empty array as a real answer', () => {
-            const crud = defineCrud('depsempty', TestSchema, { dependencies: [] });
+            const crud = defineCrud('depsempty', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', permissions: [] });
             expect(crud.dependencies).toEqual([]);
         });
 
         it('records declared dependencies on the set and on every generated contract', () => {
             const crud = defineCrud('depsrecorded', TestSchema, {
                 dependencies: ['dnsZone.get', 'node'],
+                filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', permissions: [],
             });
 
             expect(crud.dependencies).toEqual(['dnsZone.get', 'node']);
@@ -44,7 +45,7 @@ describe('contract governance', () => {
 
         it('freezes the recorded list so a caller cannot mutate it after definition', () => {
             const declared = ['node.resolve'];
-            const crud = defineCrud('depsfrozen', TestSchema, { dependencies: declared });
+            const crud = defineCrud('depsfrozen', TestSchema, { dependencies: declared, filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', permissions: [] });
 
             declared.push('sneaky.write');
 
@@ -78,7 +79,7 @@ describe('contract governance', () => {
         it('defaults to internal, and the default is internal', () => {
             expect(DEFAULT_VISIBILITY).toBe('internal');
 
-            const crud = defineCrud('vizdefault', TestSchema, { dependencies: [] });
+            const crud = defineCrud('vizdefault', TestSchema, { dependencies: [], filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', permissions: [] });
             for (const action of ALL_ACTIONS) {
                 expect(visibilityOf(crud[action])).toBe('internal');
                 expect(isPublicContract(crud[action])).toBe(false);
@@ -87,7 +88,7 @@ describe('contract governance', () => {
 
         it('publishes only the actions named, leaving the rest internal', () => {
             const crud = defineCrud('vizpartial', TestSchema, {
-                dependencies: [],
+                dependencies: [], filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', permissions: [],
                 visibility: { find: 'public', get: 'public' },
             });
 
@@ -105,6 +106,7 @@ describe('contract governance', () => {
                 description: 'no visibility declared',
                 inputSchema: z.object({}), outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/vizexplicit/silent' },
+                filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', concurrency: 'on-demand', permissions: [],
                 print: () => '',
             });
 
@@ -118,6 +120,7 @@ describe('contract governance', () => {
                 inputSchema: z.object({}), outputSchema: z.object({}),
                 rest: { method: 'GET', path: '/vizexplicit/loud' },
                 visibility: 'public',
+                filePath: 'src/__tests__/interfaces/ContractGovernance.spec.ts', concurrency: 'on-demand', permissions: [],
                 print: () => '',
             });
 
