@@ -40,6 +40,19 @@ export type ContractVisibility = 'public' | 'internal';
 /** The visibility a contract has when it does not declare one. */
 export const DEFAULT_VISIBILITY: ContractVisibility = 'internal';
 
+/**
+ * ContractConcurrency: the runtime nature of a contract, stated explicitly by its author.
+ *
+ * - `on-demand`   -- call-and-return; placeable anywhere, loaded only when needed.
+ * - `long-running` -- needs a port/host binding or persistent in-memory state; must live somewhere
+ *   specific and stay there once placed.
+ * - `interval`    -- self-scheduled; runs on its own timer, has no caller at all.
+ *
+ * No default on purpose -- see `defineContract`'s required-field policy below. A silent default of
+ * `on-demand` would be exactly the kind of unstated assumption this field exists to remove.
+ */
+export type ContractConcurrency = 'on-demand' | 'long-running' | 'interval';
+
 // ─── Tool Contract ───────────────────────────────────────────────────────────
 
 /**
@@ -103,6 +116,30 @@ export interface ToolContract<
     readonly dependencies?: readonly string[];
     /** Field that scopes this contract to a caller's tenant/organization, if any. */
     readonly scopedBy?: string;
+    /**
+     * Where the implementing code lives -- required so the placement/scheduling layer knows what to
+     * load, on which node, to serve this contract on demand (see `docs/CONTRACT_DRIVEN_PLACEMENT.md`).
+     * No default, and no way to omit it: a `defineCrud`-generated contract is expected to pass the
+     * file that called `defineCrud` (importing it is what registers the schema that serves it), not
+     * a synthetic value -- there is no domain-specific handler file for a generic CRUD action.
+     */
+    readonly filePath: string;
+    /**
+     * The contract's runtime nature -- see {@link ContractConcurrency}. Required, no default: every
+     * contract states its own nature explicitly.
+     */
+    readonly concurrency: ContractConcurrency;
+    /**
+     * An intrinsic required-role baseline, parallel to `destructive`. Required -- an intentionally
+     * public contract still has to say so explicitly with `[]`, not simply omit the field.
+     *
+     * The exact enforcement semantics (does this become the one true authority everywhere the
+     * contract is exposed, or a floor a per-api `serve.expose` row can tighten but never loosen
+     * below?) are still an open design question -- see "Intrinsic vs. extrinsic permissions" in
+     * `docs/CONTRACT_DRIVEN_PLACEMENT.md`. This field only requires the declaration to exist; nothing
+     * yet reads or enforces it at call time.
+     */
+    readonly permissions: readonly string[];
     /** Formats the tool output as a human-readable string */
     readonly print: (output: TPrint) => string;
 }
@@ -216,6 +253,21 @@ export function defineContract<
     if (contract.dependencies !== undefined) {
         assertValidDependencies(contract.dependencies, `defineContract(${contract.domain}.${contract.action})`);
     }
+
+    // Breaking, deliberately: no compatibility shim, no default-and-warn. TypeScript alone can't
+    // enforce this against a plain-JS caller or a widened object literal -- see
+    // docs/CONTRACT_DRIVEN_PLACEMENT.md, "Decided: breaking, not additive."
+    const contractLabel = `defineContract(${contract.domain}.${contract.action})`;
+    if (typeof contract.filePath !== 'string' || contract.filePath.length === 0) {
+        throw new Error(`${contractLabel}: "filePath" is required -- where the implementing code lives (see docs/CONTRACT_DRIVEN_PLACEMENT.md).`);
+    }
+    if (contract.concurrency !== 'on-demand' && contract.concurrency !== 'long-running' && contract.concurrency !== 'interval') {
+        throw new Error(`${contractLabel}: "concurrency" is required and must be one of 'on-demand' | 'long-running' | 'interval'.`);
+    }
+    if (!Array.isArray(contract.permissions)) {
+        throw new Error(`${contractLabel}: "permissions" is required -- pass [] to explicitly declare no permission requirement, not omit the field.`);
+    }
+
     globalContractRegistry.register(contract);
     return contract;
 }
