@@ -153,7 +153,63 @@ so it isn't blocking the decision to drop `ServiceModule`.
 Given a contract's declared `filePath`/`concurrency`/`scopedBy`/dependency graph, and a live
 registry of nodes and their capacity, something has to actually decide where to load and run code
 on demand -- and, separately, where a `long-running`/`interval` contract lives persistently once
-claimed. Not designed yet; needs the metadata above to exist first.
+claimed. Smaller than it first looked: most of the actual mechanism already exists in `mesh` today,
+just not wired to trigger automatically.
+
+### What actually loads a `ServiceModule` today
+
+Traced it precisely, not assumed. **Nothing dynamic happens at all.** `start.ts` statically
+`import`s the class and does `new IdentityService()` -- fully constructed in memory before the
+process even starts. `ServiceBroker.registerModule()` (`ServiceBroker.ts:340`) never touches the
+filesystem or does an `import()` of any kind; it takes an already-built object and wires it into
+`this.localTools` (the in-process dispatch table), registers its schemas, and tells the local
+`Registry` about it. "Loading" today means, exactly and only, "was hardcoded into `start.ts` and
+resolved at build time."
+
+### The dynamic-load mechanism already exists -- it's `startService.ts`
+
+`mesh-serve`'s `src/catalog/tools/startService.ts:53,63` (the exact file this session fixed a real
+`tsx`/module-resolution bug in) already does:
+
+```
+const imported = await import(pathToFileURL(absolutePath).href);
+...
+await ctx.broker.registerModule(instance);
+```
+
+A real, working, **runtime** dynamic module load, on a node that's already been running, triggered
+today by an explicit `serve.part.start` call. This already is the on-demand loading mechanism --
+it just needs to fire automatically instead of only on an explicit operator command.
+
+### Leader-based routing already exists too
+
+`ServiceBroker.ts:430`: `if (contract.leaderScoped === true)`, a call checks `leaderFor(domain)`
+(`Registry.ts:604` -- deterministic, no election, every node computes the same answer from the same
+membership data) and forwards via `callOnLeader` if the current node isn't the leader. The *routing*
+half of the `long-running`/singleton case is already built. What's missing is the trigger that makes
+a newly-elected leader actually *start* the code the first time -- `leaderFor` is a pure computed
+function with no change event; nothing today notices "I just became the leader for X" and reacts.
+
+### What's genuinely new, then -- smaller scope than it looked
+
+1. `ServiceBroker.call()`'s existing `if (endpoint)` branch (where `selectNode` came back empty,
+   around `ServiceBroker.ts:752-762`) needs a fallback: look up the contract's declared `filePath`,
+   pick a node, trigger the same `import()` -> `registerModule()` sequence `startService.ts` already
+   proves out, then retry -- automatically, not only via an explicit command.
+2. Something needs to watch for leadership changes (polling `leaderFor`, or reacting to whatever
+   membership-change events the `Registry` already emits as nodes join/leave) and run that same
+   load sequence once, the first time a node becomes leader for a `long-running`/`interval` domain
+   it doesn't have loaded yet.
+3. **Eviction is bookkeeping-only, not true memory reclamation.** `ServiceBroker.unregisterModule()`
+   (`ServiceBroker.ts:509`) already exists and is thorough -- runs `onStop`, removes the module from
+   `localTools`/`MeshToolSchemaRegistry`/`toolMountKeys`/`globalContractRegistry`, unregisters from
+   the local `Registry`. It does **not**, and in plain Node/V8 *cannot*, actually unload the imported
+   ES module from the process's memory -- `import()` has no matching "forget this module" primitive
+   without something heavier (a `vm.Module` in an isolated context, a worker thread that gets torn
+   down entirely). An "evicted" on-demand contract stops being routable and stops being called, but
+   its code and any module-level state stay resident until the whole process exits. Worth deciding
+   deliberately whether that's acceptable (probably fine for small, stateless tools) or whether truly
+   memory-bounded eviction needs process/worker-level isolation, which is a much bigger addition.
 
 ## Open forks -- real decisions, not details
 
@@ -202,5 +258,11 @@ claimed. Not designed yet; needs the metadata above to exist first.
       and catalog/queue's non-timer tools) become plain on-demand contracts with no wrapper at all;
       `ApiService`/`CdnService`, and catalog/queue's own timers, become `long-running`/`interval`
       contracts, each one cohesive unit, not a class grouping several
-- [ ] Placement/scheduling layer using all of the above
+- [ ] `ServiceBroker.call()`'s empty-`selectNode`-result fallback: on-demand `import()` +
+      `registerModule()`, reusing the exact sequence `startService.ts` already proves out
+- [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
+      `interval` domains a node newly becomes leader for
+- [ ] Decide eviction policy given it's bookkeeping-only (`unregisterModule` stops routing, does not
+      free memory) -- accept that for small/stateless on-demand contracts, or scope real
+      process/worker-level isolation as a separate, bigger piece of work
 - [ ] Resolve the remaining open forks above before or during implementation, not after
