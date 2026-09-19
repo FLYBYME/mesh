@@ -32,6 +32,14 @@ declare global {
         'hiddenprovider.get': { params: { id: string }; returns: { id: string; name: string; apiKey?: string } };
         'hiddenprovider.update': { params: { id: string; name?: string; apiKey?: string }; returns: { id: string; name: string; apiKey?: string } | undefined };
     }
+    // The real generator (mesh-serve's GenerateCommand) derives this from `providerCrud['outputSchema']`
+    // by static analysis; declared by hand here for the same reason IServiceToolRegistry is above --
+    // this package has no generator of its own to run. `apiKey` is required, not optional, matching
+    // `outputSchema` (the full, undecorated schema `defineCrud` builds from `ProviderSchema` -- not
+    // `publicOutputSchema`, which is what would be optional if hidden fields were ever stripped there).
+    interface IServiceCollectionRegistry {
+        'hiddenprovider': { id: string; name: string; apiKey: string; createdAt: Date; updatedAt: Date };
+    }
 }
 
 describe('defineCrud: hidden fields', () => {
@@ -93,6 +101,21 @@ describe('defineCrud: hidden fields', () => {
         const fullRepo = db.repo(providerCrud.outputSchema, 'hiddenprovider');
         const raw = await fullRepo.get(created.id);
         expect(raw?.apiKey).toBe('secret-real');
+    });
+
+    it('database.collection() reads the same full row -- typed off the real registered defineCrud, not a schema passed by hand', async () => {
+        const created = await broker.call('hiddenprovider.create', { name: 'registrar-f', apiKey: 'secret-collection' });
+
+        const db = app.getProvider<Database>('db');
+        const repo = db.collection('hiddenprovider');
+        const raw = await repo.get(created.id);
+        // Not `?.` -- IServiceCollectionRegistry declares apiKey required, so this line itself is the
+        // compile-time proof: if collection()'s runtime schema (outputSchema) ever drifted from what
+        // the type declares, this would still compile (the mismatch is only checkable by the cast at
+        // Database.collection()'s own boundary), but a wrong *value* here would fail the assertion --
+        // the two checks together are what "no sideload" actually means: sound types, verified values.
+        expect(raw!.apiKey).toBe('secret-collection');
+        expect(raw!.name).toBe('registrar-f');
     });
 
     it('data.created and the named event never carry the hidden field', async () => {

@@ -177,6 +177,29 @@ export function normalizeUniqueKeys(
 }
 
 /**
+ * IServiceCollectionRegistry: maps a CRUD domain to its full, undecorated output record type --
+ * the same schema `globalCrudRegistry.get(domain).outputSchema` validates against at runtime, unlike
+ * any single generated tool's own `returns` type (every one of `defineCrud`'s ten generated actions
+ * types its `returns` off `publicOutputSchema`, the `hidden`-stripped view a generic caller gets, not
+ * this).
+ *
+ * Populated the same way `IServiceToolRegistry`/`EventRegistry` are: generated code reads the real
+ * exported `defineCrud(...)` result and augments this interface with `z.infer<typeof
+ * theRealExport.outputSchema>` -- the literal same schema object a domain's `Database.collection()`
+ * call parses against, not a type reconstructed to merely resemble it. That is what makes
+ * `Database.collection()` sound without a guessing cast: the type and the runtime validator are
+ * derived from one schema, not two that are assumed to agree.
+ */
+declare global {
+    interface IServiceCollectionRegistry {
+        // Populated by generated code, one entry per defineCrud'd domain:
+        // 'identity.user': z.infer<typeof Alias.userCrud['outputSchema']>
+    }
+}
+
+export type { IServiceCollectionRegistry };
+
+/**
  * CrudRegistry: In-memory registry of all defined CRUD collections.
  * Populated at definition/import time by defineCrud.
  */

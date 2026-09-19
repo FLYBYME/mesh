@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DomainRepository } from './DomainRepository.js';
 import { TimeSeriesRepository } from './TimeSeriesRepository.js';
 import { ILogger } from '../interfaces/ILogger.js';
-import { globalCrudRegistry, type NormalizedUniqueKey } from '../interfaces/ICrudContract.js';
+import { globalCrudRegistry, type NormalizedUniqueKey, type IServiceCollectionRegistry } from '../interfaces/ICrudContract.js';
 import { MeshError } from '../core/MeshError.js';
 
 /**
@@ -160,6 +160,37 @@ export class Database {
 
         this.repositories.set(domain, repository as unknown as DomainRepository<{ id: string }>);
         return repository;
+    }
+
+    /**
+     * collection: `repo()` without the caller having to supply (and keep in sync with) the right
+     * schema for the right domain by hand -- both are looked up from what `defineCrud` already
+     * registered at import time (`globalCrudRegistry`). The return type comes from
+     * `IServiceCollectionRegistry` (see `ICrudContract.ts`), generated the same way
+     * `IServiceToolRegistry`/`EventRegistry` are: read off the real `defineCrud(...)` export's own
+     * `outputSchema`, the literal same schema object this method validates every read and write
+     * against at runtime (`crud.outputSchema` below) -- not a type merely assumed to match it. That
+     * equivalence is what makes this sound without a guessing cast, the same bar `ctx.call()` holds:
+     * one real schema, read from twice, never two schemas asserted to agree.
+     *
+     * Throws rather than returning a loosely-typed fallback: an unregistered domain here is a real
+     * bug (either this collection never called `defineCrud`, or this call is racing module import
+     * order), not a case worth guessing at.
+     */
+    public collection<D extends keyof IServiceCollectionRegistry & string>(
+        domain: D
+    ): DomainRepository<IServiceCollectionRegistry[D] & { id: string }> {
+        const crud = globalCrudRegistry.get(domain);
+        if (crud === undefined) {
+            throw new MeshError({
+                code: 'NOT_FOUND',
+                status: 500,
+                message: `database.collection("${domain}"): no defineCrud registration found for this domain. ` +
+                    `Either "${domain}" never called defineCrud, or this ran before its module was imported.`,
+            });
+        }
+        type Row = IServiceCollectionRegistry[D] & { id: string };
+        return this.repo(crud.outputSchema as z.ZodType<Row>, domain, { unique: crud.unique });
     }
 
     /**
