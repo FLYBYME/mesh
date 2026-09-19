@@ -85,12 +85,26 @@ shim, no default-and-warn -- an omitted field is a startup failure, not a lint w
 
 ## Proposed: dependency graph
 
-A way to know, per contract, what *other* contracts its own code calls -- currently invisible,
-discoverable only by reading source. Two real complications to solve, not ignore:
+A way to know, per contract, what it depends on -- currently invisible, discoverable only by
+reading source. Two genuinely different kinds of dependency, not one:
+
+- **Contracts it calls** (`ctx.call('other.domain.action', ...)`) -- live, addressable, resolved by
+  the broker/registry at call time, possibly on a different node entirely. This is the graph edge
+  that decides *what else* has to be reachable, not loaded.
+- **Methods it requires** -- plain shared code with no `domain.action` identity: not mountable, not
+  callable via `broker.call`, nothing the registry has ever heard of. Already real and widely used,
+  just never declared: `src/identity/methods/hash.js` (`hashPassword`), `src/identity/methods/
+  roles.js` (`matchesContract`, `resolveEffectiveRoleKeys`), `src/catalog/methods/release.js`
+  (`computeReleaseHash`), `src/api/methods/descriptor.js` -- every domain in `mesh-serve` already
+  has one of these folders. A method has no independent placement of its own; it's always bundled
+  and loaded wherever the contract that requires it gets placed, never scheduled on its own.
+
+Two real complications to solve, not ignore:
 
 1. Generic CRUD actions don't need a graph entry of their own (see above) -- they terminate the
    graph, they don't extend it with more code to load.
-2. Direct database access (the `whoami.ts` pattern) bypasses the graph entirely. Either disallow it
+2. Direct database access (the `whoami.ts` pattern) bypasses the graph entirely -- a *third*, unruly
+   kind of dependency that's neither a contract call nor a declared method. Either disallow it
    (force every real dependency through a contract call the graph can see), or give a tool its own
    way to declare "I also touch collection X" so the graph stays honest even when a tool needs to
    step outside the contract layer.
@@ -178,7 +192,8 @@ claimed. Not designed yet; needs the metadata above to exist first.
       required fields -- this is not optional follow-up work, it's the thing that makes the change
       land at all. Every contract in `mesh`, `mesh-serve`, `mesh-web`, `mesh-core`, and every
       `surfdns-*` service stops loading the moment this ships without it.
-- [ ] Dependency-graph tracking (per-contract, what other contracts it calls)
+- [ ] Dependency-graph tracking: contracts called (live, addressable) and methods required (plain
+      shared code, no address, always co-loaded) as two distinct declared kinds, not one
 - [ ] A resolution for direct-database-access tools bypassing the graph
 - [ ] New `kind` for one atomic piece of code -- **replaces** `service`, not added alongside it
 - [ ] **Drop `ServiceModule` and `kind: 'service'` entirely.** Migrate every current `ServiceModule`
