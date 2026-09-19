@@ -81,7 +81,7 @@ export class NetworkDispatcher {
         }
 
         if (!handled) {
-            this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`, { internal: true });
+            // this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`, { internal: true });
         }
     }
 

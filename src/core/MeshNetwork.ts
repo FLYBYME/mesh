@@ -114,7 +114,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
                 this.seenPackets.set(packet.id, now + this.PACKET_TTL_MS);
             }
 
-            this.logger.debug(`[MeshNetwork ${this.nodeID}] Accepted packet: ${packet.topic} from ${packet.senderNodeID} (Target: ${packet.targetNodeID})`);
+            //this.logger.debug(`[MeshNetwork ${this.nodeID}] Accepted packet: ${packet.topic} from ${packet.senderNodeID} (Target: ${packet.targetNodeID})`);
 
             // Refresh node lease in registry on every packet
             if (packet.senderNodeID) {
