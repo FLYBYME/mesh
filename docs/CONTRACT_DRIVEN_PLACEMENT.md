@@ -98,16 +98,57 @@ reading source. Two genuinely different kinds of dependency, not one:
   (`computeReleaseHash`), `src/api/methods/descriptor.js` -- every domain in `mesh-serve` already
   has one of these folders. A method has no independent placement of its own; it's always bundled
   and loaded wherever the contract that requires it gets placed, never scheduled on its own.
+- **Collections it needs** -- resolved: not a bypass, a third first-class kind. `domain.find` /
+  `domain.create` / etc. as registry-addressable `broker.call` targets are a shim -- the real
+  dependency a contract has on its own data is "give me a scoped handle to collection X," not
+  "route a call through the registry, middleware chain, and possibly a network hop to reach code
+  that just calls `db.repo()` anyway." `whoami.ts`'s direct `db.repo()` read (flagged below as a
+  bypass) is closer to the right shape than the generated `domain.find` contract is -- it's just
+  missing the enforcement. **`Database.repo()` (`Database.ts:143`) returns a raw, unscoped
+  `DomainRepository` -- verified directly: no `scopedBy` filtering, no `hidden`-field stripping, no
+  event emission. All of that lives in `DatabaseMiddleware.ts`, wrapped *around* `repo()`, only on
+  the `broker.call` path.** So a contract can't just be handed `db.repo()` on `ctx` -- that's
+  `whoami.ts`'s bypass, not a fix for it. The injected handle has to be built the same way
+  `DatabaseMiddleware` builds one today (scope-resolved from `ctx.meta`, `hidden` stripped, events
+  still fired on write), just handed out per-declared-collection instead of triggered by a registry
+  lookup.
 
-Two real complications to solve, not ignore:
+  **Where the actual trust boundary is, verified directly:** `scopedBy`'s enforcement
+  (`DatabaseMiddleware.ts:154-163`, `resolveCallerScope(ctx.meta, scopedBy)`) trusts whatever
+  `ctx.meta` says -- it has no way to tell an authenticated value from a made-up one. Internally,
+  nothing stops it being made up: `ServiceBroker.ts:778` merges `options?.meta` straight into the
+  next context's meta on every `ctx.call`, unvalidated -- any in-mesh caller can pass
+  `{ meta: { organizationId: 'someone-elses-org' } }` and `DatabaseMiddleware` will honor it. The
+  *only* place `meta` gets built from something actually authenticated is `api.service.ts:406-443`
+  (`handleRequest`): `caller` comes from `resolveCaller(req)` (the request's real ticket/token), and
+  `meta.user.{id,tenant_id,organizationId}` are built from that plus the api's own hostname->tenant
+  binding -- never from caller-supplied JSON. So `scopedBy` is a filter, not itself a gate; the api
+  gateway is the one place in the whole system meta is actually trustworthy. Every other caller of a
+  scoped contract -- another contract, the CLI, `sync.ts` -- is, today, on the honor system.
+
+Two real complications, now resolved by treating collections as the third dependency kind:
 
 1. Generic CRUD actions don't need a graph entry of their own (see above) -- they terminate the
    graph, they don't extend it with more code to load.
-2. Direct database access (the `whoami.ts` pattern) bypasses the graph entirely -- a *third*, unruly
-   kind of dependency that's neither a contract call nor a declared method. Either disallow it
-   (force every real dependency through a contract call the graph can see), or give a tool its own
-   way to declare "I also touch collection X" so the graph stays honest even when a tool needs to
-   step outside the contract layer.
+2. ~~Direct database access (the `whoami.ts` pattern) bypasses the graph entirely.~~ **Resolved
+   above: it's not a bypass to disallow, it's the model -- once collections are a declared
+   dependency kind with an enforced, injected handle instead of a raw `db.repo()` call.**
+
+**Does a collection still need a registry-addressable contract for remote/cross-node access?
+Resolved: no, not in general** -- same-process code gets the injected handle; there's no reason
+`identity.user.find` needs to exist as a `broker.call` target just so code in the same node can
+reach its own data. But **some scoped collections should still be reachable over the api** (e.g.
+`GET /api/domains/:id`, tenant-scoped) -- that's `serve.expose`'s existing job (an operator's
+explicit, per-api reachability decision, unchanged) and orthogonal to whether the mesh registry
+carries the contract. And since the api gateway is already the one place `meta` is trustworthy
+(above), and `mesh-serve start` already mounts `DatabaseModule` on every node today (`start.ts:81`
+-- the whole current deployment model is one process holding everything, api included), an exposed,
+scoped CRUD read doesn't need to round-trip through `ctx.call` -> registry -> middleware -> maybe a
+network hop at all when the api and the data are co-located, which today they always are: the api
+process can resolve `meta` from the request and read the collection directly through the same
+injected-handle mechanism, skipping the mesh transport entirely for its own process's data. This
+stops holding the moment api and data-owning roles genuinely split across processes -- at that point
+it's back to a real call, local or not.
 
 ## Proposed: a new `kind` -- replaces `service`, not alongside it
 
@@ -264,11 +305,25 @@ function with no change event; nothing today notices "I just became the leader f
 - ~~Incremental vs. breaking~~ **Resolved: breaking.** `filePath`/`concurrency`/`permissions` are
   required and `defineContract` throws without them (see above). This means the migration itself is
   now a real, upfront piece of work, not an optional follow-on -- see the checklist.
-- **What does a generic CRUD-generated contract's `filePath`/`concurrency` look like**, now that
-  `filePath` is required but generic actions genuinely have no domain-specific file? Does `defineCrud`
-  supply a synthetic value for these ("this action's code is `mesh` itself") so the requirement is
-  satisfiable without lying, or does the requirement only apply to `defineContract` calls that aren't
-  CRUD-generated in the first place?
+- ~~What does a generic CRUD-generated contract's `filePath`/`concurrency` look like~~ **Resolved:
+  `defineCrud` gains its own required `filePath`** (same explicit-required discipline `dependencies`
+  already has -- `ICrudContract.ts:378-382`), forwarded into all ten `defineContract` calls it makes
+  internally; `concurrency` is hardcoded to `on-demand` for all of them, never asked, since a CRUD
+  verb is call-and-return by construction. Not a synthetic/lying value: for a CRUD collection,
+  `filePath` genuinely is the file that calls `defineCrud(...)`, because importing that file is what
+  registers the schema `DatabaseMiddleware` (already loaded everywhere) needs to serve it -- the same
+  "code that has to load" question `filePath` answers for a hand-written contract. **Still open:**
+  `permissions` doesn't resolve this easily -- `visibility`/`destructive` are already per-action on
+  `defineCrud` (`find` and `delete` on the same collection are very different blast radii), so
+  `permissions` likely needs to be per-action too, not one value for the whole collection.
+- **CRUD as a `broker.call` target is a shim over `db.repo()` -- resolved to drop it as the primary
+  path.** See "Proposed: dependency graph" above: collections become a declared dependency kind with
+  an injected, scoped handle on `ctx`, not a registry-addressable contract, for same-process access.
+  `serve.expose` still decides per-api whether a scoped collection is reachable over the api at all --
+  unchanged, orthogonal. **Still open:** the exact shape of the injected handle/API (`ctx.db(domain)`?
+  something typed per declared collection?) and whether `defineCrud` needs to keep generating its ten
+  `defineContract`s at all once same-process callers stop using them, or only for the api-exposed
+  subset.
 
 ## Checklist
 
@@ -278,15 +333,29 @@ function with no change event; nothing today notices "I just became the leader f
 - [ ] `permissions` on `defineContract` -- **required**, throws if omitted (explicit "none"/public
       still has to be stated)
 - [ ] `scopedBy` generalized from `defineCrud` to `defineContract` -- optional, the one exception
-- [ ] Resolve how CRUD-generated contracts satisfy the `filePath`/`concurrency` requirement (open
-      fork above) -- blocks the next item, since `defineCrud` calls `defineContract` internally
+- [x] `filePath`/`concurrency` for CRUD-generated contracts -- resolved: `defineCrud` gains a
+      required `filePath`, forwards it plus a hardcoded `on-demand` into all ten generated
+      `defineContract` calls (see open forks)
+- [ ] `permissions` for CRUD-generated contracts -- likely per-action like `visibility`/`destructive`
+      already are, not one value for the whole collection (still open, see forks)
 - [ ] **Migrate every existing `defineContract` call site, in every repo**, to supply the three
       required fields -- this is not optional follow-up work, it's the thing that makes the change
       land at all. Every contract in `mesh`, `mesh-serve`, `mesh-web`, `mesh-core`, and every
       `surfdns-*` service stops loading the moment this ships without it.
-- [ ] Dependency-graph tracking: contracts called (live, addressable) and methods required (plain
-      shared code, no address, always co-loaded) as two distinct declared kinds, not one
-- [ ] A resolution for direct-database-access tools bypassing the graph
+- [ ] Dependency-graph tracking: contracts called, methods required, and collections needed as three
+      distinct declared kinds, not one
+- [x] Direct-database-access tools bypassing the graph -- resolved: not a bypass, the model. See
+      "collections it needs" above.
+- [ ] Design the injected scoped-collection handle itself (`ctx.db(domain)` or similar) -- has to
+      replicate what `DatabaseMiddleware` enforces today (`scopedBy` resolution, `hidden`-field
+      stripping, event emission on write), not just wrap raw `Database.repo()`
+- [ ] Decide whether `defineCrud` still generates all ten `broker.call`-addressable contracts
+      unconditionally, or only the subset an api actually exposes (`serve.expose`) -- same-process
+      callers no longer need them once the injected handle exists
+- [ ] Wire the api-colocated fast path: when a scoped, exposed collection's data lives on the same
+      node as the api handling the request (true today -- `start.ts` mounts `DatabaseModule` on every
+      node), read it directly through the injected handle using the api's own resolved `meta`, instead
+      of round-tripping through `ctx.call` -> registry -> middleware
 - [ ] Wire `ctx.signal` for real: one `AbortController` per call, passed into both `serviceCtx`
       literals (`ServiceBroker.ts:392`, `:455`), `.abort()`'d on the existing timeout race and on
       eviction -- currently declared on `IServiceContext` and always `undefined` in practice
