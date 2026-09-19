@@ -1,0 +1,191 @@
+# Contract-Driven Placement
+
+Status: **proposal / design thinking, not implemented.** Nothing described here exists yet. This
+document exists to hold the idea together across sessions, not to describe current behavior --
+see [SERVICE_BROKER_AND_CONTRACTS.md](./SERVICE_BROKER_AND_CONTRACTS.md) for what's real today.
+
+## The thesis
+
+A `broker.call('identity.whoami', ...)` is already location-transparent for the *caller* -- you
+never say which node answers it, the registry finds whoever can. The code that actually answers it
+is not: it only runs wherever the `ServiceModule` that happened to mount it is a running process.
+That's an artifact of how code is packaged (bundled into a `ServiceModule`, which is also the unit
+that decides *when* it runs, via `onStart`), not a real constraint on the work itself.
+
+Most tool code is a pure function: given input, maybe call a few other contracts, return output.
+Nothing about that requires a permanently-running process sitting somewhere waiting for it -- it
+could be loaded on demand, anywhere in the cluster with capacity, the same way a CRUD call already
+runs on whichever node happens to own the request, because there's one database across every node
+and nothing node-specific to load. The interesting case -- and the only case that actually needs a
+persistent process -- is code with a genuine reason to live somewhere specific, continuously: a
+real listener bound to a port, a stateful singleton, a self-triggered timer.
+
+`ServiceModule` currently is the container for *all* code, not just that case. This document is
+about giving contracts enough self-declared metadata that the system can tell the two apart, and
+eventually place/schedule code accordingly -- instead of a person deciding, once, by hand, which
+process a piece of code lives in forever.
+
+## Motivating context
+
+This came out of a session that spent a full day getting `mesh-serve` itself bootstrapped
+end-to-end (roles, a real first-claim account, a CLI, `sync.ts` provisioning a site's repos/parts/
+composition/release/deploy by hand). That work made obvious how much of it is manual stitching --
+`sync.ts` is a step-by-step script because nothing in the system already knows how its own pieces
+fit together. And `mesh-serve` itself is a small fraction of what's actually being built (the real
+product is the collection of services -- DNS, mail, git hosting, etc. -- that `mesh-serve` exists to
+host); the bootstrapping work was necessary scaffolding, not the main show.
+
+## What's already true today (verified, not assumed)
+
+- A contract's **schema** is already portable without its implementation: `serve.api.generateClient`
+  produces a fully-typed client from `defineContract`'s metadata alone; a caller never needs the
+  service code that answers it.
+- `destructive: true` on a contract is already **intrinsic** metadata other code (hold-service's
+  agent-freeze logic) trusts unconditionally, regardless of where/how the contract is reached --
+  the precedent for putting more self-description directly on the contract.
+- `scopedBy` (tenant/org/user isolation, enforced automatically by `DatabaseMiddleware`) exists
+  **only** on `defineCrud` today, not on plain `defineContract`.
+- **`resolve`/`find`/`get`/`count`/etc. are generic, framework-owned CRUD actions** --
+  `ICrudContract.ts:306/468/598` -- with no domain-specific file at all. Traced
+  `identity.whoami` (mesh-serve) as a concrete example: it calls `identity.user.resolve` and
+  `identity.organization.resolve`, neither of which has custom code to load -- they're `mesh`'s own
+  universal executor, driven purely by schema. A "where does this code live" field would be
+  meaningless for these; they're already exactly what this document is trying to make *other* code
+  become: placeable anywhere, nothing to load.
+- **Some tool code reaches the database directly, bypassing the contract layer entirely.**
+  `whoami.ts` does a raw `db.repo(...).find(...)` instead of a scoped contract call, specifically
+  because the scoped version couldn't do what it needed. This is invisible to any dependency graph
+  built from contract-call tracing alone -- a real gap this design has to account for, not paper
+  over.
+
+## Proposed: new `defineContract` metadata
+
+**Decided: breaking, not additive.** `filePath`, `concurrency`, and `permissions` are **required**
+-- `defineContract` throws if any of the three is omitted. `scopedBy` is the one exception and
+stays optional, the same as it is on `defineCrud` today (not every contract needs tenant/org/user
+scoping; plenty are legitimately global). This resolves the "incremental vs. breaking" fork below
+in favor of breaking: every existing `defineContract` call site, in every repo, has to be updated
+with real values for these three before its contracts can load again. There is no compatibility
+shim, no default-and-warn -- an omitted field is a startup failure, not a lint warning.
+
+- **`filePath`** (required) -- where the implementing code lives. Only meaningful for genuinely
+  custom tools; generic CRUD actions need none (see above) -- how a CRUD-generated contract
+  satisfies this requirement, if at all, is still open (see forks).
+- **`concurrency`** (required, runtime nature) -- one of:
+  - `on-demand`: call-and-return, placeable anywhere, loaded only when needed.
+  - `long-running`: needs a port/host binding, must live somewhere specific and stay there.
+  - `interval` / `timer`: self-scheduled, no caller at all.
+  - No default -- every contract states its own nature explicitly, on purpose: a silent default of
+    `on-demand` would be exactly the kind of unstated assumption this whole design exists to remove.
+- **`permissions`** (required) -- an intrinsic required-role baseline, parallel to `destructive`.
+  An intentionally public contract still has to say so explicitly (e.g. an empty/`none` value),
+  not simply omit the field.
+- **`scopedBy`** (optional) -- generalized from `defineCrud` so a plain contract *can* get the same
+  automatic scope-resolution/enforcement a CRUD collection already gets, when it needs it.
+
+## Proposed: dependency graph
+
+A way to know, per contract, what *other* contracts its own code calls -- currently invisible,
+discoverable only by reading source. Two real complications to solve, not ignore:
+
+1. Generic CRUD actions don't need a graph entry of their own (see above) -- they terminate the
+   graph, they don't extend it with more code to load.
+2. Direct database access (the `whoami.ts` pattern) bypasses the graph entirely. Either disallow it
+   (force every real dependency through a contract call the graph can see), or give a tool its own
+   way to declare "I also touch collection X" so the graph stays honest even when a tool needs to
+   step outside the contract layer.
+
+## Proposed: a new `kind` -- replaces `service`, not alongside it
+
+`serve.part`'s `kind` enum (`kernel | application | extension | driver | theme | service`) has no
+slot for "one on-demand function, no process required." Since `ServiceModule` is dropped (above),
+`service` as a `kind` goes with it -- there's no more "a service, as opposed to this new thing";
+the new kind, one contract/one file/one declared runtime nature, *is* what every current `service`
+part becomes. `kernel | application | extension | driver | theme` are untouched -- they're about
+mesh-web's own browser-side composition, a different axis entirely from what this document changes.
+
+## `ServiceModule` is dropped
+
+Not narrowed -- dropped. Checked every current mesh-serve service's actual instance state before
+deciding this, not just reasoned about it abstractly:
+
+- `IdentityService`, `HoldService`: **zero** instance state. Every tool is already a fully
+  independent, on-demand function.
+- `CatalogService`: one `watchInterval` -- exactly the proposed `interval` concurrency kind, scoped
+  to one piece of functionality (`watchRelease`), not shared with catalog's other, stateless tools.
+- `QueueService`: one `timer` + one `inFlight` set -- same shape, real state, entirely owned by the
+  tick loop, not shared with the rest of queue's tools.
+- `ApiService`, `CdnService`: the only two with a real listener + meaningful state
+  (`CdnService.webRequestCache`) -- but even here, everything is scoped to *one* cohesive thing (a
+  gateway that dispatches to the rest of the system), not a bag of otherwise-unrelated tools that
+  happen to share a class.
+
+Every real case of "this needs to persist/hold state" in the current codebase is already naturally
+scoped to exactly one atomic unit. Nowhere does `ServiceModule`'s actual distinguishing feature --
+grouping *several* tools to share *one* process's state -- do real work; it's just where the code
+happens to live. So: every contract stands alone and declares its own `concurrency`. `on-demand`
+contracts are placed and loaded per call, same as CRUD. `long-running`/`interval` contracts are
+exactly what they are today -- one cohesive piece of code with its own private state and methods --
+except the scheduler owns starting/stopping them, not a hand-written class wrapping `onStart`/
+`onStop`.
+
+**Known gap, not a blocker:** nothing in the current codebase needs two *different* contracts to
+share one resource (e.g. two message types on the same open socket). If that need shows up for
+real, it needs an answer this document doesn't have yet -- but nothing today actually requires it,
+so it isn't blocking the decision to drop `ServiceModule`.
+
+## Proposed: a placement/scheduling layer
+
+Given a contract's declared `filePath`/`concurrency`/`scopedBy`/dependency graph, and a live
+registry of nodes and their capacity, something has to actually decide where to load and run code
+on demand -- and, separately, where a `long-running`/`interval` contract lives persistently once
+claimed. Not designed yet; needs the metadata above to exist first.
+
+## Open forks -- real decisions, not details
+
+- **Intrinsic vs. extrinsic permissions.** Does a contract's declared `permissions` become the one
+  true authority everywhere it's ever exposed, or a floor a per-api `serve.expose` row can still
+  tighten but never loosen below? The current model (`serve.expose.add({apiId, contract, role})`)
+  is deliberately extrinsic -- the same contract can be exposed with different roles, or none, on
+  different apis. Baking a role into the contract itself is a real behavior change, not just added
+  documentation.
+- ~~Does the new atomic-code kind coexist with `service` long-term~~ **Resolved: no `service` kind,
+  no `ServiceModule`.** Every real current use of persistent state/listeners was checked and is
+  already scoped to one atomic unit (see above) -- there's nothing left for `service` to be the
+  *other* option to.
+- **Who owns the scheduler** -- a new capability inside `mesh` core itself, or something layered on
+  top in `mesh-serve`?
+- ~~Incremental vs. breaking~~ **Resolved: breaking.** `filePath`/`concurrency`/`permissions` are
+  required and `defineContract` throws without them (see above). This means the migration itself is
+  now a real, upfront piece of work, not an optional follow-on -- see the checklist.
+- **What does a generic CRUD-generated contract's `filePath`/`concurrency` look like**, now that
+  `filePath` is required but generic actions genuinely have no domain-specific file? Does `defineCrud`
+  supply a synthetic value for these ("this action's code is `mesh` itself") so the requirement is
+  satisfiable without lying, or does the requirement only apply to `defineContract` calls that aren't
+  CRUD-generated in the first place?
+
+## Checklist
+
+- [ ] `filePath` on `defineContract` -- **required**, throws if omitted
+- [ ] `concurrency` (`on-demand` / `long-running` / `interval`) on `defineContract` -- **required**,
+      throws if omitted, no default
+- [ ] `permissions` on `defineContract` -- **required**, throws if omitted (explicit "none"/public
+      still has to be stated)
+- [ ] `scopedBy` generalized from `defineCrud` to `defineContract` -- optional, the one exception
+- [ ] Resolve how CRUD-generated contracts satisfy the `filePath`/`concurrency` requirement (open
+      fork above) -- blocks the next item, since `defineCrud` calls `defineContract` internally
+- [ ] **Migrate every existing `defineContract` call site, in every repo**, to supply the three
+      required fields -- this is not optional follow-up work, it's the thing that makes the change
+      land at all. Every contract in `mesh`, `mesh-serve`, `mesh-web`, `mesh-core`, and every
+      `surfdns-*` service stops loading the moment this ships without it.
+- [ ] Dependency-graph tracking (per-contract, what other contracts it calls)
+- [ ] A resolution for direct-database-access tools bypassing the graph
+- [ ] New `kind` for one atomic piece of code -- **replaces** `service`, not added alongside it
+- [ ] **Drop `ServiceModule` and `kind: 'service'` entirely.** Migrate every current `ServiceModule`
+      subclass (`mesh-serve`: `IdentityService`, `CdnService`, `CatalogService`, `HoldService`,
+      `QueueService`, `ApiService`, and any in `surfdns-*`) to the new kind -- most (identity, hold,
+      and catalog/queue's non-timer tools) become plain on-demand contracts with no wrapper at all;
+      `ApiService`/`CdnService`, and catalog/queue's own timers, become `long-running`/`interval`
+      contracts, each one cohesive unit, not a class grouping several
+- [ ] Placement/scheduling layer using all of the above
+- [ ] Resolve the remaining open forks above before or during implementation, not after
