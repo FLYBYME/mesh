@@ -139,6 +139,17 @@ export class Database {
 
     /**
      * repo: Dynamically retrieves or creates a strictly-typed DomainRepository.
+     *
+     * **Unscoped, unstripped, no events, no hooks.** Every row of every tenant, hidden fields
+     * included, no `data.*`/`<domain>.*` events fired, no module `beforeCrud`/`afterCrud` run. That
+     * is deliberate and occasionally exactly right -- a cross-tenant admin sweep
+     * (`catalog.service.ts`'s `watchRelease`), or a caller with a genuine need for a hidden field's
+     * real value (`defineCrud`'s own `hidden` option describes this escape hatch) -- but it is not
+     * the default a handler reaching into its own or another domain's data should reach for.
+     * **Use `ctx.db(domain)` (`IServiceContext.ts`) unless you specifically need every tenant's rows
+     * or a hidden field's real value.** `ctx.db()` is scoped, stripped, and hook-respecting by
+     * construction (backed by `CrudExecutor`, the same executor `DatabaseMiddleware` itself calls);
+     * this method is not, on purpose, for the narrow cases that need exactly that.
      */
     public repo<T extends { id: string }>(
         schema: z.ZodType<T>,
@@ -176,6 +187,11 @@ export class Database {
      * Throws rather than returning a loosely-typed fallback: an unregistered domain here is a real
      * bug (either this collection never called `defineCrud`, or this call is racing module import
      * order), not a case worth guessing at.
+     *
+     * **Same unscoped/unstripped/no-events/no-hooks caveat as `repo()` above -- see there.** This
+     * method only fixed `repo()`'s type-soundness problem (the right schema, automatically); it does
+     * not fix the safety problem. Prefer `ctx.db(domain)` unless this collection's rare escape hatch
+     * is genuinely what you need.
      */
     public collection<D extends keyof IServiceCollectionRegistry & string>(
         domain: D

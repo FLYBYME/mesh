@@ -102,8 +102,64 @@ export interface IServiceContext<TMeta = IMeshMeta> {
         options?: { skipNetwork?: boolean }
     ): void;
 
+    /**
+     * `db(domain)`: the safe, direct way to reach a CRUD collection's own actions from inside a
+     * handler, without a network/registry hop -- and, critically, *without losing anything*
+     * `ctx.call('<domain>.<action>', ...)` already guarantees. Backed by the exact same
+     * `CrudExecutor` `DatabaseMiddleware` itself calls (`db/CrudExecutor.ts`), so `scopedBy`
+     * resolution, `hidden`-field stripping, event emission, and a module's own
+     * `beforeCrud`/`afterCrud` hooks all still apply -- `ctx.meta` is threaded through implicitly,
+     * the same way `ctx.call()` already threads it, so there is no `meta` parameter to forget or
+     * pass wrong.
+     *
+     * `db(domain).find(p)` and `call(\`${domain}.find\`, p)` are typed identically -- both read off
+     * the same generated `IServiceToolRegistry['<domain>.find']` entry -- and behave identically;
+     * the only difference is that `db()` never goes through registry-based routing (local or
+     * remote). This is what `defineCrud`'s ten generated contracts becoming a `broker.call` target
+     * (`docs/CONTRACT_DRIVEN_PLACEMENT.md`, "collections as a third dependency kind") is *for*:
+     * same-process code reaching its own or another domain's data doesn't need mesh-wide
+     * addressability, it needs this.
+     *
+     * Not a replacement for `database.repo()`/`database.collection()` (`Database.ts`) -- those stay
+     * the deliberate, rare escape hatch for code that genuinely needs every tenant's rows or a
+     * hidden field's real value (the same already-documented pattern `defineCrud`'s own `hidden`
+     * option describes). `db()` is scoped and stripped on purpose; `repo()`/`collection()` are not,
+     * also on purpose.
+     */
+    db<D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D>;
+
     logger: ILogger;
 }
+
+/**
+ * Looks up one `IServiceToolRegistry` entry by domain + action without directly indexing by a
+ * template literal (`IServiceToolRegistry[\`${D}.${A}\`]`) -- that form requires TypeScript to prove
+ * the computed key is a member of `IServiceToolRegistry` *at the type's declaration site*, which
+ * fails to even compile here in `mesh` itself, where the registry is necessarily empty (populated
+ * only by generated code, downstream). Mapping over `keyof IServiceToolRegistry` instead (the same
+ * safe pattern `Database.ts`'s `CollectionDomain` already uses) degrades to `never` cleanly when the
+ * registry is empty, and resolves to the real entry once generated code has populated it.
+ */
+type ToolEntry<D extends string, A extends string> = {
+    [K in keyof IServiceToolRegistry]: K extends `${D}.${A}` ? IServiceToolRegistry[K] : never;
+}[keyof IServiceToolRegistry];
+
+/**
+ * The shape `ctx.db(domain)` returns -- one method per generic CRUD action, each typed off the
+ * literal same generated `IServiceToolRegistry['<domain>.<action>']` entry `ctx.call()` uses. Not a
+ * new type shape asserted to match `IServiceToolRegistry`; the same one, referenced twice.
+ */
+export type CrudRepo<D extends string> = {
+    find(params: ToolEntry<D, 'find'>['params']): Promise<ToolEntry<D, 'find'>['returns']>;
+    findOne(params: ToolEntry<D, 'find_one'>['params']): Promise<ToolEntry<D, 'find_one'>['returns']>;
+    get(params: ToolEntry<D, 'get'>['params']): Promise<ToolEntry<D, 'get'>['returns']>;
+    resolve(params: ToolEntry<D, 'resolve'>['params']): Promise<ToolEntry<D, 'resolve'>['returns']>;
+    create(params: ToolEntry<D, 'create'>['params']): Promise<ToolEntry<D, 'create'>['returns']>;
+    update(params: ToolEntry<D, 'update'>['params']): Promise<ToolEntry<D, 'update'>['returns']>;
+    replace(params: ToolEntry<D, 'replace'>['params']): Promise<ToolEntry<D, 'replace'>['returns']>;
+    delete(params: ToolEntry<D, 'delete'>['params']): Promise<ToolEntry<D, 'delete'>['returns']>;
+    count(params: ToolEntry<D, 'count'>['params']): Promise<ToolEntry<D, 'count'>['returns']>;
+};
 
 /**
  * ServiceActionHandler: The function signature for a tool's implementation.

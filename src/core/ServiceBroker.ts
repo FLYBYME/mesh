@@ -9,8 +9,9 @@ import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceModule } from '../interfaces/IServiceModule.js';
-import type { IServiceContext, ICallOptions } from '../interfaces/IServiceContext.js';
+import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
+import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry } from '../interfaces/IToolContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { randomUUID } from 'node:crypto';
@@ -211,6 +212,19 @@ export class ServiceBroker implements IServiceBroker {
         const mountKey = this.toolMountKeys.get(toolKey);
         if (!mountKey) return undefined;
         return this.mountedModules.get(mountKey)?.database;
+    }
+
+    /**
+     * Backs `ctx.db(domain)` (`IServiceContext.ts`) -- delegates to `CrudExecutor.makeCrudRepo`, the
+     * one real implementation (also used by `CrudExecutor` itself for a `beforeCrud`/`afterCrud`
+     * hook's own `ctx.db()`), so both `serviceCtx` build sites below share it instead of duplicating
+     * nine methods twice over.
+     */
+    private makeCrudRepo<D extends keyof IServiceCollectionRegistry & string>(
+        domain: D,
+        meta: Record<string, unknown> | undefined
+    ): CrudRepo<D> {
+        return CrudExecutor.makeCrudRepo(this, domain, meta);
     }
 
     public pipe(plugin: IBrokerPlugin): this {
@@ -416,6 +430,8 @@ export class ServiceBroker implements IServiceBroker {
                             payload: EventRegistry[K],
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
+                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D> =>
+                            this.makeCrudRepo(domain, ctx.meta),
                         logger: this.logger
                     };
                     // Resolved and forwarded here, once, rather than inside every handler that
@@ -479,6 +495,8 @@ export class ServiceBroker implements IServiceBroker {
                             payload: EventRegistry[K],
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
+                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D> =>
+                            this.makeCrudRepo(domain, packet?.meta),
                         logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
