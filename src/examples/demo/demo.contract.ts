@@ -25,11 +25,16 @@ export const demoCrud = defineCrud('demo', DemoSchema, {
     // The example exists to be called from outside, so it opts its reads into the public surface.
     // Everything unnamed here -- create, update, delete -- stays internal by default.
     visibility: { find: 'public', get: 'public' },
+    filePath: 'src/examples/demo/demo.contract.ts',
+    permissions: [],
 });
 
 // ─── Time Series ─────────────────────────────────────────────────────────────
 
-export const demoTimeSeries = defineTimeSeries('demometrics', DemoMetricSchema);
+export const demoTimeSeries = defineTimeSeries('demometrics', DemoMetricSchema, {
+    filePath: 'src/examples/demo/demo.contract.ts',
+    permissions: [],
+});
 
 // ─── Contracts ───────────────────────────────────────────────────────────────
 
@@ -51,6 +56,9 @@ export const demoHelloContract = defineContract({
     outputSchema: DemoHelloOutputSchema,
     rest: { method: 'POST', path: '/demo/hello' },
     destructive: false,
+    filePath: 'src/examples/demo/demo.contract.ts',
+    concurrency: 'on-demand',
+    permissions: [],
     print: defaultPrint
 });
 
@@ -72,6 +80,9 @@ export const demoStatusContract = defineContract({
     outputSchema: DemoStatusOutputSchema,
     rest: { method: 'GET', path: '/demo/status' },
     destructive: false,
+    filePath: 'src/examples/demo/demo.contract.ts',
+    concurrency: 'on-demand',
+    permissions: [],
     print: defaultPrint
 });
 
@@ -88,5 +99,8 @@ export const demoNotifyContract = defineContract({
     inputSchema: DemoNotifySchema,
     outputSchema: z.object({ success: z.boolean() }),
     rest: { method: 'POST', path: '/demo/notify' },
+    filePath: 'src/examples/demo/demo.contract.ts',
+    concurrency: 'on-demand',
+    permissions: [],
     print: defaultPrint
 });

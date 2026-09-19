@@ -82,9 +82,17 @@ export function defineTimeSeries<
     domain: string,
     baseSchema: TBase,
     options: {
-        timeout?: Partial<Record<'insert' | 'query' | 'aggregate' | 'latest', number>>
-    } = {}
+        timeout?: Partial<Record<'insert' | 'query' | 'aggregate' | 'latest', number>>;
+        /** REQUIRED. The file that called `defineTimeSeries` -- see `defineContract`'s `filePath`. */
+        filePath: string;
+        /**
+         * REQUIRED. Intrinsic required-role baseline, applied uniformly to all four generated
+         * contracts -- see `defineContract`'s `permissions`. Pass `[]` for none.
+         */
+        permissions: readonly string[];
+    }
 ): TimeSeriesContracts<TBase, TOut> {
+    const { filePath, permissions } = options;
     const outputSchema = baseSchema.extend({
         timestamp: z.coerce.date(),
         tags: z.record(z.string(), z.string())
@@ -104,6 +112,7 @@ export function defineTimeSeries<
         isTimeSeries: true,
         destructive: true,
         timeout: options.timeout?.insert,
+        filePath, concurrency: 'on-demand', permissions,
         print: (out) => `Inserted ${out.count} points.`
     });
 
@@ -115,6 +124,7 @@ export function defineTimeSeries<
         rest: { method: 'GET', path: `/${domain}/query` },
         isTimeSeries: true,
         timeout: options.timeout?.query,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -126,6 +136,7 @@ export function defineTimeSeries<
         rest: { method: 'GET', path: `/${domain}/aggregate` },
         isTimeSeries: true,
         timeout: options.timeout?.aggregate,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -137,6 +148,7 @@ export function defineTimeSeries<
         rest: { method: 'GET', path: `/${domain}/latest` },
         isTimeSeries: true,
         timeout: options.timeout?.latest,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 

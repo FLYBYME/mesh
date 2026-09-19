@@ -391,6 +391,23 @@ export function defineCrud<
          * an answer, and the type system will not let you skip the question.
          */
         dependencies: readonly string[],
+        /**
+         * REQUIRED. The file that called `defineCrud` -- see `defineContract`'s `filePath`. There is
+         * no domain-specific handler file for a generic CRUD action; importing this file is what
+         * registers the schema `DatabaseMiddleware` needs to serve it, so it's the honest answer to
+         * "what code has to load," not a synthetic value.
+         */
+        filePath: string,
+        /**
+         * REQUIRED. Intrinsic required-role baseline -- see `defineContract`'s `permissions`. Applied
+         * uniformly to all ten generated contracts; pass `[]` for none.
+         *
+         * Per-action granularity (matching `visibility`/`destructive`, since `find` and `delete` on
+         * the same collection are very different blast radii) is a real, still-open question -- see
+         * `docs/CONTRACT_DRIVEN_PLACEMENT.md`. One collection-wide value here is the simpler starting
+         * point, not a final answer.
+         */
+        permissions: readonly string[],
     }
 ): CrudContracts<
     TBase,
@@ -454,6 +471,7 @@ export function defineCrud<
 
     assertValidDependencies(options.dependencies, `defineCrud("${domain}")`);
     const dependencies = Object.freeze([...options.dependencies]);
+    const { filePath, permissions } = options;
 
     // Absent means internal. Spreading the caller's map over an all-internal base keeps that true
     // for every action they did not name, which is the default the whole change exists to set.
@@ -546,6 +564,7 @@ export function defineCrud<
         timeout: timeouts.find,
         visibility: visibility.find,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -561,6 +580,7 @@ export function defineCrud<
         timeout: timeouts.findOne,
         visibility: visibility.findOne,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -576,6 +596,7 @@ export function defineCrud<
         timeout: timeouts.count,
         visibility: visibility.count,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -591,6 +612,7 @@ export function defineCrud<
         timeout: timeouts.get,
         visibility: visibility.get,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -606,6 +628,7 @@ export function defineCrud<
         timeout: timeouts.resolve,
         visibility: visibility.resolve,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -621,6 +644,7 @@ export function defineCrud<
         timeout: timeouts.create,
         visibility: visibility.create,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -636,6 +660,7 @@ export function defineCrud<
         timeout: timeouts.createMany,
         visibility: visibility.createMany,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -651,6 +676,7 @@ export function defineCrud<
         timeout: timeouts.update,
         visibility: visibility.update,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -666,6 +692,7 @@ export function defineCrud<
         timeout: timeouts.replace,
         visibility: visibility.replace,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
@@ -681,6 +708,7 @@ export function defineCrud<
         timeout: timeouts.delete,
         visibility: visibility.delete,
         dependencies,
+        filePath, concurrency: 'on-demand', permissions,
         print: defaultPrint
     });
 
