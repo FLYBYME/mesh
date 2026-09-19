@@ -229,6 +229,23 @@ function with no change event; nothing today notices "I just became the leader f
 
    worker_threads remains the answer if/when true isolation (crash containment, not just memory)
    becomes a real, measured need -- not the starting point.
+4. **`ctx.signal` needs to become real.** `IServiceContext` already declares `readonly signal?:
+   AbortSignal` (`IServiceContext.ts:51`) -- but verified directly: neither place that builds the
+   object handlers actually receive (`ServiceBroker.ts:392` and `:455`, the two `serviceCtx`
+   literals inside `registerModule`) sets it, and the internal `IContext` those are built from
+   (`ServiceBroker.ts:773`, `:818`) has no abort-related field either. There is no `AbortController`
+   anywhere in the broker. Every handler in the codebase can read `ctx.signal` today; it is always
+   `undefined`. Same shape of gap as eviction was before this section: declared, never wired.
+
+   This starts to matter for real once eviction (above) is real: a `long-running` handler that's
+   about to be evicted (or just past its call's own timeout, which already exists as a race against
+   `resultPromise` at `ServiceBroker.ts:793-797` but only ever rejects the *caller*, never signals
+   the *handler*) needs a way to be told to stop, so it can leave `require.cache` deletion pointing
+   at something with no in-flight work still touching it, instead of racing eviction against a
+   handler that's still running. Wiring this is: construct one `AbortController` per call, hand
+   `.signal` to both `serviceCtx` literals, call `.abort()` on the existing timeout path instead of
+   only rejecting, and call `.abort()` again from whatever eventually drives eviction. No handler is
+   obligated to observe it (same as any other `AbortSignal` in Node) -- but today none even *can*.
 
 ## Open forks -- real decisions, not details
 
@@ -270,6 +287,9 @@ function with no change event; nothing today notices "I just became the leader f
 - [ ] Dependency-graph tracking: contracts called (live, addressable) and methods required (plain
       shared code, no address, always co-loaded) as two distinct declared kinds, not one
 - [ ] A resolution for direct-database-access tools bypassing the graph
+- [ ] Wire `ctx.signal` for real: one `AbortController` per call, passed into both `serviceCtx`
+      literals (`ServiceBroker.ts:392`, `:455`), `.abort()`'d on the existing timeout race and on
+      eviction -- currently declared on `IServiceContext` and always `undefined` in practice
 - [ ] New `kind` for one atomic piece of code -- **replaces** `service`, not added alongside it
 - [ ] **Drop `ServiceModule` and `kind: 'service'` entirely.** Migrate every current `ServiceModule`
       subclass (`mesh-serve`: `IdentityService`, `CdnService`, `CatalogService`, `HoldService`,
