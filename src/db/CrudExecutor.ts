@@ -161,8 +161,8 @@ export class CrudExecutor {
             // handler's own `ctx.db()` -- a `beforeCrud`/`afterCrud` hook reaching into some *other*
             // domain gets that domain's own mount-database override, not this call's `db`, which may
             // belong to a different mount entirely.
-            db: <D extends keyof IServiceCollectionRegistry & string>(otherDomain: D) =>
-                CrudExecutor.makeCrudRepo(broker, otherDomain, meta),
+            db: <D extends keyof IServiceCollectionRegistry & string>(otherDomain: D, overrideMeta?: Record<string, unknown>) =>
+                CrudExecutor.makeCrudRepo(broker, otherDomain, overrideMeta ?? meta),
             logger: broker.logger
         };
 

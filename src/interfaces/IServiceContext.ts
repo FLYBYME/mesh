@@ -108,9 +108,16 @@ export interface IServiceContext<TMeta = IMeshMeta> {
      * `ctx.call('<domain>.<action>', ...)` already guarantees. Backed by the exact same
      * `CrudExecutor` `DatabaseMiddleware` itself calls (`db/CrudExecutor.ts`), so `scopedBy`
      * resolution, `hidden`-field stripping, event emission, and a module's own
-     * `beforeCrud`/`afterCrud` hooks all still apply -- `ctx.meta` is threaded through implicitly,
-     * the same way `ctx.call()` already threads it, so there is no `meta` parameter to forget or
-     * pass wrong.
+     * `beforeCrud`/`afterCrud` hooks all still apply.
+     *
+     * `meta` defaults to `ctx.meta` when omitted -- the common case, and the same value `ctx.call()`
+     * already threads through implicitly when no `options.meta` override is given (both read the
+     * same ambient context). Pass it explicitly only when a handler genuinely needs a *different*
+     * scope than its own caller's -- e.g. resolving a part that belongs to some other tenant than
+     * whoever is calling this handler right now, the same case `ctx.call(tool, params, { meta })`
+     * already covers. This is not the "forget to pass meta" foot-gun `ctx.db()` exists to remove:
+     * omitting the parameter is what removes it; passing one explicitly is a deliberate choice, made
+     * once per lookup, not per method call.
      *
      * `db(domain).find(p)` and `call(\`${domain}.find\`, p)` are typed identically -- both read off
      * the same generated `IServiceToolRegistry['<domain>.find']` entry -- and behave identically;
@@ -126,7 +133,7 @@ export interface IServiceContext<TMeta = IMeshMeta> {
      * option describes). `db()` is scoped and stripped on purpose; `repo()`/`collection()` are not,
      * also on purpose.
      */
-    db<D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D>;
+    db<D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: TMeta): CrudRepo<D>;
 
     logger: ILogger;
 }

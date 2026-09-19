@@ -59,6 +59,17 @@ const viaDbGetContract = defineContract({
     print: defaultPrint,
 });
 
+const viaDbFindAsInput = z.object({ asTenant: z.string() });
+
+const viaDbFindAsContract = defineContract({
+    domain: 'ctxdbsite', action: 'viaDbFindAs',
+    description: 'Calls ctx.db(\'ctxdbsite\', { user: { tenant_id: asTenant } }).find({}) -- an explicit scope override, deliberately different from the caller\'s own ambient ctx.meta.',
+    inputSchema: viaDbFindAsInput, outputSchema: viaDbFindOutput,
+    rest: { method: 'GET', path: '/ctxdbsite/viaDbFindAs' },
+    filePath: 'src/__tests__/db/CtxDb.spec.ts', concurrency: 'on-demand', permissions: [],
+    print: defaultPrint,
+});
+
 const viaDbSecretGetInput = z.object({ id: z.string() });
 const viaDbSecretGetOutput = z.object({ id: z.string(), name: z.string(), apiKey: z.string().optional() });
 
@@ -79,6 +90,7 @@ class CtxDbSiteModule extends ServiceModule {
         this.mountCrud(ctxDbSiteCrud);
         this.mountTool(viaDbFindContract, async (_input, ctx) => ctx.db('ctxdbsite').find({}));
         this.mountTool(viaDbGetContract, async (input, ctx) => ctx.db('ctxdbsite').get(input));
+        this.mountTool(viaDbFindAsContract, async (input, ctx) => ctx.db('ctxdbsite', { user: { tenant_id: input.asTenant } }).find({}));
     }
 }
 
@@ -99,6 +111,7 @@ declare global {
         'ctxdbsite.get': { params: { id: string }; returns: { id: string; host: string; tenantId: string } };
         'ctxdbsite.viaDbFind': { params: {}; returns: Array<{ id: string; host: string; tenantId: string }> };
         'ctxdbsite.viaDbGet': { params: { id: string }; returns: { id: string; host: string; tenantId: string } };
+        'ctxdbsite.viaDbFindAs': { params: { asTenant: string }; returns: Array<{ id: string; host: string; tenantId: string }> };
         'ctxdbsecret.create': { params: { name: string; apiKey: string }; returns: { id: string; name: string; apiKey?: string } };
         'ctxdbsecret.get': { params: { id: string }; returns: { id: string; name: string; apiKey?: string } };
         'ctxdbsecret.viaDbGet': { params: { id: string }; returns: { id: string; name: string; apiKey?: string } };
@@ -143,6 +156,20 @@ describe('ctx.db() matches ctx.call() exactly', () => {
 
         expect(viaDb.map(s => s.host)).toEqual(['acme-1.com']);
         expect(viaDb.map(s => s.host)).toEqual(viaCall.map(s => s.host));
+    });
+
+    it('an explicit meta override on ctx.db() reaches a different scope than the caller\'s own ambient ctx.meta', async () => {
+        await broker.call('ctxdbsite.create', { host: 'acme-1.com' }, acmeMeta);
+        await broker.call('ctxdbsite.create', { host: 'beta-1.com' }, betaMeta);
+
+        // Called as acme, but explicitly overriding ctx.db()'s scope to beta -- proves the override
+        // parameter, not just the default-to-ctx.meta path, actually takes effect.
+        const crossTenant = await broker.call('ctxdbsite.viaDbFindAs', { asTenant: 'beta' }, acmeMeta);
+        expect(crossTenant.map(s => s.host)).toEqual(['beta-1.com']);
+
+        // And omitting the override still confines to the caller's own ambient scope, unaffected.
+        const ownScope = await broker.call('ctxdbsite.viaDbFind', {}, acmeMeta);
+        expect(ownScope.map(s => s.host)).toEqual(['acme-1.com']);
     });
 
     it('refuses ctx.db().get() across a scope boundary exactly like site.get does -- 404, not a leak', async () => {

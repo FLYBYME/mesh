@@ -430,8 +430,8 @@ export class ServiceBroker implements IServiceBroker {
                             payload: EventRegistry[K],
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
-                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, ctx.meta),
+                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
+                            this.makeCrudRepo(domain, meta ?? ctx.meta),
                         logger: this.logger
                     };
                     // Resolved and forwarded here, once, rather than inside every handler that
@@ -495,8 +495,8 @@ export class ServiceBroker implements IServiceBroker {
                             payload: EventRegistry[K],
                             options?: { skipNetwork?: boolean }
                         ) => this.emit(event, payload, options),
-                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, packet?.meta),
+                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
+                            this.makeCrudRepo(domain, meta ?? packet?.meta),
                         logger: this.logger
                     };
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
