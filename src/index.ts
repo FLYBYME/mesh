@@ -4,6 +4,7 @@ export { z };
 // Core
 export * from './core/MeshNetwork.js';
 export * from './core/Registry.js';
+export * from './core/PlacementRegistry.js';
 
 // Utils
 export * from './utils/Logger.js';
