@@ -471,6 +471,26 @@ function with no change event; nothing today notices "I just became the leader f
       events and hooks can't drift between the two paths. `meta` defaults to `ctx.meta` and
       shallow-merges an override, matching `ctx.call(tool, params, { meta })` exactly. All 64
       same-process CRUD call sites in `mesh-serve` migrated to it.
+- [ ] **Expose scope resolution.** `resolveCallerScope` (`db/CrudExecutor.ts`) is private, and it is
+      the only correct answer to "what tenant is this caller". It tries four shapes in order:
+      `meta.user.<field>`, `meta.user.<snake_field>`, `meta.<field>`, `meta.<snake_field>`. A handler
+      that needs the scope for anything *other* than a CRUD call -- a storage path, a cache key, an
+      outbound request -- has no way to ask, so it reimplements the chain by hand. Found in the wild:
+      four hand-copied variants across `surfdns-domains` and `surfdns-mail`, each a private copy of a
+      framework internal, each free to drift from it and from each other. Either export it or put it
+      on the context (`ctx.scope('tenantId')`), so there is one implementation rather than one per
+      repo that noticed.
+- [ ] **Scoping stops at the mesh boundary.** `scopedBy` governs `ctx.call`/`ctx.db`, and nothing
+      else. A protocol server that terminates its own connections -- an OCI registry, an S3
+      endpoint, a git or SMTP listener mounted by a `long-running` contract -- is a second front door
+      to the same collections that never passes through it. Verified across the `surfdns-*` repos:
+      the wire layers hold no broker and no `ctx` at all, authenticate against a single static
+      credential for the whole server, and key storage by resource name with no tenant segment,
+      while the collections behind them all declare `scopedBy: 'tenantId'`. The framework currently
+      offers nothing here -- no way for a gateway to say "this connection is tenant X" and get the
+      same enforcement a mesh call gets. Decide whether that belongs in mesh (a scope a gateway can
+      enter, so `ctx.db` inside it is scoped the same way) or is explicitly the application's
+      problem. Today it is neither, which is the worst of the two.
 - [ ] Decide whether `defineCrud` still generates all ten `broker.call`-addressable contracts
       unconditionally, or only the subset an api actually exposes (`serve.expose`) -- same-process
       callers no longer need them once the injected handle exists
