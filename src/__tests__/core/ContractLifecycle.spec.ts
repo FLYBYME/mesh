@@ -58,8 +58,23 @@ const tickContract = defineContract({
     print: defaultPrint,
 });
 
+const leaderTickContract = defineContract({
+    domain: 'lifecycle',
+    action: 'leaderTick',
+    description: 'A recurring job that must run on exactly one node.',
+    inputSchema: z.object({}),
+    outputSchema: z.object({ n: z.number() }),
+    filePath: 'src/__tests__/core/ContractLifecycle.spec.ts',
+    concurrency: 'interval',
+    intervalMs: 20,
+    leaderScoped: true,
+    permissions: [],
+    print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
+        'lifecycle.leaderTick': { params: Record<string, never>; returns: { n: number } };
         'lifecycle.once': { params: Record<string, never>; returns: { ok: boolean } };
         'lifecycle.listen': { params: { port: number }; returns: { boundTo: number } };
         'lifecycle.tick': { params: Record<string, never>; returns: { n: number } };
@@ -199,6 +214,49 @@ describe('contract lifetime: ctx.signal and the built-in interval timer', () => 
 
             await wait(200);
             expect(maxConcurrent).toBe(1);
+        });
+
+        it('drops a tick on a node that is not the leader', async () => {
+            // The guard that makes `leaderScoped` + `interval` a cluster singleton. Every node
+            // loads the contract and starts a timer; only the leader's tick runs. It is checked
+            // per tick rather than once, so leadership moving is picked up on the next one --
+            // which is why no separate leadership watcher is needed for interval contracts.
+            //
+            // mesh-serve's build sweep depends on exactly this: without it, two nodes both find
+            // the same pending artifact and both enqueue a build for it.
+            let ticks = 0;
+            const registry = broker.registry as unknown as { leaderFor: (d: string) => { nodeID: string } | undefined };
+            const realLeaderFor = registry.leaderFor.bind(registry);
+            registry.leaderFor = () => ({ nodeID: 'some-other-node' });
+
+            try {
+                broker.registerContract(leaderTickContract, async () => {
+                    ticks += 1;
+                    return { n: ticks };
+                });
+                await wait(120);
+                expect(ticks).toBe(0);
+            } finally {
+                registry.leaderFor = realLeaderFor;
+            }
+        });
+
+        it('runs the tick once this node is the leader', async () => {
+            let ticks = 0;
+            const registry = broker.registry as unknown as { leaderFor: (d: string) => { nodeID: string } | undefined };
+            const realLeaderFor = registry.leaderFor.bind(registry);
+            registry.leaderFor = () => ({ nodeID: broker.nodeID });
+
+            try {
+                broker.registerContract(leaderTickContract, async () => {
+                    ticks += 1;
+                    return { n: ticks };
+                });
+                await wait(120);
+                expect(ticks).toBeGreaterThan(0);
+            } finally {
+                registry.leaderFor = realLeaderFor;
+            }
         });
 
         it('keeps ticking after a handler throws', async () => {
