@@ -126,6 +126,21 @@ export class ServiceBroker implements IServiceBroker {
     private localTools = new Map<string, LocalTool>();
     private modules: IServiceModule[] = [];
     private isStarted: boolean = false;
+    // ── ctx.signal, and the two lifetimes it can have ────────────────────────────────────────
+    // A `long-running`/`interval` contract's signal belongs to its *registration*: one controller
+    // per tool key, created when it mounts, aborted when it unmounts. That is the whole of stopping
+    // such a contract -- see IServiceContext.signal.
+    private lifetimeAborts = new Map<string, AbortController>();
+    // An `on-demand` contract's signal belongs to the one call, so it can't be cached by key --
+    // but broker.stop() still has to be able to cancel whatever is in flight, hence the set.
+    private inFlightAborts = new Set<AbortController>();
+    // Broker-owned timers for `interval` contracts (see startIntervalContract). Keyed by tool key
+    // so unregisterContract can clear exactly one.
+    private intervalTimers = new Map<string, TimerHandle>();
+    // Interval contracts registered before start() -- their timers begin when the broker does, not
+    // at mount time, so a part loaded onto a not-yet-started node doesn't tick against half-wired
+    // infrastructure.
+    private pendingIntervals = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
     // registerModule's event subscriptions use an inline closure per handler, so nothing
     // keeps a reference to hand back to EventEmitter#off later -- without this, unregisterModule
     // has no way to remove only this module's listeners. Keyed by mount key (see below).
@@ -506,10 +521,22 @@ export class ServiceBroker implements IServiceBroker {
             scopedBy: contract.scopedBy
         });
 
+        // A long-running/interval contract's signal outlives any single invocation -- one
+        // controller for the registration, created here so both mount paths (module and
+        // standalone) get identical behavior rather than only the one that remembered to.
+        if (contract.concurrency !== 'on-demand' && !this.lifetimeAborts.has(toolKeyStr)) {
+            this.lifetimeAborts.set(toolKeyStr, new AbortController());
+        }
+
         this.localTools.set(toolKeyStr, {
             handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
+                const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
+                const abort = lifetimeAbort ?? new AbortController();
+                if (lifetimeAbort === undefined) this.inFlightAborts.add(abort);
+
                 const serviceCtx = {
                     broker: this,
+                    signal: abort.signal,
                     meta: ctx.meta,
                     correlationId: ctx.correlationID || randomUUID(),
                     nodeID: this.nodeID,
@@ -549,10 +576,17 @@ export class ServiceBroker implements IServiceBroker {
                 if (contract.leaderScoped === true) {
                     const leader = this.registry?.leaderFor(leaderDomain);
                     if (leader !== undefined && leader.nodeID !== this.nodeID) {
+                        if (lifetimeAbort === undefined) this.inFlightAborts.delete(abort);
                         return this.callOnLeader(leaderDomain, toolKeyStr as keyof IServiceToolRegistry, ctx.params as never);
                     }
                 }
-                return await dispatch(ctx.params, serviceCtx);
+                try {
+                    return await dispatch(ctx.params, serviceCtx);
+                } finally {
+                    // Only a per-call controller is finished here -- a lifetime one stays live for
+                    // the next invocation, and for whatever the handler left running behind it.
+                    if (lifetimeAbort === undefined) this.inFlightAborts.delete(abort);
+                }
             },
             highSecurity: contract.destructive === true
         });
@@ -598,6 +632,14 @@ export class ServiceBroker implements IServiceBroker {
             registry.registerContract(asAny as ToolContract);
         }
 
+        // An interval contract's timer starts as soon as it is mounted on a running broker --
+        // mounting it *is* scheduling it. On a broker that hasn't started yet it waits for start(),
+        // so a part loaded during boot doesn't tick against half-wired infrastructure.
+        if (asAny.concurrency === 'interval') {
+            if (this.isStarted) this.startIntervalContract(toolKeyStr, asAny);
+            else this.pendingIntervals.set(toolKeyStr, asAny);
+        }
+
         this.logger.info(`[ServiceBroker] Contract registered successfully: ${toolKeyStr}`);
     }
 
@@ -613,6 +655,19 @@ export class ServiceBroker implements IServiceBroker {
             throw new Error(`[ServiceBroker] Cannot unregister contract '${toolKeyStr}': not registered as a standalone contract`);
         }
 
+        // Order matters: abort before unwiring, so a long-running handler's teardown
+        // (`ctx.signal.addEventListener('abort', ...)` -- closing its listener, clearing its own
+        // state) runs while the contract is still fully mounted. This abort *is* the stop: there is
+        // no onStop for a standalone contract, by design.
+        const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
+        if (lifetimeAbort) {
+            lifetimeAbort.abort();
+            this.lifetimeAborts.delete(toolKeyStr);
+        }
+        SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
+        this.intervalTimers.delete(toolKeyStr);
+        this.pendingIntervals.delete(toolKeyStr);
+
         this.localTools.delete(toolKeyStr);
         MeshToolSchemaRegistry.delete(toolKeyStr);
         globalContractRegistry.delete(toolKeyStr);
@@ -624,6 +679,54 @@ export class ServiceBroker implements IServiceBroker {
         }
 
         this.logger.info(`[ServiceBroker] Contract unregistered: ${toolKeyStr}`);
+    }
+
+    /**
+     * The broker-owned timer behind `concurrency: 'interval'`.
+     *
+     * A recurring job used to mean a class with a `timer` field, a `setInterval` in `onStart`, a
+     * `clearInterval` in `onStop`, and a hand-rolled guard against ticks overlapping -- the same
+     * four things written slightly differently in every service that had one. Declaring
+     * `intervalMs` replaces all of it: the contract says how often, and its handler is an ordinary
+     * handler that does one pass.
+     *
+     * Two behaviors are built in here rather than left to each handler:
+     *
+     * - **No overlap.** A tick that is still running when the next one is due skips it outright
+     *   (rather than queueing), because a handler that consistently runs longer than its period
+     *   would otherwise accumulate concurrent copies of itself forever.
+     * - **`leaderScoped` means a cluster singleton.** Every node that has the contract loaded also
+     *   has this timer; on a non-leader the tick is dropped *here*. It deliberately does not fall
+     *   through to `wireLocalTool`'s leaderScoped redirect -- that would forward each non-leader's
+     *   tick to the leader, which has its own timer, and the leader would then run N times per
+     *   period instead of once.
+     */
+    private startIntervalContract(toolKeyStr: string, contract: ToolContract<z.ZodTypeAny, z.ZodTypeAny>): void {
+        if (this.intervalTimers.has(toolKeyStr)) return;
+
+        let running = false;
+        const timer = setInterval(() => {
+            if (running) return;
+            if (contract.leaderScoped === true) {
+                const leader = this.registry?.leaderFor(contract.domain);
+                if (leader !== undefined && leader.nodeID !== this.nodeID) return;
+            }
+
+            running = true;
+            // Through `call`, not a direct dispatch, so a tick gets the same validation, middleware
+            // and tracing as any other invocation -- pinned to this node, since an interval
+            // contract ticks where it is loaded and must never be routed to a peer.
+            void this.call(toolKeyStr as keyof IServiceToolRegistry, {} as never, { nodeID: this.nodeID })
+                .catch((err: unknown) => {
+                    this.logger.error(`[ServiceBroker] interval contract "${toolKeyStr}" threw`, err);
+                })
+                .finally(() => { running = false; });
+        }, contract.intervalMs);
+
+        // A pending tick must not be the reason a process refuses to exit.
+        SafeTimer.unref(timer);
+        this.intervalTimers.set(toolKeyStr, timer);
+        this.logger.info(`[ServiceBroker] interval contract "${toolKeyStr}" ticking every ${contract.intervalMs}ms`);
     }
 
     /** Every standalone contract currently mounted here, by tool key. */
@@ -736,6 +839,18 @@ export class ServiceBroker implements IServiceBroker {
         for (const contract of contracts) {
             const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
             const toolKeyStr = `${toolDomain}.${contract.action}`;
+            // Same teardown a standalone contract gets in unregisterContract -- a module can hold
+            // long-running/interval contracts too, and its onStop (already run above) knows nothing
+            // about their signals.
+            const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
+            if (lifetimeAbort) {
+                lifetimeAbort.abort();
+                this.lifetimeAborts.delete(toolKeyStr);
+            }
+            SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
+            this.intervalTimers.delete(toolKeyStr);
+            this.pendingIntervals.delete(toolKeyStr);
+
             this.localTools.delete(toolKeyStr);
             MeshToolSchemaRegistry.delete(toolKeyStr);
             this.toolMountKeys.delete(toolKeyStr);
@@ -1236,10 +1351,28 @@ export class ServiceBroker implements IServiceBroker {
                 await module.onStart(this);
             }
         }
+
+        // Interval contracts mounted before the broker started -- the normal case for anything
+        // loaded during boot.
+        for (const [toolKeyStr, contract] of this.pendingIntervals) {
+            this.startIntervalContract(toolKeyStr, contract);
+        }
+        this.pendingIntervals.clear();
     }
 
     public async stop(): Promise<void> {
         this.isStarted = false;
+
+        // Stop scheduling before aborting, so no tick starts against a broker that is tearing down.
+        for (const timer of this.intervalTimers.values()) SafeTimer.clearInterval(timer);
+        this.intervalTimers.clear();
+        this.pendingIntervals.clear();
+
+        // Every long-running contract's teardown, and cancellation for whatever is still in flight.
+        for (const abort of this.lifetimeAborts.values()) abort.abort();
+        this.lifetimeAborts.clear();
+        for (const abort of this.inFlightAborts) abort.abort();
+        this.inFlightAborts.clear();
 
         for (const module of this.modules) {
             if (module.onStop) {

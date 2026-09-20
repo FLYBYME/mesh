@@ -146,6 +146,11 @@ export class CrudExecutor {
         const serviceCtx = {
             broker,
             meta,
+            // A CRUD hook is always an on-demand, call-scoped thing, so its signal is too. It is
+            // never aborted here (the hook returns or throws long before anything could cancel it);
+            // it exists so `ctx.signal` is a real AbortSignal in every context a handler can be
+            // handed, rather than being present on some and absent on others.
+            signal: new AbortController().signal,
             correlationId: '',
             nodeID: broker.nodeID,
             call: <K extends keyof IServiceToolRegistry>(

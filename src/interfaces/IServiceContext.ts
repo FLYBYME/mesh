@@ -47,8 +47,32 @@ export interface IServiceContext<TMeta = IMeshMeta> {
     /** The node ID this context is executing on. */
     readonly nodeID: string;
 
-    /** Optional abort signal for cancellation. */
-    readonly signal?: AbortSignal;
+    /**
+     * Cancellation, and -- for a `long-running` contract -- the entire stop mechanism.
+     *
+     * Its *lifetime depends on the contract's declared `concurrency`*, which is the point:
+     *
+     * - `on-demand`: scoped to this one invocation. Aborts when the broker stops. Handlers that
+     *   do I/O should forward it (`fetch(url, { signal: ctx.signal })`) rather than ignore it.
+     * - `long-running` / `interval`: scoped to the *registration*, and shared by every invocation.
+     *   Aborts when the contract is unregistered (or the broker stops), never between calls.
+     *   This is what makes a long-running contract expressible as an ordinary contract: the
+     *   handler starts its resource, hands teardown to `ctx.signal`, and returns immediately --
+     *   no `onStart`/`onStop` pair, no class to hold the handle:
+     *
+     *   ```ts
+     *   async function listen({ port }, ctx) {
+     *       const server = http.createServer(app).listen(port);
+     *       ctx.signal.addEventListener('abort', () => server.close());
+     *       return { boundTo: port };
+     *   }
+     *   ```
+     *
+     * Non-optional on purpose. It was declared-but-never-wired for a long time, and an optional
+     * `signal?` is precisely what let every handler quietly skip it -- `ctx.signal?.addEventListener`
+     * reads as defensive and compiles to "never cleans up".
+     */
+    readonly signal: AbortSignal;
 
     /** Context metadata. */
     readonly meta?: TMeta;

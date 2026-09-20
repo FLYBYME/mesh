@@ -130,6 +130,18 @@ export interface ToolContract<
      */
     readonly concurrency: ContractConcurrency;
     /**
+     * How often an `interval` contract's handler runs, in milliseconds. Required for -- and only
+     * meaningful on -- `concurrency: 'interval'`; both halves are enforced in `defineContract`
+     * below.
+     *
+     * The timer belongs to the broker, not to the handler: declaring the period here is the whole
+     * of scheduling a recurring job. There is no `setInterval` to write, no handle to keep, and no
+     * `onStop` to remember to clear it in -- which is exactly the class of bookkeeping
+     * `ServiceModule` existed to hold and that dropping it would otherwise push back onto every
+     * part that owns a timer. See `ServiceBroker.startIntervalContract`.
+     */
+    readonly intervalMs?: number;
+    /**
      * An intrinsic required-role baseline, parallel to `destructive`. Required -- an intentionally
      * public contract still has to say so explicitly with `[]`, not simply omit the field.
      *
@@ -266,6 +278,16 @@ export function defineContract<
     }
     if (!Array.isArray(contract.permissions)) {
         throw new Error(`${contractLabel}: "permissions" is required -- pass [] to explicitly declare no permission requirement, not omit the field.`);
+    }
+    // Both directions, not just the missing one: `intervalMs` on a non-interval contract is a
+    // statement the runtime will silently ignore, which is how a "why isn't this running?" hour
+    // starts.
+    if (contract.concurrency === 'interval') {
+        if (typeof contract.intervalMs !== 'number' || !Number.isFinite(contract.intervalMs) || contract.intervalMs <= 0) {
+            throw new Error(`${contractLabel}: concurrency 'interval' requires a positive "intervalMs" -- the broker owns the timer, so the period has to be declared here.`);
+        }
+    } else if (contract.intervalMs !== undefined) {
+        throw new Error(`${contractLabel}: "intervalMs" is only meaningful with concurrency 'interval' (this contract is '${contract.concurrency}').`);
     }
 
     globalContractRegistry.register(contract);
