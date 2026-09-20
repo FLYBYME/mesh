@@ -574,10 +574,16 @@ export class ServiceBroker implements IServiceBroker {
     public registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
         handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
+        options?: { replace?: boolean },
     ): void {
         const toolKeyStr = `${contract.domain}.${contract.action}`;
-        if (this.localTools.has(toolKeyStr)) {
-            throw new Error(`[ServiceBroker] Cannot register contract: "${toolKeyStr}" is already mounted on this node`);
+        // Refusing by default is deliberate, and immediately worth it: it surfaced a real collision
+        // that `ServiceModule.mountTool`'s plain Map had been resolving silently by last-write-wins
+        // (`identity.ticket.resolve` -- a hand-written contract landing on the same key as the one
+        // `defineCrud` generates for that collection, with entirely different semantics). An
+        // intentional override is still fine; it just has to say so.
+        if (this.localTools.has(toolKeyStr) && options?.replace !== true) {
+            throw new Error(`[ServiceBroker] Cannot register contract: "${toolKeyStr}" is already mounted on this node. Pass { replace: true } if overriding it is intended.`);
         }
 
         const asAny = contract as unknown as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;

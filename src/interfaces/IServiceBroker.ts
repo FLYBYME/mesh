@@ -99,6 +99,7 @@ export interface IServiceBroker {
     registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
         handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
+        options?: { replace?: boolean },
     ): void;
     unregisterContract(toolKey: string): void;
     listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
