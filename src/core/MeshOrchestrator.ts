@@ -16,6 +16,16 @@ const DIAL_RETRY_FLOOR_MS = 20000;
 /**
  * MeshOrchestrator — manages the DHT overlay network lifecycle and gossip.
  */
+/**
+ * How often a node tells its peers it is still there.
+ *
+ * A peer's liveness is judged entirely against this: the Registry marks a node offline after its
+ * `ttl` elapses with no presence, so **a `ttl` below this interval can never work** -- every peer
+ * would spend most of each cycle looking dead. `Registry` refuses such a `ttl` outright rather than
+ * letting a cluster flap; see its constructor.
+ */
+export const PRESENCE_INTERVAL_MS = 15_000;
+
 export class MeshOrchestrator implements IMeshOrchestrator {
     private logger: ILogger;
     private gossipInterval?: TimerHandle;
@@ -47,7 +57,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         SafeTimer.unref(this.gossipInterval);
 
         // Start Presence broadcast interval (Heartbeat)
-        this.presenceInterval = setInterval(() => this.broadcastPresence(), 15000);
+        this.presenceInterval = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
         SafeTimer.unref(this.presenceInterval);
 
         // Immediate broadcast of our presence
