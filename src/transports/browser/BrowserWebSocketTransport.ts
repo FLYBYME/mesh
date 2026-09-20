@@ -1,6 +1,7 @@
 import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
 import type { TransportConnectOptions, MeshPacket } from '../../interfaces/IMeshNetwork.js';
+import { errorFromWire } from '../../core/MeshError.js';
 import { OfflineStorageEngine } from '../../utils/OfflineStorageEngine.js';
 import { ILogger } from '../../interfaces/ILogger.js';
 
@@ -193,7 +194,7 @@ export class BrowserWebSocketTransport extends BaseTransport {
                     clearTimeout(pending.timeout);
                     this.pendingRPCs.delete(id);
                     if (envelope.type === 'RESPONSE_ERROR') {
-                        pending.reject(new Error(envelope.error?.message || 'RPC Error'));
+                        pending.reject(errorFromWire(envelope.error ?? envelope.data, 'RPC Error'));
                     } else if (envelope.type === 'RESPONSE') {
                         pending.resolve(envelope.data);
                     }

@@ -1,5 +1,6 @@
 import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
+import { errorFromWire } from '../../core/MeshError.js';
 import type { TransportConnectOptions, IWS, IWSServer, MeshPacket } from '../../interfaces/IMeshNetwork.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -281,8 +282,9 @@ export class WSTransport extends BaseTransport {
                     clearTimeout(pending.timeout);
                     this.pendingRPCs.delete(id);
                     if (type === 'RESPONSE_ERROR') {
-                        const errorMsg = (data && typeof data === 'object' && 'message' in data) ? String((data as Record<string, unknown>).message) : 'RPC Error';
-                        pending.reject(new Error(errorMsg));
+                        // The envelope's `error` first, the payload second: the broker sends the
+                        // same object in both, but a peer on an older build only fills `data`.
+                        pending.reject(errorFromWire(envelope.error ?? data, 'RPC Error'));
                     } else {
                         pending.resolve(data);
                     }

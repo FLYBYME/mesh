@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
-import { ClientError, MeshError } from './MeshError.js';
+import { ClientError, MeshError, errorFromWire } from './MeshError.js';
 
 /**
  * formatZodIssues: renders a params validation failure as "field: reason; field: reason".
@@ -292,27 +292,7 @@ export class ServiceBroker implements IServiceBroker {
                     this.pendingRequests.delete(correlationId);
                     try {
                         if (packet.type === 'RESPONSE_ERROR') {
-                            const errorData = packet.error as {
-                                message?: string; code?: string; status?: number;
-                                stack?: string; data?: { stack?: string };
-                            };
-
-                            // Rebuilt as a MeshError when the far side sent one, so a caller sees
-                            // the same error class and the same status it would have seen had the
-                            // handler run locally. Anything else stays a plain Error, unchanged.
-                            const err = typeof errorData?.code === 'string' && typeof errorData.status === 'number'
-                                ? new MeshError({
-                                    message: errorData.message ?? 'Remote RPC Error',
-                                    code: errorData.code,
-                                    status: errorData.status,
-                                })
-                                : new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error });
-
-                            const remoteStack = errorData?.stack ?? errorData?.data?.stack;
-                            if (remoteStack !== undefined) {
-                                err.stack = remoteStack + '\n--- Remote Boundary ---\n' + err.stack;
-                            }
-                            pending.reject(err);
+                            pending.reject(errorFromWire(packet.error ?? packet.data));
                         } else {
                             pending.resolve(packet.data);
                         }
@@ -338,7 +318,11 @@ export class ServiceBroker implements IServiceBroker {
                         ? err.toJSON()
                         : { message, data: { stack: err instanceof Error ? err.stack : undefined } };
 
-                    this.network.send(packet.senderNodeID, packet.topic, { message }, {
+                    // The same object as both payload and envelope error: a transport settles its
+                    // own pending RPC and reads one of them, and which one depends on the
+                    // transport. Sending only `{ message }` as the payload is why the broker-side
+                    // fix alone changed nothing over WebSocket.
+                    this.network.send(packet.senderNodeID, packet.topic, wire, {
                         type: 'RESPONSE_ERROR',
                         id: packet.id,
                         meta: { correlationID: packet.id },

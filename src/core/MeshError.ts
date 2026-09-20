@@ -68,3 +68,44 @@ export class ClientError extends MeshError {
     }
 }
 
+
+/**
+ * Rebuilds the error a remote handler threw, from whatever crossed the wire.
+ *
+ * Three places used to do this, each reading a different field and all of them producing a plain
+ * `Error`: `WSTransport`, `BrowserWebSocketTransport` and `ServiceBroker`. The consequence was that
+ * a `MeshError`'s `code` and `status` never survived a hop -- the same call answered 404 locally
+ * and 500 remotely, because an api gateway picks its status with `err instanceof MeshError`.
+ *
+ * That the transports reconstruct at all is what made it subtle: fixing the broker alone changed
+ * nothing over WebSocket, since the transport's own pending-RPC table settles the promise first and
+ * the broker's handler never sees the packet.
+ *
+ * A `MeshError` comes back when the far side sent one -- `code` and `status` together, since
+ * neither is meaningful alone. Anything else stays a plain `Error`; it had no status to lose.
+ */
+export function errorFromWire(payload: unknown, fallbackMessage = 'Remote RPC Error'): Error {
+    const wire = (typeof payload === 'object' && payload !== null ? payload : {}) as {
+        message?: unknown; code?: unknown; status?: unknown; stack?: unknown;
+        data?: { stack?: unknown };
+    };
+
+    const message = typeof wire.message === 'string' && wire.message.length > 0
+        ? wire.message
+        : fallbackMessage;
+
+    const error = typeof wire.code === 'string' && typeof wire.status === 'number'
+        ? new MeshError({ message, code: wire.code, status: wire.status })
+        : new Error(message, { cause: payload });
+
+    // The far side's stack, then a marker, then ours -- so a reader sees where it actually threw
+    // before seeing how the call got there.
+    const remoteStack = typeof wire.stack === 'string'
+        ? wire.stack
+        : (typeof wire.data?.stack === 'string' ? wire.data.stack : undefined);
+    if (remoteStack !== undefined) {
+        error.stack = `${remoteStack}\n--- Remote Boundary ---\n${error.stack ?? ''}`;
+    }
+
+    return error;
+}
