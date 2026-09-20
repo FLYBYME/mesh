@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { z } from 'zod';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -34,17 +33,12 @@ const slowToolContract = defineContract({
     timeout: 50 // The contract has a short default timeout
 });
 
-class SlowService extends ServiceModule {
-    public readonly domain = 'timeout';
-
-    constructor() {
-        super();
-        this.mountTool(slowToolContract, async (args) => {
-            const delay = args.delay;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            return { success: true };
-        });
-    }
+function registerSlow(broker: IServiceBroker): void {
+    broker.registerContract(slowToolContract, async (args) => {
+        const delay = args.delay;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return { success: true };
+    });
 }
 
 describe('RPC Timeouts and Multi-Hop Timeouts', () => {
@@ -62,7 +56,7 @@ describe('RPC Timeouts and Multi-Hop Timeouts', () => {
         app3.use(new NetworkModule({ port: 6103, transports: [new WSTransport(serializer, 6103)] }));
         app3.use(new BrokerModule());
         await app3.start();
-        await app3.registerModule(new SlowService());
+        registerSlow(app3.getProvider<IServiceBroker>('broker'));
 
         // Node 2 (Relay - connects to Node 3)
         app2 = new MeshApp({ nodeID: 'node-2', logger });

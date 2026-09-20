@@ -260,6 +260,71 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         this.registerLocalModule(module);
     }
 
+    /**
+     * Advertises one contract, merging it into this node's presence under its own domain.
+     *
+     * Without this, a broker that mounts contracts directly -- which is now how everything is
+     * mounted -- would answer them locally while every peer was told "no node advertises domain
+     * X". That failure is silent and looks like a routing problem: the contract is registered, the
+     * schema is known, and the call simply cannot be placed. It was found live, and was the reason
+     * `PlacementRegistry` existed as the only registry that could do this.
+     *
+     * The two implementations are now the same in this respect. What still separates them is how
+     * they *route*, not what they can advertise.
+     */
+    public registerContract(contract: ToolContract): void {
+        this.registerTool(contract);
+
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode) return;
+
+        const key = `${contract.domain}.${contract.action}`;
+        const toolInfo: RegistryToolInfo = {
+            name: key,
+            description: contract.description,
+            visibility: 'public',
+            metadata: { isCrud: contract.isCrud, destructive: contract.destructive },
+            params: zodToJsonSchema(contract.inputSchema) as Record<string, unknown>,
+            returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>,
+            timeout: contract.timeout,
+        };
+
+        localNode.services = localNode.services || [];
+        const existing = localNode.services.findIndex((s) => s.name === contract.domain);
+        if (existing >= 0) {
+            localNode.services[existing]!.tools = { ...localNode.services[existing]!.tools, [key]: toolInfo };
+        } else {
+            localNode.services.push({ name: contract.domain, version: '1.0.0', tools: { [key]: toolInfo }, events: {} });
+        }
+
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
+    /**
+     * Withdraws one contract, leaving every sibling under the same domain advertised. A domain
+     * whose last contract goes is removed entirely, so presence never claims an empty service.
+     */
+    public unregisterContract(toolKeyStr: string): void {
+        this.tools.delete(toolKeyStr);
+
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode?.services) return;
+
+        for (const service of localNode.services) {
+            const tools = service.tools ?? {};
+            if (tools[toolKeyStr] === undefined) continue;
+            const { [toolKeyStr]: _removed, ...rest } = tools;
+            service.tools = rest;
+        }
+        localNode.services = localNode.services.filter((s) => Object.keys(s.tools ?? {}).length > 0);
+
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
     public unregisterModule(domain: string): void {
         this.localModules.delete(domain);
         const localNode = this.nodes.get(this.localNodeID);

@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { MeshApp } from '../../core/MeshApp.js';
 import { RegistryModule } from '../../modules/RegistryModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { MeshError, ClientError } from '../../core/MeshError.js';
 import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
@@ -25,15 +24,6 @@ const greetContract = defineContract({
     print: defaultPrint,
 });
 
-class ValidationDemoService extends ServiceModule {
-    public readonly domain = 'validationdemo';
-
-    constructor() {
-        super();
-        this.mountTool(greetContract, async (input) => ({ greeting: `hello ${input.name}` }));
-    }
-}
-
 describe('ServiceBroker — params validation failures are client errors', () => {
     let app: MeshApp;
     let broker: IServiceBroker;
@@ -43,8 +33,8 @@ describe('ServiceBroker — params validation failures are client errors', () =>
         app.use(new RegistryModule({ preferLocal: true }));
         app.use(new BrokerModule());
         await app.start();
-        await app.registerModule(new ValidationDemoService());
         broker = app.getProvider<IServiceBroker>('broker');
+        broker.registerContract(greetContract, async (input) => ({ greeting: `hello ${input.name}` }));
     });
 
     afterAll(async () => {

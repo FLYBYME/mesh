@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { z } from 'zod';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -33,17 +32,6 @@ const infiniteToolContract = defineContract({
     timeout: 50 // Short default to ensure we are overriding it
 });
 
-class InfiniteService extends ServiceModule {
-    public readonly domain = 'timeout';
-    constructor() {
-        super();
-        this.mountTool(infiniteToolContract, async (args) => {
-            await new Promise(resolve => setTimeout(resolve, args.delay));
-            return { success: true };
-        });
-    }
-}
-
 describe('Max RPC Timeout Enforcement (1 Hour)', () => {
     let app: MeshApp;
 
@@ -55,7 +43,10 @@ describe('Max RPC Timeout Enforcement (1 Hour)', () => {
         app.use(new NetworkModule({ port: 6200, transports: [new WSTransport(serializer, 6200)] }));
         app.use(new BrokerModule());
         await app.start();
-        await app.registerModule(new InfiniteService());
+        app.getProvider<IServiceBroker>('broker').registerContract(infiniteToolContract, async (args) => {
+            await new Promise(resolve => setTimeout(resolve, args.delay));
+            return { success: true };
+        });
     });
 
     afterAll(async () => {
