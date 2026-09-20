@@ -115,7 +115,29 @@ export interface IServiceBroker {
         name: K,
         handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
     ): void;
+
+    /** Mounts every contract a domain declares, wiring each to its own `filePath`'s handler --
+     *  the replacement for a hand-written `register(broker)`. See the implementation in
+     *  `core/ServiceBroker.ts` for what each `concurrency` kind means at load time. */
+    loadDomain(
+        domain: string,
+        handlers?: ContractHandlerMap,
+        options?: {
+            hooks?: Record<string, { before?: CrudHookFn; after?: CrudHookFn }>;
+            replace?: boolean;
+        },
+    ): Promise<{ domain: string; contracts: string[] }>;
 }
+
+/**
+ * How `loadDomain` finds a handler: tool key -> a thunk returning it.
+ *
+ * A thunk, not the function itself, so a generated map can be a list of dynamic `import()`s --
+ * which both a bundler can inline and an unbundled runtime can resolve from real files, without
+ * the map's author choosing between them. Nobody writes one of these by hand; it is generated from
+ * the same `filePath` declarations `loadDomain` reads.
+ */
+export type ContractHandlerMap = Record<string, () => Promise<unknown>>;
 
 /** One side of a CRUD hook -- the shape both `registerCrudHook` and `ServiceModule.mountCrudHook` take. */
 export type CrudHookFn = (value: unknown, ctx: IServiceContext) => Promise<unknown>;

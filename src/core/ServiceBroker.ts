@@ -1,4 +1,4 @@
-import type { IServiceBroker } from '../interfaces/IServiceBroker.js';
+import type { ContractHandlerMap, IServiceBroker } from '../interfaces/IServiceBroker.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import type { IMeshNetwork } from '../interfaces/IMeshNetwork.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
@@ -771,6 +771,99 @@ export class ServiceBroker implements IServiceBroker {
      */
     public registerCrudHook(domain: string, action: string, hooks: { before?: CrudHook; after?: CrudHook }): void {
         this.standaloneCrudHooks.set(`${domain}.${action}`, hooks);
+    }
+
+    /**
+     * Mounts every contract a domain declares, wiring each to the handler its own `filePath` points
+     * at -- the replacement for a hand-written `register(broker)` listing them one by one.
+     *
+     * That listing was `ServiceModule`'s constructor with different syntax: it reconstructed, by
+     * hand, a contract-to-handler mapping the contracts already carry. Here nothing is enumerated.
+     * The contracts come from `globalContractRegistry` (populated at import time by
+     * `defineContract`), and `handlers` is a lookup keyed by tool key, which callers generate from
+     * those same declarations rather than writing out. A precompiled bundle has no separate files
+     * to `import(filePath)` at runtime, so resolution is the caller's to supply; what does not vary
+     * -- which contracts belong to the domain, what a CRUD action needs, when a long-running
+     * contract starts -- lives here, once.
+     *
+     * Three kinds of contract, handled by what each declares rather than by who registered it:
+     *
+     * - **CRUD/time-series** (`isCrud`): no handler exists or should. `DatabaseMiddleware`
+     *   intercepts these before dispatch, so they mount with the same deliberately-unreachable
+     *   handler `registerCrud` gives them.
+     * - **`long-running`**: registered, then *called*, because that is what declaring it means. The
+     *   handler binds its resource and hands teardown to `ctx.signal`. Callers no longer kick their
+     *   own listener at the end of `register`.
+     * - **everything else**: resolved through `handlers` and mounted.
+     *
+     * `interval` contracts need nothing extra here -- `registerContract` already starts their timer.
+     */
+    public async loadDomain(
+        domain: string,
+        handlers: ContractHandlerMap = {},
+        options?: {
+            hooks?: Record<string, { before?: CrudHook; after?: CrudHook }>;
+            replace?: boolean;
+        },
+    ): Promise<{ domain: string; contracts: string[] }> {
+        // Sub-domains included: a part owns `identity` *and* `identity.user`, `identity.ticket`...
+        // The dot matters -- a bare prefix would pull `identity-something` in too.
+        const owned = Array.from(globalContractRegistry.entries())
+            .map(([, contract]) => contract)
+            .filter((c) => c.domain === domain || c.domain.startsWith(`${domain}.`));
+
+        if (owned.length === 0) {
+            throw new Error(`[ServiceBroker] loadDomain("${domain}"): no contracts declare this domain. Its contract module has to be imported before loading it -- that import is what registers them.`);
+        }
+
+        const longRunning: string[] = [];
+        const loaded: string[] = [];
+
+        for (const contract of owned) {
+            const toolKeyStr = `${contract.domain}.${contract.action}`;
+
+            if (contract.isCrud === true || contract.isTimeSeries === true) {
+                this.registerContract(contract, async () => {
+                    throw new Error(`Engine Error: CRUD action "${contract.action}" for domain "${contract.domain}" was not intercepted.`);
+                }, { replace: options?.replace });
+                loaded.push(toolKeyStr);
+                continue;
+            }
+
+            const resolve = handlers[toolKeyStr];
+            if (resolve === undefined) {
+                throw new Error(`[ServiceBroker] loadDomain("${domain}"): no handler for "${toolKeyStr}". Its contract declares filePath "${contract.filePath}" -- the handler map has to carry an entry for every non-CRUD contract in the domain.`);
+            }
+
+            const handler = await resolve();
+            if (typeof handler !== 'function') {
+                throw new Error(`[ServiceBroker] loadDomain("${domain}"): the handler resolved for "${toolKeyStr}" is not a function (got ${typeof handler}). Check what "${contract.filePath}" exports.`);
+            }
+
+            this.registerContract(
+                contract,
+                handler as (params: unknown, ctx: IServiceContext) => Promise<unknown>,
+                { replace: options?.replace },
+            );
+            loaded.push(toolKeyStr);
+            if (contract.concurrency === 'long-running') longRunning.push(toolKeyStr);
+        }
+
+        for (const [action, hook] of Object.entries(options?.hooks ?? {})) {
+            const lastDot = action.lastIndexOf('.');
+            if (lastDot === -1) {
+                throw new Error(`[ServiceBroker] loadDomain("${domain}"): hook key "${action}" must be "<domain>.<action>", e.g. "identity.organization.create".`);
+            }
+            this.registerCrudHook(action.slice(0, lastDot), action.slice(lastDot + 1), hook);
+        }
+
+        // Last, and only once every contract in the domain is mounted: a listener's first request
+        // can arrive before this loop finishes, and it may well call a sibling contract.
+        for (const toolKeyStr of longRunning) {
+            await this.call(toolKeyStr as keyof IServiceToolRegistry, {} as never, { nodeID: this.nodeID });
+        }
+
+        return { domain, contracts: loaded };
     }
 
     /**
