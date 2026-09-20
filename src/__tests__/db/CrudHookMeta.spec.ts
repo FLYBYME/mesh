@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
@@ -84,21 +83,17 @@ function tenantOf(ctx: IServiceContext): string | undefined {
  * A collection confined to the caller's tenant, the way a real one would be: the scope is merged
  * into the query in `before` and stamped onto the document on create. Nothing in the handler.
  */
-class ScopedModule extends ServiceModule {
-    public readonly domain = 'scoped';
+function registerScoped(broker: IServiceBroker): void {
+        broker.registerCrud(scopedCrud);
 
-    constructor() {
-        super();
-        this.mountCrud(scopedCrud);
-
-        this.mountTool(scopedViaToolContract, async (input, ctx) => {
+        broker.registerContract(scopedViaToolContract, async (input, ctx) => {
             // The tool can see the caller -- assert it here so a failure downstream cannot be
             // blamed on the tool's own context.
             seenInTool.push(tenantOf(ctx));
             return await ctx.call('scoped.create', { label: input.label, tenantId: CLAIMED });
         });
 
-        this.mountCrudHook('scoped', 'find', {
+        broker.registerCrudHook('scoped', 'find', {
             before: async (input, ctx) => {
                 const tenantId = tenantOf(ctx);
                 seen.before.push(tenantId);
@@ -113,7 +108,7 @@ class ScopedModule extends ServiceModule {
             },
         });
 
-        this.mountCrudHook('scoped', 'create', {
+        broker.registerCrudHook('scoped', 'create', {
             before: async (input, ctx) => {
                 const tenantId = tenantOf(ctx);
                 seen.before.push(tenantId);
@@ -121,7 +116,6 @@ class ScopedModule extends ServiceModule {
                 return { ...params, tenantId };
             },
         });
-    }
 }
 
 describe('CRUD hooks receive the caller meta', () => {
@@ -132,7 +126,7 @@ describe('CRUD hooks receive the caller meta', () => {
         await dropTestCollection('scoped');
         app = await createTestApp('crud-hook-meta-node');
         broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new ScopedModule());
+        registerScoped(broker);
     });
 
     afterAll(async () => {

@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
@@ -82,26 +81,16 @@ const viaDbSecretGetContract = defineContract({
     print: defaultPrint,
 });
 
-class CtxDbSiteModule extends ServiceModule {
-    public readonly domain = 'ctxdbsite';
-
-    constructor() {
-        super();
-        this.mountCrud(ctxDbSiteCrud);
-        this.mountTool(viaDbFindContract, async (_input, ctx) => ctx.db('ctxdbsite').find({}));
-        this.mountTool(viaDbGetContract, async (input, ctx) => ctx.db('ctxdbsite').get(input));
-        this.mountTool(viaDbFindAsContract, async (input, ctx) => ctx.db('ctxdbsite', { user: { tenant_id: input.asTenant } }).find({}));
-    }
+function registerCtxDbSite(broker: IServiceBroker): void {
+    broker.registerCrud(ctxDbSiteCrud);
+    broker.registerContract(viaDbFindContract, async (_input, ctx) => ctx.db('ctxdbsite').find({}));
+    broker.registerContract(viaDbGetContract, async (input, ctx) => ctx.db('ctxdbsite').get(input));
+    broker.registerContract(viaDbFindAsContract, async (input, ctx) => ctx.db('ctxdbsite', { user: { tenant_id: input.asTenant } }).find({}));
 }
 
-class CtxDbSecretModule extends ServiceModule {
-    public readonly domain = 'ctxdbsecret';
-
-    constructor() {
-        super();
-        this.mountCrud(ctxDbSecretCrud);
-        this.mountTool(viaDbSecretGetContract, async (input, ctx) => ctx.db('ctxdbsecret').get(input));
-    }
+function registerCtxDbSecret(broker: IServiceBroker): void {
+    broker.registerCrud(ctxDbSecretCrud);
+    broker.registerContract(viaDbSecretGetContract, async (input, ctx) => ctx.db('ctxdbsecret').get(input));
 }
 
 declare global {
@@ -134,8 +123,8 @@ describe('ctx.db() matches ctx.call() exactly', () => {
         await dropTestCollection('ctxdbsecret');
         app = await createTestApp('ctx-db-node');
         broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new CtxDbSiteModule());
-        await app.registerModule(new CtxDbSecretModule());
+        registerCtxDbSite(broker);
+        registerCtxDbSecret(broker);
     });
 
     afterAll(async () => {

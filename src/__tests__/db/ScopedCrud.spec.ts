@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { MeshError } from '../../core/MeshError.js';
@@ -16,15 +15,6 @@ export const siteCrud = defineCrud('site', SiteSchema, {
     scopedBy: 'tenantId',
     dependencies: [], filePath: 'src/__tests__/db/ScopedCrud.spec.ts', permissions: [],
 });
-
-class SiteModule extends ServiceModule {
-    public readonly domain = 'site';
-
-    constructor() {
-        super();
-        this.mountCrud(siteCrud);
-    }
-}
 
 declare global {
     interface IServiceToolRegistry {
@@ -52,7 +42,7 @@ describe('Scoped CRUD Collections', () => {
         await dropTestCollection('site');
         app = await createTestApp('scoped-crud-node');
         broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new SiteModule());
+        broker.registerCrud(siteCrud);
     });
 
     afterAll(async () => {

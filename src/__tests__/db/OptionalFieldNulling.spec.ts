@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { Database } from '../../db/Database.js';
@@ -12,14 +11,6 @@ const NoteSchema = z.object({
 });
 
 export const noteCrud = defineCrud('note', NoteSchema, { dependencies: [], filePath: 'src/__tests__/db/OptionalFieldNulling.spec.ts', permissions: [] });
-
-class NoteModule extends ServiceModule {
-    public readonly domain = 'note';
-    constructor() {
-        super();
-        this.mountCrud(noteCrud);
-    }
-}
 
 declare global {
     interface IServiceToolRegistry {
@@ -44,7 +35,7 @@ describe('an unset optional field never becomes a stored null', () => {
         await dropTestCollection('note');
         app = await createTestApp('optional-field-nulling-node');
         broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new NoteModule());
+        broker.registerCrud(noteCrud);
     });
 
     afterAll(async () => {

@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { Database } from '../../db/Database.js';
@@ -15,15 +14,6 @@ export const providerCrud = defineCrud('hiddenprovider', ProviderSchema, {
     hidden: ['apiKey'],
     dependencies: [], filePath: 'src/__tests__/db/HiddenFields.spec.ts', permissions: [],
 });
-
-class ProviderModule extends ServiceModule {
-    public readonly domain = 'hiddenprovider';
-
-    constructor() {
-        super();
-        this.mountCrud(providerCrud);
-    }
-}
 
 declare global {
     interface IServiceToolRegistry {
@@ -50,7 +40,7 @@ describe('defineCrud: hidden fields', () => {
         await dropTestCollection('hiddenprovider');
         app = await createTestApp('hidden-fields-node');
         broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new ProviderModule());
+        broker.registerCrud(providerCrud);
     });
 
     afterAll(async () => {

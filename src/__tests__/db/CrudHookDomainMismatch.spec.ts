@@ -1,16 +1,26 @@
 import { z } from 'zod';
 import { createTestApp, destroyTestApp, dropTestCollection } from '../helpers/setup.js';
 import { MeshApp } from '../../core/MeshApp.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import type { IServiceContext } from '../../interfaces/IServiceContext.js';
 
 /**
- * A module's own `domain` and the domain a mountCrudHook is registered for are not required to
- * match -- `mountCrud`/`mountCrudHook` both take the CRUD's real domain as an explicit argument,
- * and the class comment on ServiceModule already documents a module owning a second domain (`demo`
- * also mounts `demometrics.*`).
+ * **The bug this was written for can no longer be expressed, and the test is kept for the
+ * behaviour rather than the premise.**
+ *
+ * It caught a hook silently never running: under `ServiceModule`, a module could mount a CRUD hook
+ * for a domain other than its own, and the lookup that found hooks went via
+ * `getModule(domain)` -- which only ever matched a module's *own* top-level domain. So the hook
+ * was registered, looked correct, and was never found. `DatabaseMiddleware` treated a missing
+ * module as "nothing to run" rather than an error, so the write went through unhooked, in silence.
+ *
+ * With contracts there is no module to look up: `registerCrudHook(domain, action, hooks)` is keyed
+ * by the domain it is *for*, so a mismatch between "who registered it" and "what it is for" has
+ * nowhere to live. What is still worth asserting is the outcome -- a hook registered for a
+ * collection runs on that collection's writes, and its return value replaces the params.
+ *
+ * Original note, kept because it explains why the shape existed at all:
  *
  * `ServiceBroker.getModule(domain)` used to look only for `m.domain === domain`, which finds the
  * module by its own top-level domain and nothing else. For a module whose own domain differs from a
@@ -43,14 +53,16 @@ const seenInHook: unknown[] = [];
  * here was unreachable -- `getModule('widget')` could never find a module whose own domain is
  * `'widget_owner'`.
  */
-class WidgetOwnerModule extends ServiceModule {
-    public readonly domain = 'widget_owner';
+describe('a CRUD hook registered for a collection', () => {
+    let app: MeshApp;
+    let broker: IServiceBroker;
 
-    constructor() {
-        super();
-        this.mountCrud(widgetCrud);
-
-        this.mountCrudHook('widget', 'create', {
+    beforeAll(async () => {
+        await dropTestCollection('widget');
+        app = await createTestApp('crud-hook-domain-mismatch-node');
+        broker = app.getProvider<IServiceBroker>('broker');
+        broker.registerCrud(widgetCrud);
+        broker.registerCrudHook('widget', 'create', {
             before: async (input: unknown, _ctx: IServiceContext) => {
                 seenInHook.push(input);
                 const params = typeof input === 'object' && input !== null ? { ...input } : {};
@@ -59,18 +71,6 @@ class WidgetOwnerModule extends ServiceModule {
                 return { ...params, tenantId: 'stamped-by-hook' };
             },
         });
-    }
-}
-
-describe('a CRUD hook mounted under a domain other than the module\'s own', () => {
-    let app: MeshApp;
-    let broker: IServiceBroker;
-
-    beforeAll(async () => {
-        await dropTestCollection('widget');
-        app = await createTestApp('crud-hook-domain-mismatch-node');
-        broker = app.getProvider<IServiceBroker>('broker');
-        await app.registerModule(new WidgetOwnerModule());
     });
 
     afterAll(async () => {

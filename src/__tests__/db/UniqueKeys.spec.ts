@@ -8,7 +8,6 @@ import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import { createTestApp, destroyTestApp, dropTestCollection, TEST_DB_NAME } from '../helpers/setup.js';
 import { withTestDatabase } from '../../testing/TestHelpers.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -63,30 +62,6 @@ export const multiTenantSiteCrud = defineCrud('multiTenantSite', MultiTenantSite
     ],
     dependencies: [], filePath: 'src/__tests__/db/UniqueKeys.spec.ts', permissions: [],
 });
-
-class ArtifactModule extends ServiceModule {
-    public readonly domain = 'artifact';
-    constructor() {
-        super();
-        this.mountCrud(artifactCrud);
-    }
-}
-
-class PartVersionModule extends ServiceModule {
-    public readonly domain = 'partVersion';
-    constructor() {
-        super();
-        this.mountCrud(partVersionCrud);
-    }
-}
-
-class MultiTenantSiteModule extends ServiceModule {
-    public readonly domain = 'multiTenantSite';
-    constructor() {
-        super();
-        this.mountCrud(multiTenantSiteCrud);
-    }
-}
 
 describe('Unique Key Constraints', () => {
     const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
@@ -380,7 +355,7 @@ describe('Unique Key Constraints', () => {
             await dropTestCollection('multiTenantSite');
             app = await createTestApp('uniq-scoped-node');
             broker = app.getProvider<IServiceBroker>('broker');
-            await app.registerModule(new MultiTenantSiteModule());
+            broker.registerCrud(multiTenantSiteCrud);
         });
 
         afterAll(async () => {
@@ -470,8 +445,8 @@ describe('Unique Key Constraints', () => {
             await dropTestCollection('partVersion');
             app = await createTestApp('uniq-e2e-node');
             broker = app.getProvider<IServiceBroker>('broker');
-            await app.registerModule(new ArtifactModule());
-            await app.registerModule(new PartVersionModule());
+            broker.registerCrud(artifactCrud);
+            broker.registerCrud(partVersionCrud);
         });
 
         afterAll(async () => {
