@@ -12,7 +12,7 @@ import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
-import { globalContractRegistry } from '../interfaces/IToolContract.js';
+import { globalContractRegistry, type ToolContract } from '../interfaces/IToolContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -142,6 +142,11 @@ export class ServiceBroker implements IServiceBroker {
     // registered it. DatabaseMiddleware uses this to resolve which mount (and therefore which
     // Database override, if any) a given CRUD/time-series call actually belongs to.
     private toolMountKeys = new Map<string, string>();
+    // Contracts mounted on their own via `registerContract` -- no module, no mount key. Tracked
+    // separately from `mountedModules` so `unregisterContract` can tear exactly one of them down
+    // without touching a module's grouped mount, and so the two can never be confused for each
+    // other during the migration off `ServiceModule`.
+    private standaloneContracts = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -390,73 +395,8 @@ export class ServiceBroker implements IServiceBroker {
             const toolKeyStr = `${toolDomain}.${contract.action}`;
             this.toolMountKeys.set(toolKeyStr, mountKey);
 
-            MeshToolSchemaRegistry.set(toolKeyStr, {
-                params: contract.inputSchema as z.ZodTypeAny,
-                returns: contract.outputSchema as z.ZodTypeAny,
-                mutates: contract.destructive,
-                isCrud: contract.isCrud,
-                isTimeSeries: contract.isTimeSeries,
-                domain: contract.domain,
-                timeout: contract.timeout,
-                scopedBy: contract.scopedBy
-            });
-
-            this.localTools.set(toolKeyStr, {
-                handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
-                    const serviceCtx = {
-                        broker: this,
-                        meta: ctx.meta,
-                        correlationId: ctx.correlationID || randomUUID(),
-                        nodeID: this.nodeID,
-                        call: async <K extends keyof IServiceToolRegistry>(
-                            tool: K,
-                            params: IServiceToolRegistry[K]['params'],
-                            options?: { nodeID?: string; timeout?: number }
-                        ): Promise<IServiceToolRegistry[K]['returns']> => {
-                            const result = await this.call(tool, params, options);
-                            return result as IServiceToolRegistry[K]['returns'];
-                        },
-                        callOnLeader: async <K extends keyof IServiceToolRegistry>(
-                            leaderDomain: string,
-                            tool: K,
-                            params: IServiceToolRegistry[K]['params'],
-                            options?: { timeout?: number }
-                        ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
-                        acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
-                        release: (key: string, token: string) => this.release(key, token),
-                        withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
-                        emit: <K extends keyof EventRegistry>(
-                            event: K,
-                            payload: EventRegistry[K],
-                            options?: { skipNetwork?: boolean }
-                        ) => this.emit(event, payload, options),
-                        // Shallow merge, same as ServiceBroker.call's own `{ ...activeCtx?.meta, ...options?.meta }`
-                        // -- an override replaces top-level keys (e.g. a whole `user` object) rather than
-                        // silently keeping the ambient one underneath it, exactly matching what
-                        // `ctx.call(tool, params, { meta })` already does for the same override.
-                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, meta ? { ...ctx.meta, ...meta } : ctx.meta),
-                        logger: this.logger
-                    };
-                    // Resolved and forwarded here, once, rather than inside every handler that
-                    // needs it: `domain` (closed over from registerModule's own parameter, the
-                    // module's real domain) is what leaderFor actually has to be asked about, not
-                    // `contract.domain` -- a crud's own domain can be a different sub-domain than
-                    // the module that mounts it (serve.catalog mounts serve.repo/serve.part/...),
-                    // and asking leaderFor about the wrong one always returns undefined, which
-                    // looks exactly like "nobody runs this" rather than failing loudly. Runs again,
-                    // harmlessly, once this same call actually reaches the leader (this check sees
-                    // `leader.nodeID === this.nodeID` there and falls through).
-                    if (contract.leaderScoped === true) {
-                        const leader = this.registry?.leaderFor(domain);
-                        if (leader !== undefined && leader.nodeID !== this.nodeID) {
-                            return this.callOnLeader(domain, toolKeyStr as keyof IServiceToolRegistry, ctx.params as never);
-                        }
-                    }
-                    return await module.execute(contract.domain, contract.action, ctx.params, serviceCtx as never);
-                },
-                highSecurity: contract.destructive === true
-            });
+            this.wireLocalTool(toolKeyStr, contract, domain, (params, serviceCtx) =>
+                module.execute(contract.domain, contract.action, params, serviceCtx as never));
             this.logger.info(`[ServiceBroker] Tool registered successfully: ${toolKeyStr}`);
         }
 
@@ -517,6 +457,155 @@ export class ServiceBroker implements IServiceBroker {
         if (this.isStarted && module.onStart) {
             await module.onStart(this);
         }
+    }
+
+    /**
+     * The per-contract half of mounting, shared by `registerModule` (which calls it once per
+     * contract a module declares) and `registerContract` (one standalone contract, no module).
+     * Everything here is identical either way -- the schema registry entry, the `serviceCtx` a
+     * handler receives, the `leaderScoped` redirect -- so the two paths cannot drift: the only
+     * difference is `dispatch`, which is `module.execute(...)` for the former and the contract's
+     * own handler function for the latter.
+     *
+     * `leaderDomain` is separate from `contract.domain` on purpose: a module can own contracts
+     * across more than one real domain (serve.catalog mounts serve.repo/serve.part/...), and
+     * `leaderFor` has to be asked about the domain that's actually *advertised*, not the contract's
+     * own sub-domain. For a standalone contract the two are the same thing.
+     */
+    private wireLocalTool(
+        toolKeyStr: string,
+        contract: ToolContract<z.ZodTypeAny, z.ZodTypeAny>,
+        leaderDomain: string,
+        dispatch: (params: Record<string, unknown>, serviceCtx: unknown) => Promise<unknown>,
+    ): void {
+        MeshToolSchemaRegistry.set(toolKeyStr, {
+            params: contract.inputSchema as z.ZodTypeAny,
+            returns: contract.outputSchema as z.ZodTypeAny,
+            mutates: contract.destructive,
+            isCrud: contract.isCrud,
+            isTimeSeries: contract.isTimeSeries,
+            domain: contract.domain,
+            timeout: contract.timeout,
+            scopedBy: contract.scopedBy
+        });
+
+        this.localTools.set(toolKeyStr, {
+            handler: async (ctx: IContext<Record<string, unknown>, Record<string, unknown>>) => {
+                const serviceCtx = {
+                    broker: this,
+                    meta: ctx.meta,
+                    correlationId: ctx.correlationID || randomUUID(),
+                    nodeID: this.nodeID,
+                    call: async <K extends keyof IServiceToolRegistry>(
+                        tool: K,
+                        params: IServiceToolRegistry[K]['params'],
+                        options?: { nodeID?: string; timeout?: number }
+                    ): Promise<IServiceToolRegistry[K]['returns']> => {
+                        const result = await this.call(tool, params, options);
+                        return result as IServiceToolRegistry[K]['returns'];
+                    },
+                    callOnLeader: async <K extends keyof IServiceToolRegistry>(
+                        otherDomain: string,
+                        tool: K,
+                        params: IServiceToolRegistry[K]['params'],
+                        options?: { timeout?: number }
+                    ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(otherDomain, tool, params, options),
+                    acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
+                    release: (key: string, token: string) => this.release(key, token),
+                    withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
+                    emit: <K extends keyof EventRegistry>(
+                        event: K,
+                        payload: EventRegistry[K],
+                        options?: { skipNetwork?: boolean }
+                    ) => this.emit(event, payload, options),
+                    // Shallow merge, same as ServiceBroker.call's own `{ ...activeCtx?.meta, ...options?.meta }`
+                    // -- an override replaces top-level keys (e.g. a whole `user` object) rather than
+                    // silently keeping the ambient one underneath it, exactly matching what
+                    // `ctx.call(tool, params, { meta })` already does for the same override.
+                    db: <D extends keyof IServiceCollectionRegistry & string>(dbDomain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
+                        this.makeCrudRepo(dbDomain, meta ? { ...ctx.meta, ...meta } : ctx.meta),
+                    logger: this.logger
+                };
+                // Resolved and forwarded here, once, rather than inside every handler that needs
+                // it. Runs again, harmlessly, once this same call actually reaches the leader
+                // (this check sees `leader.nodeID === this.nodeID` there and falls through).
+                if (contract.leaderScoped === true) {
+                    const leader = this.registry?.leaderFor(leaderDomain);
+                    if (leader !== undefined && leader.nodeID !== this.nodeID) {
+                        return this.callOnLeader(leaderDomain, toolKeyStr as keyof IServiceToolRegistry, ctx.params as never);
+                    }
+                }
+                return await dispatch(ctx.params, serviceCtx);
+            },
+            highSecurity: contract.destructive === true
+        });
+    }
+
+    /**
+     * Mounts one contract and its handler directly -- no `IServiceModule` wrapper, no class, no
+     * grouping. This is the broker-side counterpart to `PlacementRegistry.registerContract`
+     * (`core/PlacementRegistry.ts`), and together they're what "every contract stands alone"
+     * (docs/CONTRACT_DRIVEN_PLACEMENT.md) actually requires: a contract can now be loaded, mounted,
+     * routed to, and unmounted entirely on its own.
+     *
+     * Registry advertisement goes through `registerContract` when the active registry supports it
+     * (PlacementRegistry), so a single contract appears in presence data without a module having to
+     * declare it. Against the legacy `Registry`, which only knows how to advertise whole modules,
+     * the contract is still fully callable *locally* -- it just isn't advertised to peers, which is
+     * the honest behavior rather than silently pretending otherwise.
+     */
+    public registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
+        contract: ToolContract<TIn, TOut>,
+        handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
+    ): void {
+        const toolKeyStr = `${contract.domain}.${contract.action}`;
+        if (this.localTools.has(toolKeyStr)) {
+            throw new Error(`[ServiceBroker] Cannot register contract: "${toolKeyStr}" is already mounted on this node`);
+        }
+
+        const asAny = contract as unknown as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
+        this.wireLocalTool(toolKeyStr, asAny, contract.domain, (params, serviceCtx) =>
+            handler(params as z.infer<TIn>, serviceCtx as IServiceContext));
+
+        this.standaloneContracts.set(toolKeyStr, asAny);
+        globalContractRegistry.register(asAny);
+
+        const registry = this.registry as (IServiceRegistry & { registerContract?: (c: ToolContract) => void }) | undefined;
+        if (registry?.registerContract) {
+            registry.registerContract(asAny as ToolContract);
+        }
+
+        this.logger.info(`[ServiceBroker] Contract registered successfully: ${toolKeyStr}`);
+    }
+
+    /**
+     * `registerContract`'s other half -- unmounts exactly one contract, leaving every sibling
+     * contract under the same domain untouched. That granularity is the point: a standalone
+     * on-demand contract has to be evictable on its own, not only as part of tearing a whole
+     * module down (`unregisterModule`).
+     */
+    public unregisterContract(toolKeyStr: string): void {
+        const contract = this.standaloneContracts.get(toolKeyStr);
+        if (!contract) {
+            throw new Error(`[ServiceBroker] Cannot unregister contract '${toolKeyStr}': not registered as a standalone contract`);
+        }
+
+        this.localTools.delete(toolKeyStr);
+        MeshToolSchemaRegistry.delete(toolKeyStr);
+        globalContractRegistry.delete(toolKeyStr);
+        this.standaloneContracts.delete(toolKeyStr);
+
+        const registry = this.registry as (IServiceRegistry & { unregisterContract?: (key: string) => void }) | undefined;
+        if (registry?.unregisterContract) {
+            registry.unregisterContract(toolKeyStr);
+        }
+
+        this.logger.info(`[ServiceBroker] Contract unregistered: ${toolKeyStr}`);
+    }
+
+    /** Every standalone contract currently mounted here, by tool key. */
+    public listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[] {
+        return Array.from(this.standaloneContracts.values());
     }
 
     /**
