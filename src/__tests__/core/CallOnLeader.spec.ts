@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineContract } from '../../interfaces/IToolContract.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -38,13 +37,10 @@ describe('ServiceBroker.callOnLeader', () => {
         dependencies: [], filePath: 'src/__tests__/core/CallOnLeader.spec.ts', permissions: [], concurrency: 'on-demand',
     });
 
-    class ClaimableService extends ServiceModule {
-        readonly domain = 'claimable';
-        constructor() {
-            super();
-            this.mountTool(whereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
-        }
-    }
+    const registerClaimable = (app: MeshApp): void => {
+        app.getProvider<IServiceBroker>('broker')
+            .registerContract(whereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
+    };
 
     beforeAll(async () => {
         appA = new MeshApp({ nodeID: 'leader-test-node-a', logger });
@@ -55,7 +51,7 @@ describe('ServiceBroker.callOnLeader', () => {
         }));
         appA.use(new BrokerModule());
         await appA.start();
-        await appA.registerModule(new ClaimableService());
+        registerClaimable(appA);
 
         appB = new MeshApp({ nodeID: 'leader-test-node-b', logger });
         appB.use(new RegistryModule());
@@ -66,7 +62,7 @@ describe('ServiceBroker.callOnLeader', () => {
         }));
         appB.use(new BrokerModule());
         await appB.start();
-        await appB.registerModule(new ClaimableService());
+        registerClaimable(appB);
 
         // Let presence gossip settle both ways before either side computes a leader from it.
         await new Promise((r) => setTimeout(r, 800));

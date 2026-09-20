@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineContract } from '../../interfaces/IToolContract.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -35,22 +34,18 @@ describe('Remote call date preservation', () => {
 
     const fixedDate = new Date('2026-09-07T02:00:00.000Z');
 
-    class UserService extends ServiceModule {
-        readonly domain = 'user';
-        constructor() {
-            super();
-            this.mountTool(userFindContract, async () => {
-                return [
-                    {
-                        id: 'usr_1',
-                        name: 'Alice',
-                        createdAt: fixedDate,
-                        updatedAt: fixedDate
-                    }
-                ];
-            });
-        }
-    }
+    const registerUser = (app: MeshApp): void => {
+        app.getProvider<ServiceBroker>('broker').registerContract(userFindContract, async () => {
+            return [
+                {
+                    id: 'usr_1',
+                    name: 'Alice',
+                    createdAt: fixedDate,
+                    updatedAt: fixedDate
+                }
+            ];
+        });
+    };
 
     beforeAll(async () => {
         serverApp = new MeshApp({ nodeID: 'date-server-node', logger });
@@ -61,7 +56,7 @@ describe('Remote call date preservation', () => {
         }));
         serverApp.use(new BrokerModule());
         await serverApp.start();
-        await serverApp.registerModule(new UserService());
+        registerUser(serverApp);
 
         clientApp = new MeshApp({ nodeID: 'date-client-node', logger });
         clientApp.use(new RegistryModule());

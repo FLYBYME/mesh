@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { z } from 'zod';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -48,21 +47,15 @@ const echo2Contract = defineContract({
     print: defaultPrint,
 });
 
-class EchoService extends ServiceModule {
-    public readonly domain = 'nsdemo';
-    constructor() {
-        super();
-        this.mountTool(echoContract, async (args) => ({ msg: args.msg }));
-    }
-}
+const registerEcho = (app: MeshApp): void => {
+    app.getProvider<IServiceBroker>('broker')
+        .registerContract(echoContract, async (args) => ({ msg: args.msg }));
+};
 
-class Echo2Service extends ServiceModule {
-    public readonly domain = 'nsdemo';
-    constructor() {
-        super();
-        this.mountTool(echo2Contract, async (args) => ({ msg: args.msg }));
-    }
-}
+const registerEcho2 = (app: MeshApp): void => {
+    app.getProvider<IServiceBroker>('broker')
+        .registerContract(echo2Contract, async (args) => ({ msg: args.msg }));
+};
 
 // This proves `namespace` is real, load-bearing routing behavior, not just stored
 // metadata (see docs/SUPERVISOR_AND_SERVICE_LIFECYCLE.md, Part 3's prerequisite).
@@ -84,7 +77,7 @@ describe('Namespace isolation — real, end-to-end', () => {
         appDefault.use(new NetworkModule({ port: 6301, transports: [new WSTransport(serializer, 6301)] }));
         appDefault.use(new BrokerModule());
         await appDefault.start();
-        await appDefault.registerModule(new EchoService());
+        registerEcho(appDefault);
 
         appTest = new MeshApp({ nodeID: 'ns-test-1', namespace: 'test', logger });
         appTest.use(new RegistryModule());
@@ -95,7 +88,7 @@ describe('Namespace isolation — real, end-to-end', () => {
         }));
         appTest.use(new BrokerModule());
         await appTest.start();
-        await appTest.registerModule(new Echo2Service());
+        registerEcho2(appTest);
 
         appTest2 = new MeshApp({ nodeID: 'ns-test-2', namespace: 'test', logger });
         appTest2.use(new RegistryModule());

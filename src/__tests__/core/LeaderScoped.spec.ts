@@ -4,7 +4,6 @@ import { NetworkModule } from '../../modules/NetworkModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
 import { defineContract } from '../../interfaces/IToolContract.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -50,14 +49,11 @@ describe('leaderScoped contracts', () => {
         dependencies: [], filePath: 'src/__tests__/core/LeaderScoped.spec.ts', permissions: [], concurrency: 'on-demand',
     });
 
-    class PinnableService extends ServiceModule {
-        readonly domain = 'pinnable';
-        constructor() {
-            super();
-            this.mountTool(pinnedWhereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
-            this.mountTool(unpinnedWhereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
-        }
-    }
+    const registerPinnable = (app: MeshApp): void => {
+        const broker = app.getProvider<IServiceBroker>('broker');
+        broker.registerContract(pinnedWhereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
+        broker.registerContract(unpinnedWhereContract, async (_input, ctx) => ({ nodeID: ctx.nodeID }));
+    };
 
     beforeAll(async () => {
         appA = new MeshApp({ nodeID: 'leaderscoped-node-a', logger });
@@ -68,7 +64,7 @@ describe('leaderScoped contracts', () => {
         }));
         appA.use(new BrokerModule());
         await appA.start();
-        await appA.registerModule(new PinnableService());
+        registerPinnable(appA);
 
         appB = new MeshApp({ nodeID: 'leaderscoped-node-b', logger });
         appB.use(new RegistryModule());
@@ -79,7 +75,7 @@ describe('leaderScoped contracts', () => {
         }));
         appB.use(new BrokerModule());
         await appB.start();
-        await appB.registerModule(new PinnableService());
+        registerPinnable(appB);
 
         await new Promise((r) => setTimeout(r, 800));
     });
@@ -89,14 +85,21 @@ describe('leaderScoped contracts', () => {
         await appA?.stop();
     });
 
-    it('resolves leadership against the module\'s own domain, not the contract\'s domain', () => {
+    it('resolves leadership against the contract\'s domain, which is now the only domain there is', () => {
+        // This used to assert the opposite -- leadership resolved against the *module's* domain
+        // ('pinnable'), not the contract's ('pinned') -- because a ServiceModule could own
+        // contracts across several domains while advertising only its own, and asking leaderFor
+        // about the wrong one returned undefined. That was a real silent failure, caught live in
+        // mesh-infer.
+        //
+        // With contracts there is no second domain to be wrong about: a contract is advertised
+        // under its own domain and leadership resolves against that. The ambiguity the original
+        // test guarded is gone rather than fixed.
         const registryA = appA.getProvider<Registry>('registry');
         const registryB = appB.getProvider<Registry>('registry');
-        // 'pinnable' is PinnableService's own domain -- if leaderScoped resolved against the
-        // contract's domain ('pinned') instead, this would be undefined on both, the same silent
-        // failure caught live in mesh-infer.
-        const leaderA = registryA.leaderFor('pinnable');
-        const leaderB = registryB.leaderFor('pinnable');
+
+        const leaderA = registryA.leaderFor('pinned');
+        const leaderB = registryB.leaderFor('pinned');
         expect(leaderA).toBeDefined();
         expect(leaderB!.nodeID).toBe(leaderA!.nodeID);
     });
@@ -106,7 +109,7 @@ describe('leaderScoped contracts', () => {
         const brokerB = appB.getProvider<ServiceBroker>('broker');
         const registryA = appA.getProvider<Registry>('registry');
 
-        const leader = registryA.leaderFor('pinnable');
+        const leader = registryA.leaderFor('pinned');
         const fromA = await brokerA.call('pinned.where', {}) as { nodeID: string };
         const fromB = await brokerB.call('pinned.where', {}) as { nodeID: string };
 
