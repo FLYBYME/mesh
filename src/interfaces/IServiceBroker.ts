@@ -10,6 +10,7 @@ import type { ICallOptions, IServiceContext } from './IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import type { ToolContract } from './IToolContract.js';
 import type { AnyCrudContracts } from './ICrudContract.js';
+import type { IPlacement } from './IPlacement.js';
 import type { z } from 'zod';
 /**
  * IServiceBroker — Interface for the central communication kernel.
@@ -119,6 +120,10 @@ export interface IServiceBroker {
     /** Mounts every contract a domain declares, wiring each to its own `filePath`'s handler --
      *  the replacement for a hand-written `register(broker)`. See the implementation in
      *  `core/ServiceBroker.ts` for what each `concurrency` kind means at load time. */
+    /** Installs the placement layer -- what happens when a call arrives for a contract nothing in
+     *  the cluster serves. See `IPlacement`; without one, such a call fails as it always has. */
+    setPlacement(placement: IPlacement): void;
+
     loadDomain(
         domain: string,
         handlers?: ContractHandlerMap,
