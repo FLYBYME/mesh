@@ -12,10 +12,28 @@ export const MeshErrorPayloadSchema = z.object({
 export type MeshErrorPayload = z.infer<typeof MeshErrorPayloadSchema>;
 
 /**
+ * A cross-realm brand, because `instanceof` is not reliable here.
+ *
+ * `Symbol.for` looks up the process-wide registry, so every copy of this module agrees on this
+ * symbol even when they are separate module instances -- which they routinely are. A node running
+ * under `tsx` loads `@flybyme/mesh` twice, once through the ESM loader for its own imports and once
+ * through `require()` when it loads a precompiled `.cjs` part, and those give two distinct
+ * `MeshError` classes. Duplicated dependencies and bundled copies do the same thing.
+ *
+ * The symptom is silent and looks like something else entirely: a handler throws a perfectly good
+ * MeshError with status 404, the code that decides the HTTP status checks `instanceof` in the other
+ * realm, gets `false`, and answers 500. Verified directly -- under tsx,
+ * `require('@flybyme/mesh').MeshError === (await import('@flybyme/mesh')).MeshError` is `false`.
+ */
+export const MESH_ERROR_BRAND: unique symbol = Symbol.for('@flybyme/mesh.MeshError') as never;
+
+/**
  * Standardized MeshError class.
  * Uses Zod to validate cross-service error payloads.
  */
 export class MeshError extends Error {
+    /** See {@link MESH_ERROR_BRAND}. Inherited by ResiliencyError/ClientError. */
+    public readonly [MESH_ERROR_BRAND] = true as const;
     public readonly code: string;
     public readonly status: number;
     public readonly data?: unknown;
@@ -68,6 +86,19 @@ export class ClientError extends MeshError {
     }
 }
 
+
+/**
+ * Is this a MeshError, including one built by a different copy of this module?
+ *
+ * Use this rather than `instanceof MeshError` anywhere the error may have come from elsewhere --
+ * across the mesh, out of a loaded part, or through a bundle. See {@link MESH_ERROR_BRAND} for why
+ * `instanceof` is not enough.
+ */
+export function isMeshError(err: unknown): err is MeshError {
+    return typeof err === 'object'
+        && err !== null
+        && (err as Record<symbol, unknown>)[MESH_ERROR_BRAND] === true;
+}
 
 /**
  * Rebuilds the error a remote handler threw, from whatever crossed the wire.

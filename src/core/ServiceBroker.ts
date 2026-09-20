@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
-import { ClientError, MeshError, errorFromWire } from './MeshError.js';
+import { ClientError, MeshError, errorFromWire, isMeshError } from './MeshError.js';
 
 /**
  * formatZodIssues: renders a params validation failure as "field: reason; field: reason".
@@ -314,7 +314,12 @@ export class ServiceBroker implements IServiceBroker {
                     // node: the same call answered 404 locally and 500 remotely. Placement makes
                     // where a handler runs a scheduling detail, so that difference had become both
                     // routine and non-deterministic.
-                    const wire = err instanceof MeshError
+                    // isMeshError, not instanceof: the handler that threw this may well live in a
+                    // precompiled part loaded with require(), which under tsx is a different copy
+                    // of this module and therefore a different MeshError class. See
+                    // MESH_ERROR_BRAND -- that mismatch is exactly what kept turning a remote 404
+                    // into a 500 while every test passed.
+                    const wire = isMeshError(err)
                         ? err.toJSON()
                         : { message, data: { stack: err instanceof Error ? err.stack : undefined } };
 
