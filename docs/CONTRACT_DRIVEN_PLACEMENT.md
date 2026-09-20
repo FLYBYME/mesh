@@ -33,8 +33,24 @@ a live run:
 
 | Eviction -- unmount a part and drop its module, so the next load re-reads it | mesh-serve `catalog/methods/loadModule.ts`, `tools/unloadCorePart.ts` |
 
-Still design, not built: the leadership-change watcher -- nothing reacts to becoming leader for a
-singleton, so a `long-running` contract whose node dies does not move.
+| `registry.placementFor(key)` -- *where to put* something, as against `leaderFor`'s *who leads it* | `core/Registry.ts`, `core/PlacementRegistry.ts` |
+| A supervisor: desired state, observed state, and a leaderScoped interval closing the gap | mesh-serve `catalog/contracts/supervisor.contract.ts`, `tools/reconcile.ts` |
+
+**The leadership-change watcher was not built, on purpose.** Going to build it, the set it would
+act on turned out to be empty: `leaderScoped` contracts here are all `on-demand` (leadership
+routing handles those at call time), and the `long-running`/`interval` ones are all deliberately
+per-node. For `interval` + `leaderScoped`, `startIntervalContract` already re-checks `leaderFor`
+*every tick*, so leadership moving is picked up on the next one with nothing watching. A watcher
+would only earn its place for a `long-running` singleton, and nothing is one.
+
+What the investigation found instead was a real bug -- `serve.artifact.watchRelease` was not
+leaderScoped, and the comment explaining why claimed the sweep's write serialized concurrent
+sweeps. It does not: a plain `find` for pending followed by an unconditional update means two nodes
+both enqueue a build for the same artifact. Live on any two-node cluster, since every node runs
+catalog.
+
+And the genuine gap behind "what if the node dies" was never leadership at all -- it was that
+nothing recorded a service *should* be running. That is the supervisor, above.
 
 **Proven end to end.** Two nodes, the second started with `--parts api,cdn` and holding no identity
 contracts at all, both serving `console.localhost` -- the real operator console, built on the
@@ -553,9 +569,21 @@ function with no change event; nothing today notices "I just became the leader f
       `bootstrap` makes that decision implicitly when claiming a fresh cluster. A node *joining* an
       existing one had no equivalent moment, so it would come up, join, and serve nothing --
       `mesh-serve start --parts api,cdn` is where an operator says what a node is for.
-- [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
-      `interval` domains a node newly becomes leader for. Not on the path to a working cluster --
-      placement covers "this node needs identity"; this covers "the singleton's node died".
+- [~] ~~A leadership-change watcher~~ **Not built, deliberately -- and replaced by the thing that
+      was actually missing.** The set it would act on is empty: every `leaderScoped` contract here
+      is `on-demand` (routing handles those at call time) and every `long-running`/`interval` one
+      is deliberately per-node. `startIntervalContract` re-checks `leaderFor` on *every tick*, so
+      an `interval` singleton already follows leadership with nothing watching.
+
+      "What if the node dies" turned out not to be a leadership question at all. Nothing recorded
+      that a service *should* be running, so there was nothing to compare against -- which is the
+      supervisor: `serve.part.desired`, `serve.part.runningHere`, and a `leaderScoped` +`interval`
+      `serve.part.reconcile` closing the gap. Observed state is asked of each node rather than
+      stored, because a node that is gone cannot answer, while a database flag would survive the
+      crash that made it wrong.
+
+      A watcher would still earn its place for a `long-running` singleton -- a daemon that must run
+      on exactly one node and must *start* when leadership moves. Nothing is one yet.
 - [x] **Eviction** -- built. `serve.corePart.unload` (and `serve.part.stop` for a catalog-managed
       part) unmounts everything the part registered, then drops its module with
       `delete require.cache[...]` so the next load genuinely re-reads the file. This is the whole
