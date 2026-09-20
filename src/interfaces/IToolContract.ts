@@ -170,14 +170,27 @@ export interface ToolContract<
      */
     readonly hooks?: CrudHooks;
     /**
-     * An intrinsic required-role baseline, parallel to `destructive`. Required -- an intentionally
-     * public contract still has to say so explicitly with `[]`, not simply omit the field.
+     * Role keys a caller must hold to reach this contract **from outside the mesh**. Required -- an
+     * intentionally public contract says so with `[]`, rather than omitting the field.
      *
-     * The exact enforcement semantics (does this become the one true authority everywhere the
-     * contract is exposed, or a floor a per-api `serve.expose` row can tighten but never loosen
-     * below?) are still an open design question -- see "Intrinsic vs. extrinsic permissions" in
-     * `docs/CONTRACT_DRIVEN_PLACEMENT.md`. This field only requires the declaration to exist; nothing
-     * yet reads or enforces it at call time.
+     * **A floor, not the authority.** The per-api `serve.expose` row stays extrinsic and can demand
+     * *more* (its own `role`/`permission`), because the same contract legitimately carries different
+     * requirements on different apis. What it cannot do is demand less. Both gates are applied and
+     * both must pass.
+     *
+     * The floor exists because the extrinsic model fails open: an expose row with no `role` is
+     * anonymous, so a destructive contract published without one is reachable by anybody, and
+     * nothing anywhere says that was wrong. Declaring the requirement on the contract makes the
+     * safe case the default one -- a mistake in an expose row can now only over-restrict.
+     *
+     * Every key must be held (an `and`, not an `or`), with role inheritance expanded --
+     * `identity.hasRole` is what resolves it, so a role that inherits `operator` satisfies
+     * `['operator']`.
+     *
+     * **Enforced at the api boundary only**, deliberately: a call already inside the mesh is
+     * trusted, and `meta` is set by whoever makes it. The api is the only place a caller's identity
+     * is established rather than asserted, which is the same reasoning `scopedBy` rests on. See
+     * `mesh-serve`'s `api/gateway.ts` checkGate.
      */
     readonly permissions: readonly string[];
     /** Formats the tool output as a human-readable string */
