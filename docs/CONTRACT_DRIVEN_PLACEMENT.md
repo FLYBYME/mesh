@@ -31,9 +31,10 @@ a live run:
 | `permissions` enforced as a floor a `serve.expose` row cannot lower | mesh-serve `api/gateway.ts` checkGate |
 | `isMeshError` / `MESH_ERROR_BRAND` -- recognition that survives a part boundary | `core/MeshError.ts` |
 
-Still design, not built: the leadership-change watcher (nothing reacts to becoming leader for a
-singleton), and eviction via `require.cache` deletion (the CJS bundles it needs now exist; nothing
-deletes from the cache yet).
+| Eviction -- unmount a part and drop its module, so the next load re-reads it | mesh-serve `catalog/methods/loadModule.ts`, `tools/unloadCorePart.ts` |
+
+Still design, not built: the leadership-change watcher -- nothing reacts to becoming leader for a
+singleton, so a `long-running` contract whose node dies does not move.
 
 **Proven end to end.** Two nodes, the second started with `--parts api,cdn` and holding no identity
 contracts at all, both serving `console.localhost` -- the real operator console, built on the
@@ -555,13 +556,22 @@ function with no change event; nothing today notices "I just became the leader f
 - [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
       `interval` domains a node newly becomes leader for. Not on the path to a working cluster --
       placement covers "this node needs identity"; this covers "the singleton's node died".
-- [ ] Eviction -- **resolved in approach**: build on-demand contracts as CJS (`format` param on
-      `runEsbuild`), load via `require()`, evict via `delete require.cache[path]`. The bundles exist
-      and are loaded this way; nothing deletes from the cache yet. `require()`-of-ESM is confirmed
-      working for the external `@flybyme/mesh` ref on the deployed Node (22.x).
+- [x] **Eviction** -- built. `serve.corePart.unload` (and `serve.part.stop` for a catalog-managed
+      part) unmounts everything the part registered, then drops its module with
+      `delete require.cache[...]` so the next load genuinely re-reads the file. This is the whole
+      reason parts are built as CommonJS and loaded with `require()`: an ES module cannot be
+      dropped once evaluated, so a "reload" would silently return the same module.
 
-      **Caution found the hard way** (see the realm note below): each `require()` after an eviction
-      produces a *fresh* module realm for that part. Anything holding a reference across the
-      eviction -- a class, a registry entry, an `instanceof` check -- is then comparing across
-      realms. Eviction has to be designed with that in mind rather than discovered again.
+      Unmounting *is* the stop for anything with a lifetime -- `unregisterContract` aborts the
+      registration-scoped `ctx.signal` a listener hung its `close()` on, and clears an interval's
+      timer -- so nothing needs to know a part owned a port or a loop. A load records what it
+      mounted (keyed by node as well as path) so the unload reverses exactly that.
+
+      Verified live: a running node's cdn answering, then `unload` -> 14 contracts unmounted, module
+      evicted, port refusing connections, then `load` -> the site serving again.
+
+      **The re-loaded part lives in a new module realm.** Its module-level state starts empty, which
+      is the point, but anything held across the unload -- a class for an `instanceof`, a captured
+      closure -- now points at the old realm. Same hazard as `MESH_ERROR_BRAND`, and inherent to
+      eviction rather than incidental.
 - [ ] Resolve the remaining open forks above before or during implementation, not after
