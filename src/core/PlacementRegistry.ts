@@ -587,19 +587,33 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
 
     /** Identical semantics to `Registry.leaderFor` -- see that file's own comment. */
     public leaderFor(domain: string): CoreNodeInfo | undefined {
+        return this.closestTo(domain, (node) => node.services.some((svc) => svc.name === domain));
+    }
+
+    /** Identical semantics to `Registry.placementFor` -- every available node is a candidate. */
+    public placementFor(key: string): CoreNodeInfo | undefined {
+        return this.closestTo(key, () => true);
+    }
+
+    /**
+     * The shared half: closest available node id to `key` by XOR distance, among those the filter
+     * accepts. The filter is the only difference between routing to something that exists and
+     * choosing where to put something that does not.
+     */
+    private closestTo(key: string, accept: (node: RegistryNodeInfo) => boolean): CoreNodeInfo | undefined {
         const candidates: RegistryNodeInfo[] = [];
         for (const node of this.nodes.values()) {
             if (!node.available) continue;
             if ((node.namespace || 'default') !== this.localNamespace) continue;
-            if (node.services.some((svc) => svc.name === domain)) {
-                candidates.push(node);
-            }
+            if (accept(node)) candidates.push(node);
         }
-        if (candidates.length === 0) return undefined;
 
-        const targetID = idToBigInt(domain);
-        let closest = candidates[0]!;
-        let closestDistance = xorDistance(targetID, idToBigInt(closest.nodeID));
+        const first = candidates[0];
+        if (first === undefined) return undefined;
+
+        const targetID = idToBigInt(key);
+        let closest = first;
+        let closestDistance = xorDistance(targetID, idToBigInt(first.nodeID));
         for (const candidate of candidates.slice(1)) {
             const distance = xorDistance(targetID, idToBigInt(candidate.nodeID));
             if (distance < closestDistance) {

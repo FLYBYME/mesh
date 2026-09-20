@@ -37,6 +37,22 @@ export interface IServiceRegistry {
      */
     leaderFor(domain: string): NodeInfo | undefined;
 
+    /**
+     * Deterministic assignment for something **not running yet** -- "which node should host this",
+     * where `leaderFor` answers "which of the nodes already serving it should lead".
+     *
+     * The difference is the candidate set, and it matters: `leaderFor` only considers nodes that
+     * already advertise the domain, so for a service nobody is running it correctly answers
+     * `undefined` -- which is useless to a supervisor whose whole job is placing exactly that.
+     * This picks from every available node in the namespace, by the same XOR-closest rule, so
+     * every node agrees without an election and the answer moves on its own when membership
+     * changes.
+     *
+     * `key` is any stable string -- a domain, a part key, whatever identifies the thing being
+     * placed. Undefined only when the namespace has no available nodes at all.
+     */
+    placementFor(key: string): NodeInfo | undefined;
+
     /** Tool registration */
     registerTool(contract: ToolContract): void;
     getTool(key: string): ToolContract | undefined;

@@ -601,6 +601,41 @@ export class Registry extends EventEmitter implements IServiceRegistry {
      * operation to that node (or refuse to run it locally when it isn't the leader) for the
      * guarantee to mean anything.
      */
+    /**
+     * XOR-closest over *every* available node, not only those already serving `key` -- see
+     * `IServiceRegistry.placementFor`. Same rule as `leaderFor`, different candidate set, which is
+     * the whole distinction between routing to something and deciding where to put it.
+     */
+    public placementFor(key: string): CoreNodeInfo | undefined {
+        const candidates: RegistryNodeInfo[] = [];
+        for (const node of this.nodes.values()) {
+            if (!node.available) continue;
+            if ((node.namespace || 'default') !== this.localNamespace) continue;
+            candidates.push(node);
+        }
+
+        return Registry.closestTo(key, candidates);
+    }
+
+    /** The shared half of leaderFor/placementFor: closest node id to `key` by XOR distance. */
+    private static closestTo(key: string, candidates: RegistryNodeInfo[]): CoreNodeInfo | undefined {
+        const first = candidates[0];
+        if (first === undefined) return undefined;
+
+        const targetID = idToBigInt(key);
+        let closest = first;
+        let closestDistance = xorDistance(targetID, idToBigInt(first.nodeID));
+        for (const candidate of candidates.slice(1)) {
+            const distance = xorDistance(targetID, idToBigInt(candidate.nodeID));
+            if (distance < closestDistance) {
+                closest = candidate;
+                closestDistance = distance;
+            }
+        }
+
+        return closest as unknown as CoreNodeInfo;
+    }
+
     public leaderFor(domain: string): CoreNodeInfo | undefined {
         const candidates: RegistryNodeInfo[] = [];
         for (const node of this.nodes.values()) {
