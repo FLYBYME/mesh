@@ -20,11 +20,13 @@ a live run:
 | `broker.registerContract` / `unregisterContract` / `registerCrud` / `registerCrudHook` / `registerEventHandler` -- mounting with no `ServiceModule` | `core/ServiceBroker.ts`, `interfaces/IServiceBroker.ts` |
 | Precompiled CommonJS core parts + a generic loader accepting either `register(broker)` or a `ServiceModule` constructor | mesh-serve `cli/core/buildCoreParts.ts`, `catalog/methods/loadModule.ts` |
 | `mesh-serve start` brings up the catalog kernel *only*; `bootstrap` loads the rest via `serve.corePart.load` | mesh-serve `cli/commands/start.ts`, `bootstrap.ts` |
-| `serve.hold` and `identity` migrated off `ServiceModule` entirely | mesh-serve `hold/hold.service.ts`, `identity/identity.service.ts` |
+| `ctx.signal`, with a lifetime that follows the contract's declared `concurrency` -- per-call for `on-demand`, per-*registration* for `long-running`/`interval`, where aborting it *is* the stop | `core/ServiceBroker.ts`, `interfaces/IServiceContext.ts` |
+| `concurrency: 'interval'` + `intervalMs` -- the broker owns the timer, skips overlapping ticks, and enforces `leaderScoped` itself | `ServiceBroker.startIntervalContract` |
+| `serve.hold`, `identity` and `serve.queue` migrated off `ServiceModule` entirely | mesh-serve `hold/hold.service.ts`, `identity/identity.service.ts`, `queue/queue.service.ts` |
 
 Still design, not built: the automatic placement/scheduling layer (nothing yet triggers a load in
-response to a call or a leadership change), `ctx.signal`, and eviction via `require.cache` deletion
-(the CJS bundles it needs now exist; nothing deletes from the cache yet).
+response to a call or a leadership change), and eviction via `require.cache` deletion (the CJS
+bundles it needs now exist; nothing deletes from the cache yet).
 
 What the live run proved that tests didn't: with the default `Registry`, standalone contracts mount
 and answer *locally* while a peer is told "no node in this mesh advertises domain identity" --
@@ -106,6 +108,29 @@ shim, no default-and-warn -- an omitted field is a startup failure, not a lint w
   - `interval` / `timer`: self-scheduled, no caller at all.
   - No default -- every contract states its own nature explicitly, on purpose: a silent default of
     `on-demand` would be exactly the kind of unstated assumption this whole design exists to remove.
+
+  **What a `long-running` contract actually is** -- the question this field looked like it begged,
+  since a contract is `params in -> result out` and a listener has no caller and never returns.
+  Answer: it is an ordinary contract whose handler *starts* something and hands teardown to
+  `ctx.signal`, which for a `long-running` contract is scoped to the registration rather than the
+  call:
+
+  ```ts
+  async function listen({ port }, ctx) {
+      const server = http.createServer(app).listen(port);
+      ctx.signal.addEventListener('abort', () => server.close());
+      return { boundTo: port };   // returns immediately; the server keeps running
+  }
+  ```
+
+  Stopping it is `unregisterContract`, which aborts that signal. There is nothing else: no
+  `onStart`/`onStop` pair, no class to hold the handle, and no second lifecycle API beside the
+  contract.
+
+  An `interval` contract is the same idea from the other side: it declares `intervalMs` and the
+  broker runs its handler on that period, so a recurring job is a plain handler doing one pass
+  rather than a class holding a timer. `serve.queue` is the worked example -- see the checklist
+  entry on dropping `ServiceModule`.
 - **`permissions`** (required) -- an intrinsic required-role baseline, parallel to `destructive`.
   An intentionally public contract still has to say so explicitly (e.g. an empty/`none` value),
   not simply omit the field.
@@ -387,18 +412,42 @@ function with no change event; nothing today notices "I just became the leader f
       node as the api handling the request (true today -- `start.ts` mounts `DatabaseModule` on every
       node), read it directly through the injected handle using the api's own resolved `meta`, instead
       of round-tripping through `ctx.call` -> registry -> middleware
-- [ ] Wire `ctx.signal` for real: one `AbortController` per call, passed into both `serviceCtx`
-      literals (`ServiceBroker.ts:392`, `:455`), `.abort()`'d on the existing timeout race and on
-      eviction -- currently declared on `IServiceContext` and always `undefined` in practice
+- [x] **Wire `ctx.signal` for real** -- done, and it turned out to be the answer to "what *is* a
+      long-running contract", not a loose end beside it. The signal's lifetime follows the
+      contract's declared `concurrency`: one `AbortController` per *invocation* for `on-demand`,
+      one per *registration* for `long-running`/`interval`, shared by every call and aborted by
+      `unregisterContract` (before unwiring, so teardown runs while the contract is still mounted)
+      or `broker.stop()`. That second lifetime is the whole stop mechanism: a handler starts its
+      resource, hands teardown to `ctx.signal`, and returns -- no `onStart`/`onStop` pair, no class
+      holding the handle. Non-optional on the interface now; an optional `signal?` is exactly what
+      let every handler write `ctx.signal?.addEventListener(...)` and compile to "never cleans up".
+- [x] **A built-in timer for `concurrency: 'interval'`** -- declare `intervalMs` and the broker owns
+      the timer (`ServiceBroker.startIntervalContract`). Every recurring job in this codebase was
+      otherwise the same four things written slightly differently: a timer field, a `setInterval`
+      in `onStart`, a `clearInterval` in `onStop`, and a hand-rolled guard against overlapping
+      ticks. Two behaviors are built in rather than left to each handler: a tick still running when
+      the next is due is **skipped, not queued**; and `leaderScoped` is enforced *in the timer*,
+      because falling through to `wireLocalTool`'s redirect would forward every non-leader's tick
+      to the leader and run it N times a period. `defineContract` rejects `interval` without a
+      period, and a period without `interval`.
 - [ ] New `kind` for one atomic piece of code -- **replaces** `service`, not added alongside it
 - [~] **Drop `ServiceModule` entirely.** The primitives exist and are proven: `registerContract`,
       `registerCrud`, `registerCrudHook`, `registerEventHandler`, and a loader that takes either a
       `register(broker)` part or a `ServiceModule` constructor, so services migrate one at a time
-      rather than in a flag day. `serve.hold` and `identity` are migrated and running. Still on the
-      class: `CdnService`, `ApiService` (both own an HTTP listener -> `long-running`),
-      `QueueService`, `CatalogService` (both own a timer -> `interval`; catalog is also the kernel
-      `start` mounts statically). `register` returning `{ domain, stop }` is the lifecycle hook
-      those four need, and it exists -- nothing has used it yet.
+      rather than in a flag day. `serve.hold`, `identity` and `serve.queue` are migrated and
+      running. Still on the class: `CdnService`, `ApiService` (both own an HTTP listener ->
+      `long-running`), `CatalogService` (owns a timer -> `interval`, and is also what the kernel
+      `start` mounts statically).
+
+      `serve.queue` is the one that answers how a service with a *lifetime* migrates, and the
+      answer is that it mostly doesn't need one. The class existed to own a timer; `intervalMs`
+      replaced it outright, and the only real state left -- the per-node in-flight set -- moved to
+      module scope in `tools/tick.ts`, which has exactly the same lifetime as the instance did
+      because a part is `require()`d once per node. It returns a bare domain string, no `stop`.
+      The `{ domain, stop }` form remains for the two listeners, which genuinely do hold a
+      resource -- though `ctx.signal` may well make that unnecessary too, since a listener that
+      registers `close()` on its own signal has nothing left for a `stop` to do. Decide when
+      `ApiService` actually migrates rather than now.
 - [ ] `ServiceBroker.call()`'s empty-`selectNode`-result fallback: on-demand `import()` +
       `registerModule()`, reusing the exact sequence `startService.ts` already proves out
 - [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
