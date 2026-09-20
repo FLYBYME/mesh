@@ -9,6 +9,25 @@ how.
 
 ---
 
+## 0. Pin the version first
+
+This lands in **`@flybyme/mesh` v4.0.0**. Depend on the tag, never on a branch:
+
+```json
+"@flybyme/mesh": "github:FLYBYME/mesh#v4.0.0"
+```
+
+A `#contract-driven-placement` (or any other branch) dependency moves underneath the repo with no
+version signal, which is how a working checkout breaks overnight without a single local change.
+If a repo is not ready to migrate, pin **`#v3.1.5`** -- the last release that still has
+`ServiceModule`. There is no half-migrated state on 4.x: the class and every entry point to it are
+gone, so nothing falls back.
+
+`@flybyme/mesh-serve` v0.4.0 is the matching release, and is the worked example for everything
+below.
+
+---
+
 ## 1. What breaks immediately
 
 These throw at import time, so the repo will not start until they are fixed. That is deliberate:
@@ -108,6 +127,17 @@ part is `require()`d once per node, so module scope has exactly the lifetime the
 
 Reference: `mesh-serve/src/cdn/gateway.ts` -- 684 lines of unchanged request handling, zero
 contracts on it.
+
+**Name it for what it is.** `*.service.ts` meant "a `ServiceModule` lives here", and that class no
+longer exists, so the suffix now points at nothing -- keeping it on a plain class is how the next
+reader concludes the migration never happened. The convention is `gateway.ts` holding
+`<Thing>Gateway`, in the folder that owns the protocol (`src/cdn/gateway.ts`, `src/api/gateway.ts`).
+Don't prefix the file with its folder's name: `wire/gateway.ts`, not `wire/registry.wire.service.ts`.
+
+One class per file, and split the protocol apart from the server: the router, the codec, the
+storage and the listener are separate concerns that were only ever in one file because the class
+was. `mesh-serve/src/cdn/` and `src/api/` are the shape -- `gateway.ts` alongside `tools/listen.ts`,
+not a single 700-line module.
 
 ### 2.6 `leaderScoped` if and only if it must be a singleton
 
@@ -214,7 +244,21 @@ claiming one key were resolved silently by last-write-wins. `registerContract` r
 Expect to find at least one real collision; fix it by renaming the generated action
 (`defineCrud`'s `actions` option) rather than by passing `{ replace: true }`.
 
-**8. `import()` performed from the wrong package.** Under tsx or vitest, only modules that runtime
+**8. Renaming a file by copying it.** Observed for real, twice, in repos migrating off
+`ServiceModule`: `git.wire.ts` was a byte-identical copy of `gitserver.service.ts`, and
+`nameserver.engine.ts` of `nameserver.service.ts`. Both repos compiled and both test suites passed,
+because every importer still pointed at the *old* file -- so the new, correctly-named one was dead
+code and every subsequent edit to it changed nothing that runs.
+
+Rename by moving. Then update every importer, delete the original, and prove it:
+
+```sh
+grep -rn "old-name" src/ test/     # must return nothing
+```
+
+A rename is not done when the new file exists. It is done when the old path is unreachable.
+
+**9. `import()` performed from the wrong package.** Under tsx or vitest, only modules that runtime
 owns get transformed. A dynamic `import()` of a `.ts` file executed from inside `node_modules` is
 outside that graph and fails with "Unknown file extension .ts", while the identical call written in
 your own package works. This is why `createHandlerResolver` takes a `load` option instead of
@@ -233,21 +277,22 @@ In this order. Each step catches a class the previous one cannot.
 3. **A single node, started for real**, doing whatever it normally does. Confirms loading,
    listeners binding, timers running.
 4. **Two nodes.** This is not optional, and it is where the interesting bugs are. Every bug in the
-   list above except 1 and 7 was invisible to every single-node test. The specific check worth
+   list above except 1, 7 and 8 was invisible to every single-node test. The specific check worth
    making: take an error a handler throws -- a 404 for a missing row -- and confirm it comes back
    as **the same status through both nodes**, one where the handler is local and one where it is
    remote. That single assertion catches traps 2 and 3 together.
+5. **`grep` for every path you renamed.** Trap 8 is the one no number of nodes catches: a dead
+   duplicate compiles, passes, and reports success. Nothing but the grep finds it.
 
 ---
 
 ## 5. What not to change
 
-- **`ServiceModule` no longer exists in `mesh`.** It was deleted along with
-  `IServiceModule`, `broker.registerModule`/`unregisterModule`/`getModule`, mount keys
+- **Don't look for a compatibility shim.** `ServiceModule` was deleted from `mesh` in v4.0.0, along
+  with `IServiceModule`, `broker.registerModule`/`unregisterModule`/`getModule`, mount keys
   (`registerModule`'s `key` option), and the registry's module methods. There is no dual-shape
-  loader left to fall back on: a domain is its contracts, and `broker.registerContract` /
-  `broker.loadDomain` are the only ways to mount one. Pin the last `2.x` release of `@flybyme/mesh`
-  if a repo isn't ready to migrate; there is no half-migrated state on `3.x`.
+  loader: a domain is its contracts, and `broker.registerContract` / `broker.loadDomain` are the
+  only ways to mount one. See §0 for what to pin if the repo isn't ready.
 - **Don't migrate behaviour while migrating shape.** Move the code, keep it identical, verify, and
   make behavioural changes as separate commits. The exception is a bug the migration exposes --
   fix it, but say so.
