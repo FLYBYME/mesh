@@ -171,6 +171,9 @@ export class ServiceBroker implements IServiceBroker {
     // registered it. DatabaseMiddleware uses this to resolve which mount (and therefore which
     // Database override, if any) a given CRUD/time-series call actually belongs to.
     private toolMountKeys = new Map<string, string>();
+    // toolKey -> a Database other than the broker-wide default, for that one tool. See
+    // getDatabaseForTool.
+    private toolDatabases = new Map<string, Database>();
     // Contracts mounted on their own via `registerContract` -- no module, no mount key. Tracked
     // separately from `mountedModules` so `unregisterContract` can tear exactly one of them down
     // without touching a module's grouped mount, and so the two can never be confused for each
@@ -240,16 +243,17 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * getDatabaseForTool: resolves the Database override (if any) registered for the mount
-     * that owns `toolKey`, via registerModule's `options.database`. Returns undefined when the
-     * tool isn't currently mounted, or was mounted without an override -- DatabaseMiddleware
-     * falls back to its own shared default in either case, so this changes nothing for any
-     * existing, non-database-overridden registration.
+     * The Database this tool's CRUD/time-series calls should use, when it is not the broker-wide
+     * default -- a different Mongo connection or dbName for one domain.
+     *
+     * Registered per contract (`registerContract`'s `options.database`, forwarded by `loadDomain`),
+     * which is the granularity that actually matters: "this collection lives elsewhere" is a fact
+     * about a domain, not about whatever happened to mount it. Returns undefined when the tool
+     * isn't mounted or has no override, and `DatabaseMiddleware`/`CrudExecutor` fall back to the
+     * shared default in either case.
      */
     public getDatabaseForTool(toolKey: string): Database | undefined {
-        const mountKey = this.toolMountKeys.get(toolKey);
-        if (!mountKey) return undefined;
-        return this.mountedModules.get(mountKey)?.database;
+        return this.toolDatabases.get(toolKey);
     }
 
     /**
@@ -631,7 +635,7 @@ export class ServiceBroker implements IServiceBroker {
     public registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
         handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
-        options?: { replace?: boolean },
+        options?: { replace?: boolean; database?: Database },
     ): void {
         const toolKeyStr = `${contract.domain}.${contract.action}`;
         // Refusing by default is deliberate, and immediately worth it: it surfaced a real collision
@@ -649,6 +653,12 @@ export class ServiceBroker implements IServiceBroker {
 
         this.standaloneContracts.set(toolKeyStr, asAny);
         globalContractRegistry.register(asAny);
+
+        // Per contract, not per mount: "this collection lives in another database" is a fact about
+        // the domain, and survives however it came to be mounted.
+        if (options?.database !== undefined) {
+            this.toolDatabases.set(toolKeyStr, options.database);
+        }
 
         // A hook the contract declares is wired wherever the contract is mounted -- here, rather
         // than in `loadDomain` alone, so `registerCrud` and every other path that mounts a
@@ -703,6 +713,7 @@ export class ServiceBroker implements IServiceBroker {
         MeshToolSchemaRegistry.delete(toolKeyStr);
         globalContractRegistry.delete(toolKeyStr);
         this.standaloneContracts.delete(toolKeyStr);
+        this.toolDatabases.delete(toolKeyStr);
 
         const registry = this.registry as (IServiceRegistry & { unregisterContract?: (key: string) => void }) | undefined;
         if (registry?.unregisterContract) {
@@ -829,7 +840,11 @@ export class ServiceBroker implements IServiceBroker {
      */
     public registerCrud(
         crud: AnyCrudContracts,
-        options?: { hooks?: Partial<Record<string, { before?: CrudHook; after?: CrudHook }>> },
+        options?: {
+            hooks?: Partial<Record<string, { before?: CrudHook; after?: CrudHook }>>;
+            /** Route this collection to a Database other than the broker-wide default. */
+            database?: Database;
+        },
     ): void {
         const keys = ['create', 'find', 'findOne', 'get', 'update', 'delete', 'count', 'replace', 'resolve', 'createMany'] as const;
         for (const key of keys) {
@@ -838,7 +853,7 @@ export class ServiceBroker implements IServiceBroker {
                 const tool = contract as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
                 this.registerContract(tool, async () => {
                     throw new Error(`Engine Error: CRUD action "${tool.action}" for domain "${tool.domain}" was not intercepted.`);
-                });
+                }, options?.database !== undefined ? { database: options.database } : undefined);
             }
         }
 
@@ -895,6 +910,8 @@ export class ServiceBroker implements IServiceBroker {
              */
             resolve?: (contract: ToolContract<z.ZodTypeAny, z.ZodTypeAny>) => Promise<unknown>;
             replace?: boolean;
+            /** Route this domain's CRUD/time-series calls to a Database other than the default. */
+            database?: Database;
         },
     ): Promise<{ domain: string; contracts: string[] }> {
         // Sub-domains included: a part owns `identity` *and* `identity.user`, `identity.ticket`...
@@ -916,7 +933,7 @@ export class ServiceBroker implements IServiceBroker {
             if (contract.isCrud === true || contract.isTimeSeries === true) {
                 this.registerContract(contract, async () => {
                     throw new Error(`Engine Error: CRUD action "${contract.action}" for domain "${contract.domain}" was not intercepted.`);
-                }, { replace: options?.replace });
+                }, { replace: options?.replace, database: options?.database });
                 loaded.push(toolKeyStr);
                 continue;
             }
@@ -934,7 +951,7 @@ export class ServiceBroker implements IServiceBroker {
             this.registerContract(
                 contract,
                 handler as (params: unknown, ctx: IServiceContext) => Promise<unknown>,
-                { replace: options?.replace },
+                { replace: options?.replace, database: options?.database },
             );
             loaded.push(toolKeyStr);
             if (contract.concurrency === 'long-running') longRunning.push(toolKeyStr);

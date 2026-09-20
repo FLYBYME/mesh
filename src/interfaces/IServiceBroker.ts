@@ -100,14 +100,22 @@ export interface IServiceBroker {
     registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
         handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
-        options?: { replace?: boolean },
+        options?: {
+            replace?: boolean;
+            /** Route this contract's CRUD/time-series calls to a Database other than the default. */
+            database?: Database;
+        },
     ): void;
     unregisterContract(toolKey: string): void;
     listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
 
     registerCrud(
         crud: AnyCrudContracts,
-        options?: { hooks?: Partial<Record<string, { before?: CrudHookFn; after?: CrudHookFn }>> },
+        options?: {
+            hooks?: Partial<Record<string, { before?: CrudHookFn; after?: CrudHookFn }>>;
+            /** Route this collection to a Database other than the broker-wide default. */
+            database?: Database;
+        },
     ): void;
     registerCrudHook(domain: string, action: string, hooks: { before?: CrudHookFn; after?: CrudHookFn }): void;
     getCrudHooks(domain: string, action: string): { before?: CrudHookFn; after?: CrudHookFn } | undefined;
