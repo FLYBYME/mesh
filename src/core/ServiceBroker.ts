@@ -627,6 +627,14 @@ export class ServiceBroker implements IServiceBroker {
         this.standaloneContracts.set(toolKeyStr, asAny);
         globalContractRegistry.register(asAny);
 
+        // A hook the contract declares is wired wherever the contract is mounted -- here, rather
+        // than in `loadDomain` alone, so `registerCrud` and every other path that mounts a
+        // collection gets it too. See `defineCrud`'s `hooks` option: the point is that there is no
+        // separate registration step anyone can forget.
+        if (asAny.hooks !== undefined) {
+            this.registerCrudHook(asAny.domain, asAny.action, asAny.hooks as { before?: CrudHook; after?: CrudHook });
+        }
+
         const registry = this.registry as (IServiceRegistry & { registerContract?: (c: ToolContract) => void }) | undefined;
         if (registry?.registerContract) {
             registry.registerContract(asAny as ToolContract);
@@ -828,12 +836,6 @@ export class ServiceBroker implements IServiceBroker {
 
         for (const contract of owned) {
             const toolKeyStr = `${contract.domain}.${contract.action}`;
-
-            // Declared on the contract, so there is no separate hook-registration step to forget
-            // and no call site that has to pass one. See `defineCrud`'s `hooks` option.
-            if (contract.hooks !== undefined) {
-                this.registerCrudHook(contract.domain, contract.action, contract.hooks as { before?: CrudHook; after?: CrudHook });
-            }
 
             if (contract.isCrud === true || contract.isTimeSeries === true) {
                 this.registerContract(contract, async () => {
