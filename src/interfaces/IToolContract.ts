@@ -53,6 +53,20 @@ export const DEFAULT_VISIBILITY: ContractVisibility = 'internal';
  */
 export type ContractConcurrency = 'on-demand' | 'long-running' | 'interval';
 
+/**
+ * One side of a CRUD hook. `ctx` is deliberately loose here (`unknown`) rather than
+ * `IServiceContext`: a contract is a pure declaration that the api layer, the CLI and the client
+ * generator all import, and none of them should drag the broker's own interface in behind it.
+ * `CrudExecutor` hands a real `IServiceContext` through, and `defineCrud` narrows the parameter for
+ * the author writing one.
+ */
+export type CrudHookSide = (value: never, ctx: never) => Promise<unknown> | unknown;
+
+export interface CrudHooks {
+    readonly before?: CrudHookSide;
+    readonly after?: CrudHookSide;
+}
+
 // ─── Tool Contract ───────────────────────────────────────────────────────────
 
 /**
@@ -141,6 +155,20 @@ export interface ToolContract<
      * part that owns a timer. See `ServiceBroker.startIntervalContract`.
      */
     readonly intervalMs?: number;
+    /**
+     * For a CRUD action: what runs immediately before its params reach the database, and
+     * immediately after its result comes back.
+     *
+     * Declared on the contract rather than passed at registration time, so a collection is fully
+     * self-describing: everything needed to mount it is in the contract, and nothing has to be
+     * remembered at every call site that loads it. `defineCrud`'s `hooks` option puts them here,
+     * on the one action each belongs to -- there is no separate hook-registration step to forget.
+     *
+     * `before` may return replacement params; `after` may return a replacement result. Returning
+     * nothing leaves the value untouched. Both run with the *caller's* own `ctx`, scope included --
+     * see `CrudExecutor`, and the comment history on why that mattered.
+     */
+    readonly hooks?: CrudHooks;
     /**
      * An intrinsic required-role baseline, parallel to `destructive`. Required -- an intentionally
      * public contract still has to say so explicitly with `[]`, not simply omit the field.

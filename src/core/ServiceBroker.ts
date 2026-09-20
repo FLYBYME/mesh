@@ -802,7 +802,14 @@ export class ServiceBroker implements IServiceBroker {
         domain: string,
         handlers: ContractHandlerMap = {},
         options?: {
-            hooks?: Record<string, { before?: CrudHook; after?: CrudHook }>;
+            /**
+             * Resolves a contract's handler when `handlers` has no entry for it -- the unbundled
+             * case, where `filePath` points at a module that really exists and can just be
+             * imported. A bundle is one file with no modules left inside it to import, so it
+             * supplies `handlers` instead. Same declaration either way; only the lookup differs,
+             * and that is the only thing a caller has to choose.
+             */
+            resolve?: (contract: ToolContract<z.ZodTypeAny, z.ZodTypeAny>) => Promise<unknown>;
             replace?: boolean;
         },
     ): Promise<{ domain: string; contracts: string[] }> {
@@ -822,6 +829,12 @@ export class ServiceBroker implements IServiceBroker {
         for (const contract of owned) {
             const toolKeyStr = `${contract.domain}.${contract.action}`;
 
+            // Declared on the contract, so there is no separate hook-registration step to forget
+            // and no call site that has to pass one. See `defineCrud`'s `hooks` option.
+            if (contract.hooks !== undefined) {
+                this.registerCrudHook(contract.domain, contract.action, contract.hooks as { before?: CrudHook; after?: CrudHook });
+            }
+
             if (contract.isCrud === true || contract.isTimeSeries === true) {
                 this.registerContract(contract, async () => {
                     throw new Error(`Engine Error: CRUD action "${contract.action}" for domain "${contract.domain}" was not intercepted.`);
@@ -830,12 +843,12 @@ export class ServiceBroker implements IServiceBroker {
                 continue;
             }
 
-            const resolve = handlers[toolKeyStr];
-            if (resolve === undefined) {
-                throw new Error(`[ServiceBroker] loadDomain("${domain}"): no handler for "${toolKeyStr}". Its contract declares filePath "${contract.filePath}" -- the handler map has to carry an entry for every non-CRUD contract in the domain.`);
+            const fromMap = handlers[toolKeyStr];
+            if (fromMap === undefined && options?.resolve === undefined) {
+                throw new Error(`[ServiceBroker] loadDomain("${domain}"): no handler for "${toolKeyStr}". Its contract declares filePath "${contract.filePath}" -- pass a handler map entry for it, or a \`resolve\` that can load that file.`);
             }
 
-            const handler = await resolve();
+            const handler = fromMap !== undefined ? await fromMap() : await options!.resolve!(contract);
             if (typeof handler !== 'function') {
                 throw new Error(`[ServiceBroker] loadDomain("${domain}"): the handler resolved for "${toolKeyStr}" is not a function (got ${typeof handler}). Check what "${contract.filePath}" exports.`);
             }
@@ -847,14 +860,6 @@ export class ServiceBroker implements IServiceBroker {
             );
             loaded.push(toolKeyStr);
             if (contract.concurrency === 'long-running') longRunning.push(toolKeyStr);
-        }
-
-        for (const [action, hook] of Object.entries(options?.hooks ?? {})) {
-            const lastDot = action.lastIndexOf('.');
-            if (lastDot === -1) {
-                throw new Error(`[ServiceBroker] loadDomain("${domain}"): hook key "${action}" must be "<domain>.<action>", e.g. "identity.organization.create".`);
-            }
-            this.registerCrudHook(action.slice(0, lastDot), action.slice(lastDot + 1), hook);
         }
 
         // Last, and only once every contract in the domain is mounted: a listener's first request

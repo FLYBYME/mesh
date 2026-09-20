@@ -26,8 +26,17 @@ const widgetSchema = z.object({
     name: z.string(),
 });
 
+let hookSaw: unknown;
+
 const widgetCrud = defineCrud('loaded.widget', widgetSchema, {
     pluralPath: 'widgets',
+    // Declared on the collection, not passed when it is registered -- everything needed to mount
+    // this collection travels with it.
+    hooks: {
+        create: {
+            before: async (input: never) => { hookSaw = input; return input; },
+        },
+    },
     dependencies: [],
     filePath: 'src/__tests__/core/LoadDomain.spec.ts',
     permissions: [],
@@ -134,19 +143,48 @@ describe('loadDomain', () => {
         );
     });
 
-    it('registers CRUD hooks passed alongside, keyed by their full domain', async () => {
-        let sawBefore = false;
-        await broker.loadDomain('loaded', handlers, {
-            hooks: {
-                'loaded.widget.create': {
-                    before: async (input) => { sawBefore = true; return input as Record<string, unknown>; },
-                },
-            },
-        });
+    it('wires a CRUD hook the collection itself declares -- nothing passes one in', async () => {
+        // The only argument loadDomain gets is the handler map, and it has no hook in it.
+        await broker.loadDomain('loaded', handlers);
 
         const hook = broker.getCrudHooks('loaded.widget', 'create');
         expect(hook?.before).toBeDefined();
-        await hook?.before?.({}, {} as never);
-        expect(sawBefore).toBe(true);
+
+        await hook?.before?.({ name: 'w' }, {} as never);
+        expect(hookSaw).toEqual({ name: 'w' });
+    });
+
+    it('puts a declared hook on the one action it belongs to, not the whole collection', async () => {
+        await broker.loadDomain('loaded', handlers);
+        expect(broker.getCrudHooks('loaded.widget', 'create')).toBeDefined();
+        expect(broker.getCrudHooks('loaded.widget', 'update')).toBeUndefined();
+        expect(broker.getCrudHooks('loaded.widget', 'find')).toBeUndefined();
+    });
+
+    it('falls back to `resolve` when the map has no entry -- the unbundled case', async () => {
+        const asked: string[] = [];
+        await broker.loadDomain('loaded', {}, {
+            resolve: async (contract) => {
+                // What an unbundled loader does: import the file the contract points at, and
+                // return the export it names.
+                asked.push(contract.filePath);
+                if (contract.action === 'listen') return async () => ({ started: true });
+                return async (params: { n: number }) => ({ doubled: params.n * 3 });
+            },
+        });
+
+        expect(asked).toContain('src/__tests__/core/handlers/custom.ts');
+        const out = await broker.call('loaded.custom', { n: 5 });
+        expect(out.doubled).toBe(15);
+    });
+
+    it('prefers the map over `resolve` when both could answer', async () => {
+        let resolveCalled = false;
+        await broker.loadDomain('loaded', handlers, {
+            resolve: async () => { resolveCalled = true; return async () => ({ doubled: 0 }); },
+        });
+
+        expect(resolveCalled).toBe(false);
+        expect((await broker.call('loaded.custom', { n: 4 })).doubled).toBe(8);
     });
 });

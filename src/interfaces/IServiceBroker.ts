@@ -123,7 +123,7 @@ export interface IServiceBroker {
         domain: string,
         handlers?: ContractHandlerMap,
         options?: {
-            hooks?: Record<string, { before?: CrudHookFn; after?: CrudHookFn }>;
+            resolve?: (contract: ToolContract<z.ZodTypeAny, z.ZodTypeAny>) => Promise<unknown>;
             replace?: boolean;
         },
     ): Promise<{ domain: string; contracts: string[] }>;

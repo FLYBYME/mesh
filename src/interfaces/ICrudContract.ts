@@ -409,6 +409,21 @@ export function defineCrud<
          */
         visibility?: Partial<Record<CrudActionKey, ContractVisibility>>,
         /**
+         * Per-action `before`/`after`, keyed exactly like `visibility`/`destructive`/`events`
+         * above, and forwarded onto each action's own contract.
+         *
+         * Declared here rather than passed when the collection is registered, so everything needed
+         * to mount it travels with it: a loader reads the contract and wires the hook, and no call
+         * site has to remember to pass one. `before` may return replacement params, `after` a
+         * replacement result; returning nothing leaves the value alone. Both receive the caller's
+         * real `ctx` -- scope included -- so `ctx.db(...)` inside a hook sees exactly what the
+         * caller would.
+         */
+        hooks?: Partial<Record<CrudActionKey, {
+            before?: (value: never, ctx: never) => Promise<unknown> | unknown;
+            after?: (value: never, ctx: never) => Promise<unknown> | unknown;
+        }>>,
+        /**
          * REQUIRED. Contract keys this collection's handlers depend on, as `domain.action` or a
          * bare `domain`. Pass `[]` for a leaf collection that calls nothing -- an empty array is
          * an answer, and the type system will not let you skip the question.
@@ -494,7 +509,7 @@ export function defineCrud<
 
     assertValidDependencies(options.dependencies, `defineCrud("${domain}")`);
     const dependencies = Object.freeze([...options.dependencies]);
-    const { filePath, permissions } = options;
+    const { filePath, permissions, hooks } = options;
 
     // Absent means internal. Spreading the caller's map over an all-internal base keeps that true
     // for every action they did not name, which is the default the whole change exists to set.
@@ -588,6 +603,7 @@ export function defineCrud<
         visibility: visibility.find,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.find,
         print: defaultPrint
     });
 
@@ -604,6 +620,7 @@ export function defineCrud<
         visibility: visibility.findOne,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.findOne,
         print: defaultPrint
     });
 
@@ -620,6 +637,7 @@ export function defineCrud<
         visibility: visibility.count,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.count,
         print: defaultPrint
     });
 
@@ -636,6 +654,7 @@ export function defineCrud<
         visibility: visibility.get,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.get,
         print: defaultPrint
     });
 
@@ -652,6 +671,7 @@ export function defineCrud<
         visibility: visibility.resolve,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.resolve,
         print: defaultPrint
     });
 
@@ -668,6 +688,7 @@ export function defineCrud<
         visibility: visibility.create,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.create,
         print: defaultPrint
     });
 
@@ -684,6 +705,7 @@ export function defineCrud<
         visibility: visibility.createMany,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.createMany,
         print: defaultPrint
     });
 
@@ -700,6 +722,7 @@ export function defineCrud<
         visibility: visibility.update,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.update,
         print: defaultPrint
     });
 
@@ -716,6 +739,7 @@ export function defineCrud<
         visibility: visibility.replace,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.replace,
         print: defaultPrint
     });
 
@@ -732,6 +756,7 @@ export function defineCrud<
         visibility: visibility.delete,
         dependencies,
         filePath, concurrency: 'on-demand', permissions,
+        hooks: hooks?.delete,
         print: defaultPrint
     });
 
