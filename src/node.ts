@@ -14,5 +14,8 @@ export * from './db/TimeSeriesRepository.js';
 // Modules (Node-specific)
 export * from './modules/DatabaseModule.js';
 
+// Loading parts from disk -- what `loadDomain`'s `resolve` option wants when nothing is bundled.
+export * from './loader/handlerResolver.js';
+
 // Testing Utilities (Node-specific)
 export * from './testing/index.js';
