@@ -292,10 +292,25 @@ export class ServiceBroker implements IServiceBroker {
                     this.pendingRequests.delete(correlationId);
                     try {
                         if (packet.type === 'RESPONSE_ERROR') {
-                            const errorData = packet.error as { message?: string, data?: { stack?: string } };
-                            const err = new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error });
-                            if (errorData?.data?.stack) {
-                                err.stack = errorData.data.stack + '\n--- Remote Boundary ---\n' + err.stack;
+                            const errorData = packet.error as {
+                                message?: string; code?: string; status?: number;
+                                stack?: string; data?: { stack?: string };
+                            };
+
+                            // Rebuilt as a MeshError when the far side sent one, so a caller sees
+                            // the same error class and the same status it would have seen had the
+                            // handler run locally. Anything else stays a plain Error, unchanged.
+                            const err = typeof errorData?.code === 'string' && typeof errorData.status === 'number'
+                                ? new MeshError({
+                                    message: errorData.message ?? 'Remote RPC Error',
+                                    code: errorData.code,
+                                    status: errorData.status,
+                                })
+                                : new Error(errorData?.message || 'Remote RPC Error', { cause: packet.error });
+
+                            const remoteStack = errorData?.stack ?? errorData?.data?.stack;
+                            if (remoteStack !== undefined) {
+                                err.stack = remoteStack + '\n--- Remote Boundary ---\n' + err.stack;
                             }
                             pending.reject(err);
                         } else {
@@ -314,11 +329,20 @@ export class ServiceBroker implements IServiceBroker {
                     }).catch(err => this.logger.error(`[ServiceBroker] Failed to send RESPONSE: ${err}`));
                 }).catch(err => {
                     const message = err instanceof Error ? err.message : String(err);
+                    // A MeshError's `code` and `status` travel too. Sending only the message meant
+                    // every meaningful status collapsed to 500 the moment a handler ran on another
+                    // node: the same call answered 404 locally and 500 remotely. Placement makes
+                    // where a handler runs a scheduling detail, so that difference had become both
+                    // routine and non-deterministic.
+                    const wire = err instanceof MeshError
+                        ? err.toJSON()
+                        : { message, data: { stack: err instanceof Error ? err.stack : undefined } };
+
                     this.network.send(packet.senderNodeID, packet.topic, { message }, {
                         type: 'RESPONSE_ERROR',
                         id: packet.id,
                         meta: { correlationID: packet.id },
-                        error: { message, data: { stack: err instanceof Error ? err.stack : undefined } }
+                        error: wire
                     }).catch(sendErr => this.logger.error(`[ServiceBroker] Failed to send RESPONSE_ERROR: ${sendErr}`));
                 });
             } else if (packet.type === 'EVENT') {
