@@ -123,6 +123,23 @@ export interface HandlerResolverOptions {
  * Pass `load` from the consuming package whenever handlers might be TypeScript -- see the option's
  * own note. Omitting it is right only when everything involved is compiled JavaScript.
  */
+/**
+ * Whether `err` means "this runtime cannot execute this candidate's format" -- the one case
+ * resolving should try the next candidate rather than fail. `ERR_UNKNOWN_FILE_EXTENSION` is
+ * Node's exact code when `import()` reaches a `.ts` file with no loader registered to transform
+ * it: a plain, untransformed `node dist/....js` process trying the *source* candidate, which
+ * `existsSync` alone cannot distinguish from a candidate that will actually load, because an
+ * ordinary install ships `src/` alongside `dist/` (so consumers can debug into real source) and
+ * the source file is therefore always genuinely present on disk. Nothing else is caught here: a
+ * real error inside the handler module itself (a bad import, a thrown top-level statement) must
+ * propagate as itself, not be swallowed and misreported as "not found" once every candidate is
+ * exhausted.
+ */
+function isUnsupportedModuleFormat(err: unknown): boolean {
+    return typeof err === 'object' && err !== null && 'code' in err
+        && (err as { code: unknown }).code === 'ERR_UNKNOWN_FILE_EXTENSION';
+}
+
 export function createHandlerResolver(
     options: HandlerResolverOptions,
 ): (contract: ToolContract) => Promise<unknown> {
@@ -130,17 +147,37 @@ export function createHandlerResolver(
 
     return async (contract: ToolContract): Promise<unknown> => {
         const candidates = handlerCandidates(root, contract.filePath, outDir);
-        const found = candidates.find((candidate) => fs.existsSync(candidate));
+        const existing = candidates.filter((candidate) => fs.existsSync(candidate));
 
-        if (found === undefined) {
+        if (existing.length === 0) {
             throw new Error(
                 `Handler for "${contract.domain}.${contract.action}" not found. Its contract declares filePath "${contract.filePath}"; looked for ${candidates.map((c) => `"${c}"`).join(' and ')}.`,
             );
         }
 
-        // pathToFileURL, not the bare path: Node's dynamic import() accepts an absolute POSIX path
-        // by convention rather than by spec, and a Windows host would refuse it outright.
-        const module = await load(pathToFileURL(found).href) as Record<string, unknown>;
-        return pickHandlerExport(module, contract.action, contract.filePath);
+        // Tried in order (source before compiled -- see handlerCandidates), not just the first
+        // that exists: existence alone found the source .ts candidate every time, even under a
+        // plain `node` process with no TypeScript loader, where loading it always throws. Load,
+        // don't just stat -- and only fall through to the next candidate for that one specific
+        // failure (isUnsupportedModuleFormat), so a genuine error inside the handler still surfaces
+        // as itself instead of a misleading "not found".
+        let lastError: unknown;
+        for (const candidate of existing) {
+            try {
+                // pathToFileURL, not the bare path: Node's dynamic import() accepts an absolute
+                // POSIX path by convention rather than by spec, and a Windows host would refuse it
+                // outright.
+                const module = await load(pathToFileURL(candidate).href) as Record<string, unknown>;
+                return pickHandlerExport(module, contract.action, contract.filePath);
+            } catch (err) {
+                if (!isUnsupportedModuleFormat(err)) throw err;
+                lastError = err;
+            }
+        }
+
+        throw new Error(
+            `Handler for "${contract.domain}.${contract.action}" exists on disk (${existing.map((c) => `"${c}"`).join(', ')}) but this runtime could not load any of them -- ` +
+            `no TypeScript loader is active, and there is no compiled fallback. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+        );
     };
 }

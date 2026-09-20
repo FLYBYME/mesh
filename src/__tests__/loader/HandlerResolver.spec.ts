@@ -164,4 +164,69 @@ describe('createHandlerResolver', () => {
         await resolve(contract('src/billing/tools/charge.ts'));
         expect(asked[0]).toContain('dist/billing/tools/charge.js');
     });
+
+    /**
+     * The real bug, reproduced with the real failure mode rather than a stub that always
+     * succeeds: `existing.length === 0` never fires here, because an ordinary install ships
+     * `src/` alongside `dist/` and the source candidate genuinely exists on disk. Every test above
+     * used a `load` that never rejects, which is exactly what let this ship -- the resolver picked
+     * the source candidate because it existed, not because anything could load it, and a plain
+     * `node dist/...` process (no TypeScript loader registered) failed outright on the very first
+     * candidate instead of ever trying the compiled one. Found live running a compiled
+     * `mesh-serve` binary with plain `node`, not tsx.
+     */
+    it('falls through to the compiled candidate when the source one exists but cannot be loaded by this runtime', async () => {
+        fs.writeFileSync(path.join(tmp, 'src/billing/tools/charge.ts'), '// unparseable without a TS loader');
+        fs.mkdirSync(path.join(tmp, 'dist', 'billing', 'tools'), { recursive: true });
+        fs.writeFileSync(path.join(tmp, 'dist/billing/tools/charge.js'), '');
+
+        const charge = async (): Promise<void> => {};
+        const asked: string[] = [];
+        const resolve = createHandlerResolver({
+            root: tmp,
+            load: async (url) => {
+                asked.push(url);
+                if (url.endsWith('.ts')) {
+                    const err = new Error(`Unknown file extension ".ts" for ${url}`);
+                    (err as { code?: string }).code = 'ERR_UNKNOWN_FILE_EXTENSION';
+                    throw err;
+                }
+                return { charge };
+            },
+        });
+
+        expect(await resolve(contract('src/billing/tools/charge.ts'))).toBe(charge);
+        expect(asked).toHaveLength(2);
+        expect(asked[0]).toContain('charge.ts');
+        expect(asked[1]).toContain('dist/billing/tools/charge.js');
+    });
+
+    it('does not swallow a real error inside the handler module -- only the unsupported-format one', async () => {
+        fs.writeFileSync(path.join(tmp, 'src/billing/tools/charge.ts'), '// present, but loading it throws for real');
+
+        const resolve = createHandlerResolver({
+            root: tmp,
+            load: async () => { throw new TypeError('a genuine bug inside the handler module'); },
+        });
+
+        await expect(resolve(contract('src/billing/tools/charge.ts')))
+            .rejects.toThrow(/a genuine bug inside the handler module/);
+    });
+
+    it('says every candidate existed but none could be loaded, when all of them fail the same way', async () => {
+        fs.writeFileSync(path.join(tmp, 'src/billing/tools/charge.ts'), '// no loader for this either');
+
+        const resolve = createHandlerResolver({
+            root: tmp,
+            load: async (url) => {
+                const err = new Error(`Unknown file extension ".ts" for ${url}`);
+                (err as { code?: string }).code = 'ERR_UNKNOWN_FILE_EXTENSION';
+                throw err;
+            },
+        });
+
+        await expect(resolve(contract('src/billing/tools/charge.ts'))).rejects.toThrow(
+            /exists on disk.*but this runtime could not load any of them/s,
+        );
+    });
 });
