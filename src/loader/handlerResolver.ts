@@ -95,6 +95,20 @@ export interface HandlerResolverOptions {
     readonly root: string;
     /** Where compiled output lives, when the declared source path does not exist. Default `dist`. */
     readonly outDir?: string;
+    /**
+     * Performs the actual import. **Pass `(url) => import(url)` from the consuming package** when
+     * anything might resolve to TypeScript.
+     *
+     * Who performs the import turns out to matter. Under a transform-based runtime -- tsx, vitest,
+     * ts-node -- only modules inside that runtime's own graph get transformed. A dynamic `import()`
+     * executed from here runs from inside `node_modules`, outside that graph, and Node refuses a
+     * `.ts` target with "Unknown file extension". The same call written in the consuming package
+     * works, because the runtime sees it.
+     *
+     * The default is correct whenever both sides are compiled JavaScript, which is every ordinary
+     * production install.
+     */
+    readonly load?: (url: string) => Promise<unknown>;
 }
 
 /**
@@ -102,14 +116,17 @@ export interface HandlerResolverOptions {
  *
  * ```ts
  * const root = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
- * const resolve = createHandlerResolver({ root });
+ * const resolve = createHandlerResolver({ root, load: (url) => import(url) });
  * await broker.loadDomain('billing', {}, { resolve });
  * ```
+ *
+ * Pass `load` from the consuming package whenever handlers might be TypeScript -- see the option's
+ * own note. Omitting it is right only when everything involved is compiled JavaScript.
  */
 export function createHandlerResolver(
     options: HandlerResolverOptions,
 ): (contract: ToolContract) => Promise<unknown> {
-    const { root, outDir = 'dist' } = options;
+    const { root, outDir = 'dist', load = (url: string): Promise<unknown> => import(url) } = options;
 
     return async (contract: ToolContract): Promise<unknown> => {
         const candidates = handlerCandidates(root, contract.filePath, outDir);
@@ -123,7 +140,7 @@ export function createHandlerResolver(
 
         // pathToFileURL, not the bare path: Node's dynamic import() accepts an absolute POSIX path
         // by convention rather than by spec, and a Windows host would refuse it outright.
-        const module = await import(pathToFileURL(found).href) as Record<string, unknown>;
+        const module = await load(pathToFileURL(found).href) as Record<string, unknown>;
         return pickHandlerExport(module, contract.action, contract.filePath);
     };
 }

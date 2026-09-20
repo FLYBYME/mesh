@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { findPackageRoot, handlerCandidates, pickHandlerExport } from '../../loader/handlerResolver.js';
+import { createHandlerResolver, findPackageRoot, handlerCandidates, pickHandlerExport } from '../../loader/handlerResolver.js';
+import type { ToolContract } from '../../interfaces/IToolContract.js';
 
 /**
  * The resolver every repo migrating onto contract-driven placement needs: turn a contract's
@@ -101,5 +102,66 @@ describe('pickHandlerExport', () => {
     it('says the module exports nothing callable, rather than failing later', () => {
         expect(() => pickHandlerExport({ SCHEMA: {} }, 'charge', 'f.ts'))
             .toThrow(/exports no function/);
+    });
+});
+
+describe('createHandlerResolver', () => {
+    let tmp = '';
+
+    const contract = (filePath: string, action = 'charge'): ToolContract =>
+        ({ domain: 'billing', action, filePath }) as unknown as ToolContract;
+
+    beforeEach(() => {
+        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mesh-resolver-load-'));
+        fs.writeFileSync(path.join(tmp, 'package.json'), '{}');
+        fs.mkdirSync(path.join(tmp, 'src', 'billing', 'tools'), { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('uses the caller\'s own importer, which is what makes TypeScript handlers work', async () => {
+        // Who performs the import matters. Under a transform-based runtime -- tsx, vitest --
+        // only modules inside that runtime's graph get transformed, so a dynamic import() run
+        // from inside node_modules refuses a .ts target outright. The consuming package passes
+        // its own `load` for exactly this reason; found by hoisting this resolver out of
+        // mesh-serve and watching every integration test fail on "Unknown file extension .ts".
+        const handlerPath = path.join(tmp, 'src/billing/tools/charge.ts');
+        fs.writeFileSync(handlerPath, '// would not import from here under a plain runtime');
+
+        const charge = async (): Promise<string> => 'charged';
+        const asked: string[] = [];
+        const resolve = createHandlerResolver({
+            root: tmp,
+            load: async (url) => { asked.push(url); return { charge }; },
+        });
+
+        expect(await resolve(contract('src/billing/tools/charge.ts'))).toBe(charge);
+        expect(asked[0]).toMatch(/^file:\/\//);
+        expect(asked[0]).toContain('charge.ts');
+    });
+
+    it('names both places it looked when the handler is missing', async () => {
+        const resolve = createHandlerResolver({ root: tmp, load: async () => ({}) });
+
+        await expect(resolve(contract('src/billing/tools/nope.ts'))).rejects.toThrow(
+            /billing\.charge.*declares filePath "src\/billing\/tools\/nope\.ts".*looked for.*and/s,
+        );
+    });
+
+    it('falls back to the compiled path when the source is not there', async () => {
+        fs.mkdirSync(path.join(tmp, 'dist', 'billing', 'tools'), { recursive: true });
+        fs.writeFileSync(path.join(tmp, 'dist/billing/tools/charge.js'), '');
+
+        const charge = async (): Promise<void> => {};
+        const asked: string[] = [];
+        const resolve = createHandlerResolver({
+            root: tmp,
+            load: async (url) => { asked.push(url); return { charge }; },
+        });
+
+        await resolve(contract('src/billing/tools/charge.ts'));
+        expect(asked[0]).toContain('dist/billing/tools/charge.js');
     });
 });
