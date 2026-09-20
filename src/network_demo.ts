@@ -6,9 +6,9 @@ async function main() {
     const broker = new ServiceBroker('node-1', logger);
     await broker.start();
 
-    // Register demo tool module
-    const { DemoSkill } = await import('./examples/demo/demo.service.js');
-    await broker.registerModule(new DemoSkill());
+    // Register the demo part
+    const { register: registerDemo } = await import('./examples/demo/demo.service.js');
+    registerDemo(broker);
 
     // Try to call the weather tool
     try {

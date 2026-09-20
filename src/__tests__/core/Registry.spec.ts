@@ -1,7 +1,7 @@
 import { Registry } from '../../core/Registry.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
-import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { demoContracts } from '../../examples/demo/demo.contract.js';
 import type { NodeInfo } from '../../interfaces/IMeshNetwork.js';
 import { idToBigInt, xorDistance } from '../../core/KademliaRoutingTable.js';
 
@@ -201,10 +201,9 @@ describe('Registry', () => {
 
     // ─── local module registration ──────────────────────────────────────────
 
-    describe('registerLocalModule()', () => {
-        it('should register module tools on the local node', () => {
-            const demoSkill = new DemoSkill();
-            registry.registerLocalModule(demoSkill);
+    describe('registerContract()', () => {
+        it('should advertise a contract on the local node', () => {
+            for (const contract of demoContracts) registry.registerContract(contract);
 
             const nodes = registry.findNodesForTool('demo.hello');
             expect(nodes.length).toBeGreaterThanOrEqual(1);
@@ -217,8 +216,7 @@ describe('Registry', () => {
 
     describe('selectNode()', () => {
         it('should prefer local node when preferLocal is true', () => {
-            const demoSkill = new DemoSkill();
-            registry.registerLocalModule(demoSkill);
+            for (const contract of demoContracts) registry.registerContract(contract);
 
             // Also add a remote node with the same tool
             registry.registerNode(createNodeInfo('remote-demo', [

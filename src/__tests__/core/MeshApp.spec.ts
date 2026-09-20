@@ -2,7 +2,7 @@ import { MeshApp } from '../../core/MeshApp.js';
 import { RegistryModule } from '../../modules/RegistryModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { DatabaseModule } from '../../modules/DatabaseModule.js';
-import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { register as registerDemo } from '../../examples/demo/demo.service.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { IServiceRegistry } from '../../interfaces/IServiceRegistry.js';
 import { Database } from '../../db/Database.js';
@@ -83,7 +83,7 @@ describe('MeshApp', () => {
             app.use(new DatabaseModule({ uri: baseUri, dbName: TEST_DB_NAME }));
 
             await app.start();
-            await app.registerModule(new DemoSkill());
+            registerDemo(app.getProvider<IServiceBroker>('broker'));
 
             const result = await app.call('demo.hello', { name: 'AppTest' });
             expect(result.message).toBe('Hello, AppTest! Event dispatched and metric recorded!');
@@ -110,7 +110,7 @@ describe('MeshApp', () => {
             app.use(new DatabaseModule({ uri: baseUri, dbName: TEST_DB_NAME }));
 
             await app.start();
-            await app.registerModule(new DemoSkill());
+            registerDemo(app.getProvider<IServiceBroker>('broker'));
 
             await app.call('demo.hello', { name: 'Queue' });
             expect(order).toContain('queued-mw');

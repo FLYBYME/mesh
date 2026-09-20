@@ -5,7 +5,8 @@ import { NetworkModule } from './modules/NetworkModule.js';
 import { BrokerModule } from './modules/BrokerModule.js';
 import { WSTransport } from './transports/node/WSTransport.js';
 import { JSONSerializer } from './serializers/JSONSerializer.js';
-import { DemoSkill } from './examples/demo/demo.service.js';
+import { register as registerDemo } from './examples/demo/demo.service.js';
+import type { IServiceBroker } from './interfaces/IServiceBroker.js';
 import { LogLevel } from './browser.js';
 
 async function main() {
@@ -30,8 +31,7 @@ async function main() {
     }));
     app1.use(new BrokerModule());
 
-    // Register Demo skill on node-1
-    await app1.registerModule(new DemoSkill());
+    // Registered after start(), below -- a part registers against a live broker.
 
     // ─────────────────────────────────────────────────────────────────────────
     // 2. SETUP NODE 2 (Relay Node)
@@ -77,6 +77,7 @@ async function main() {
     // ─────────────────────────────────────────────────────────────────────────
     logger.info('[Demo] Starting Node 1 Network...');
     await app1.start();
+    registerDemo(app1.getProvider<IServiceBroker>('broker'));
 
     logger.info('[Demo] Starting Node 2 Network...');
     await app2.start();

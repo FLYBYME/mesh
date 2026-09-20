@@ -38,19 +38,17 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             return await next();
         }
 
-        // Split on the *last* dot, not `domain.length + 1`: `domain` here is the contract's real
-        // domain (from MeshToolSchemaRegistry), but `toolKey` is the *effective* key a mount-key
-        // alias may have prefixed (e.g. `test:widget.create` for schemaReg.domain === 'widget') --
-        // `domain` is no longer guaranteed to be an exact, immediate prefix of `toolKey` once
-        // registerModule's `key` option is in play. An action name never contains a literal '.'
-        // (dots are reserved as the domain/action separator everywhere in this framework), so the
-        // last dot is always the real split point, aliased or not.
+        // Split on the *last* dot, not `domain.length + 1`. A domain is itself dotted
+        // (`serve.part.create`), so counting forward from the domain is fragile in a way this
+        // isn't: an action name never contains a literal '.' -- dots are reserved as the
+        // domain/action separator everywhere in this framework -- so the last dot is always the
+        // real split point.
         const action = toolKey.substring(toolKey.lastIndexOf('.') + 1);
-        // A mount-keyed instance registered with its own `database` (registerModule's
-        // `options.database`) routes its CRUD/time-series calls there instead of this
-        // middleware's shared default -- e.g. an isolated test database for a test-mounted
-        // instance, never touching the same collections as the real one. Falls back to the
-        // shared `db` for every mount that didn't ask for an override (unchanged behavior).
+        // A contract registered with its own `database` (`registerContract`'s `options.database`,
+        // which `loadDomain` and `registerCrud` forward to every action in the collection) routes
+        // its CRUD/time-series calls there instead of this middleware's shared default -- e.g. one
+        // domain living in a different Mongo connection or dbName. Falls back to the shared `db`
+        // for everything that didn't ask for an override.
         const effectiveDb = broker.getDatabaseForTool(toolKey) ?? db;
 
         if (schemaReg.isTimeSeries) {

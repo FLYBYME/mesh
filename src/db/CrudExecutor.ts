@@ -373,9 +373,10 @@ export class CrudExecutor {
      * called, never re-suppliable per method call -- the same discipline every other capability on
      * `IServiceContext` already holds.
      *
-     * `getDatabaseForTool` uses a representative `${domain}.get` key -- an instance-database
-     * override (`registerModule`'s `options.database`) is per-*mount*, not per-action, so any of the
-     * domain's own action keys resolves the identical override `ctx.call()` would have used.
+     * `getDatabaseForTool` uses a representative `${domain}.get` key. The override itself is
+     * per-*contract* (`registerContract`'s `options.database`), but every path that sets one --
+     * `loadDomain` and `registerCrud` -- applies it to every action in the collection, so any of
+     * the domain's own action keys resolves the identical override `ctx.call()` would have used.
      */
     public static makeCrudRepo<D extends keyof IServiceCollectionRegistry & string>(
         broker: IServiceBroker,

@@ -106,9 +106,7 @@ describe('a whole service, standalone (no ServiceModule)', () => {
         eventsSeen.length = 0;
     });
 
-    it('serves CRUD with no module mounted for the domain at all', async () => {
-        expect(broker.getModule('standalonewidget')).toBeUndefined();
-
+    it('serves CRUD from the contracts alone, with nothing else mounted for the domain', async () => {
         const created = await broker.call('standalonewidget.create', { label: 'first' }, acme);
         expect(created.id).toBeTruthy();
 

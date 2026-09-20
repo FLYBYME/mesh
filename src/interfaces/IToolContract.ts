@@ -360,8 +360,8 @@ export class ContractRegistry {
     }
 
     /**
-     * The other half `register`'s first-write-wins guard needs and never had: a module that stops
-     * (ServiceBroker.unregisterModule) leaves its entries here forever, so a later rebuild-and-
+     * The other half `register`'s first-write-wins guard needs and never had: a contract that is
+     * unmounted (ServiceBroker.unregisterContract) leaves its entry here forever, so a rebuild-and-
      * restart of the same service registers a fresh, correct contract object that `register` then
      * silently discards in favor of the stale one -- `update`/`delete` visibility flipped `public`
      * in source stayed `internal` here indefinitely, no matter how many times the service was

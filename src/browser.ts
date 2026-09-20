@@ -5,7 +5,6 @@ export { z };
 export * from './core/MeshNetwork.js';
 export * from './core/Registry.js';
 export * from './core/ServiceBroker.js';
-export * from './core/ServiceModule.js';
 export * from './core/MeshApp.js';
 export * from './core/ContextStack.js';
 export * from './core/MeshError.js';
@@ -26,7 +25,6 @@ export * from './interfaces/IToolContract.js';
 export * from './interfaces/ICrudContract.js';
 export * from './interfaces/IEventContract.js';
 export * from './interfaces/IServiceContext.js';
-export * from './interfaces/IServiceModule.js';
 
 // Interceptors
 export * from './interceptors/index.js';

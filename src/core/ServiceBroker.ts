@@ -10,12 +10,12 @@ import type { IBrokerPlugin } from '../interfaces/IBrokerPlugin.js';
 import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
-import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry, type ToolContract } from '../interfaces/IToolContract.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
+import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -59,7 +59,7 @@ export const MeshToolSchemaRegistry: Map<string, {
 
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
 
-/** One side of a CRUD hook -- the same shape `ServiceModule.mountCrudHook` already takes. */
+/** One side of a CRUD hook -- the shape `registerCrudHook` and `defineCrud`'s `hooks` both take. */
 export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
 export class ServiceBroker implements IServiceBroker {
@@ -126,7 +126,6 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     private localTools = new Map<string, LocalTool>();
-    private modules: IServiceModule[] = [];
     private isStarted: boolean = false;
     // ── ctx.signal, and the two lifetimes it can have ────────────────────────────────────────
     // A `long-running`/`interval` contract's signal belongs to its *registration*: one controller
@@ -151,36 +150,13 @@ export class ServiceBroker implements IServiceBroker {
     // cause one load, not twenty -- and the nineteen that arrive second should wait for it rather
     // than failing while it is in progress.
     private placementInFlight = new Map<string, Promise<string | undefined>>();
-    // registerModule's event subscriptions use an inline closure per handler, so nothing
-    // keeps a reference to hand back to EventEmitter#off later -- without this, unregisterModule
-    // has no way to remove only this module's listeners. Keyed by mount key (see below).
-    private moduleEventListeners = new Map<string, Array<{ event: string; listener: (...args: unknown[]) => void }>>();
-    // mountKey defaults to the module's own `domain`, but registerModule's `key` option lets a
-    // second instance of the *same* domain coexist on one broker under a different local address
-    // (e.g. a test-namespace instance mounted alongside the real one). `aliased` records whether
-    // this entry used its real domain (and therefore was advertised to the Registry for remote
-    // discovery) or an override key (which is never advertised -- it's local-only by construction,
-    // so it can never collide with the real instance's Registry entry or be routed to remotely).
-    // `database`, when passed, lets this specific mount's CRUD/time-series calls route to a
-    // different Database (a different Mongo connection/dbName) than DatabaseModule's single
-    // broker-wide default -- e.g. a test-mounted instance backed by an isolated test database,
-    // never touching production data. Unset (the default for every existing caller) falls back
-    // to that shared default, unchanged.
-    private mountedModules = new Map<string, { module: IServiceModule; aliased: boolean; database?: Database }>();
-    // toolKey ("<effectiveDomain>.<action>", see effectiveToolDomain) -> the mount key that
-    // registered it. DatabaseMiddleware uses this to resolve which mount (and therefore which
-    // Database override, if any) a given CRUD/time-series call actually belongs to.
-    private toolMountKeys = new Map<string, string>();
     // toolKey -> a Database other than the broker-wide default, for that one tool. See
     // getDatabaseForTool.
     private toolDatabases = new Map<string, Database>();
-    // Contracts mounted on their own via `registerContract` -- no module, no mount key. Tracked
-    // separately from `mountedModules` so `unregisterContract` can tear exactly one of them down
-    // without touching a module's grouped mount, and so the two can never be confused for each
-    // other during the migration off `ServiceModule`.
+    // Every contract mounted on this broker, by tool key -- `registerContract` puts them here and
+    // `unregisterContract` takes exactly one back out.
     private standaloneContracts = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
-    // `<domain>.<action>` -> hooks registered without a module (registerCrudHook). Checked before a
-    // module's own, so a half-migrated domain runs each hook exactly once.
+    // `<domain>.<action>` -> CRUD hooks (registerCrudHook, or a contract's own `hooks`).
     private standaloneCrudHooks = new Map<string, { before?: CrudHook; after?: CrudHook }>();
     private standaloneEventHandlers: { name: string; listener: (data: unknown, packet?: IMeshPacket) => void }[] = [];
 
@@ -222,24 +198,6 @@ export class ServiceBroker implements IServiceBroker {
 
     public getProvider<T>(name: string): T {
         return this.providers.get(name) as T;
-    }
-
-    /**
-     * A module can own contracts (and therefore CRUD hooks) under a domain other than its own --
-     * the class comment above already documents this ("`demo` also mounts `demometrics.*`"), and
-     * mountCrudHook is meant to work the same way: `mountCrudHook('serve.part', 'create', ...)`
-     * inside a module whose own `domain` is `'serve.catalog'` is exactly that pattern.
-     *
-     * The exact-`domain` match was the only lookup, so DatabaseMiddleware's
-     * `const module = broker.getModule(domain); if (module) { await module.beforeCrud(...) }`
-     * silently found nothing for any such secondary domain -- not an error, just a hook that
-     * never ran. Checked second (the common case, one module registered under its own real
-     * domain, still resolves without scanning every module's contract list).
-     */
-    public getModule(domain: string): IServiceModule | undefined {
-        const exact = this.modules.find(m => m.domain === domain);
-        if (exact) return exact;
-        return this.modules.find(m => m.getContracts().some(c => c.domain === domain));
     }
 
     /**
@@ -394,95 +352,7 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * effectiveToolDomain: computes the real local key a contract's domain resolves to, given
-     * the module's mount key. Unaliased (mountKey === domain), this is always just
-     * `contractDomain` unchanged -- identical to the pre-mount-key behavior. Aliased, the
-     * module's own primary domain is replaced by the mount key; any other domain the same module
-     * owns (a secondary domain like `demometrics` alongside `demo`) is namespaced under the mount
-     * key instead of colliding with another mounted instance's own secondary-domain tools.
-     */
-    private effectiveToolDomain(mountKey: string, domain: string, contractDomain: string): string {
-        if (mountKey === domain) return contractDomain;
-        return contractDomain === domain ? mountKey : `${mountKey}:${contractDomain}`;
-    }
-
-    public async registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<void> {
-        const domain = module.domain;
-        if (!domain) throw new Error('[ServiceBroker] Module domain must be provided');
-
-        const mountKey = options?.key ?? domain;
-        const aliased = mountKey !== domain;
-        // Only an *aliased* mount key can conflict -- this is a genuinely new address nothing
-        // used to be able to claim, so requiring it be free is a real, new safety guarantee with
-        // no prior behavior to preserve. The unaliased (default) path must NOT gain this check:
-        // multiple distinct modules sharing one real `domain`, each contributing different,
-        // non-overlapping actions to that domain's tool namespace, is an existing, load-bearing
-        // pattern elsewhere (e.g. `S3Service` + `S3EdgeService`, both `domain: 's3'`) that always
-        // silently coexisted -- rejecting it here would be a real regression, not a new guarantee.
-        if (aliased && this.mountedModules.has(mountKey)) {
-            throw new Error(`[ServiceBroker] Cannot register module: mount key "${mountKey}" is already in use`);
-        }
-
-        this.logger.info(`[ServiceBroker] Registering module: ${domain}${aliased ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
-        this.modules.push(module);
-        this.mountedModules.set(mountKey, { module, aliased, database: options?.database });
-
-        if (module.onInit) {
-            await module.onInit(this);
-        }
-
-        const contracts = module.getContracts();
-        this.logger.debug(`[ServiceBroker] Module '${domain}' has ${contracts.length} contracts`);
-
-        for (const contract of contracts) {
-            // A module can own contracts across more than one real domain (e.g. `demo` also
-            // mounts `demometrics.*`). Unaliased, this reduces to exactly `contract.domain` --
-            // no behavior change. Aliased, only the module's own primary domain gets renamed to
-            // the mount key; any other domain the module owns is prefixed `<mountKey>:<domain>`
-            // instead, so a second mounted instance can't collide with the first instance's
-            // secondary-domain tools either.
-            const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
-            const toolKeyStr = `${toolDomain}.${contract.action}`;
-            this.toolMountKeys.set(toolKeyStr, mountKey);
-
-            this.wireLocalTool(toolKeyStr, contract, domain, (params, serviceCtx) =>
-                module.execute(contract.domain, contract.action, params, serviceCtx as never));
-            this.logger.info(`[ServiceBroker] Tool registered successfully: ${toolKeyStr}`);
-        }
-
-        // An aliased mount is local-only by construction: it never touches the Registry, so it
-        // can never collide with (or be routed to remotely instead of) the real instance's entry.
-        if (this.registry && mountKey === domain) {
-            this.registry.registerModule(module);
-        }
-
-        // Subscribe declarative event handlers
-        if (typeof module.getEventHandlers === 'function') {
-            const eventHandlers = module.getEventHandlers();
-            for (const [name, handler] of eventHandlers.entries()) {
-                this.logger.info(`[ServiceBroker] Subscribing service ${domain} (mount key: ${mountKey}) to event: ${String(name)}`);
-                const listener = (data: unknown, packet?: IMeshPacket) => {
-                    const ctx = this.makeEventContext(packet);
-                    void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
-                        this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
-                    });
-                };
-                this.localEvents.on(name as string, listener);
-                const tracked = this.moduleEventListeners.get(mountKey) ?? [];
-                tracked.push({ event: name as string, listener: listener as (...args: unknown[]) => void });
-                this.moduleEventListeners.set(mountKey, tracked);
-            }
-        }
-
-        if (this.isStarted && module.onStart) {
-            await module.onStart(this);
-        }
-    }
-
-    /**
-     * The `IServiceContext` an event subscriber receives -- shared by module-mounted handlers
-     * (`registerModule`) and standalone ones (`registerEventHandler`), so a subscriber sees exactly
-     * the same context either way.
+     * The `IServiceContext` an event subscriber receives (`registerEventHandler`).
      */
     private makeEventContext(packet?: IMeshPacket): Record<string, unknown> {
         return {
@@ -519,17 +389,13 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * The per-contract half of mounting, shared by `registerModule` (which calls it once per
-     * contract a module declares) and `registerContract` (one standalone contract, no module).
-     * Everything here is identical either way -- the schema registry entry, the `serviceCtx` a
-     * handler receives, the `leaderScoped` redirect -- so the two paths cannot drift: the only
-     * difference is `dispatch`, which is `module.execute(...)` for the former and the contract's
-     * own handler function for the latter.
+     * The per-contract half of mounting: the schema registry entry, the `serviceCtx` a handler
+     * receives, the `leaderScoped` redirect. `registerContract` is its only caller.
      *
-     * `leaderDomain` is separate from `contract.domain` on purpose: a module can own contracts
-     * across more than one real domain (serve.catalog mounts serve.repo/serve.part/...), and
+     * `leaderDomain` is separate from `contract.domain` on purpose: a part can own contracts
+     * across more than one real domain (serve.catalog owns serve.repo/serve.part/...), and
      * `leaderFor` has to be asked about the domain that's actually *advertised*, not the contract's
-     * own sub-domain. For a standalone contract the two are the same thing.
+     * own sub-domain. Usually the two are the same thing.
      */
     private wireLocalTool(
         toolKeyStr: string,
@@ -620,17 +486,10 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * Mounts one contract and its handler directly -- no `IServiceModule` wrapper, no class, no
-     * grouping. This is the broker-side counterpart to `PlacementRegistry.registerContract`
-     * (`core/PlacementRegistry.ts`), and together they're what "every contract stands alone"
-     * (docs/CONTRACT_DRIVEN_PLACEMENT.md) actually requires: a contract can now be loaded, mounted,
-     * routed to, and unmounted entirely on its own.
-     *
-     * Registry advertisement goes through `registerContract` when the active registry supports it
-     * (PlacementRegistry), so a single contract appears in presence data without a module having to
-     * declare it. Against the legacy `Registry`, which only knows how to advertise whole modules,
-     * the contract is still fully callable *locally* -- it just isn't advertised to peers, which is
-     * the honest behavior rather than silently pretending otherwise.
+     * Mounts one contract and its handler -- no wrapper, no class, no grouping. This is the
+     * broker-side counterpart to `IServiceRegistry.registerContract`, and together they're what
+     * "every contract stands alone" (docs/CONTRACT_DRIVEN_PLACEMENT.md) actually requires: a
+     * contract can be loaded, mounted, advertised, routed to, and unmounted entirely on its own.
      */
     public registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
@@ -639,7 +498,7 @@ export class ServiceBroker implements IServiceBroker {
     ): void {
         const toolKeyStr = `${contract.domain}.${contract.action}`;
         // Refusing by default is deliberate, and immediately worth it: it surfaced a real collision
-        // that `ServiceModule.mountTool`'s plain Map had been resolving silently by last-write-wins
+        // that the old `ServiceModule.mountTool`'s plain Map had resolved silently by last-write-wins
         // (`identity.ticket.resolve` -- a hand-written contract landing on the same key as the one
         // `defineCrud` generates for that collection, with entirely different semantics). An
         // intentional override is still fine; it just has to say so.
@@ -668,10 +527,7 @@ export class ServiceBroker implements IServiceBroker {
             this.registerCrudHook(asAny.domain, asAny.action, asAny.hooks as { before?: CrudHook; after?: CrudHook });
         }
 
-        const registry = this.registry as (IServiceRegistry & { registerContract?: (c: ToolContract) => void }) | undefined;
-        if (registry?.registerContract) {
-            registry.registerContract(asAny as ToolContract);
-        }
+        this.registry?.registerContract(asAny as ToolContract);
 
         // An interval contract's timer starts as soon as it is mounted on a running broker --
         // mounting it *is* scheduling it. On a broker that hasn't started yet it waits for start(),
@@ -687,8 +543,8 @@ export class ServiceBroker implements IServiceBroker {
     /**
      * `registerContract`'s other half -- unmounts exactly one contract, leaving every sibling
      * contract under the same domain untouched. That granularity is the point: a standalone
-     * on-demand contract has to be evictable on its own, not only as part of tearing a whole
-     * module down (`unregisterModule`).
+     * on-demand contract has to be evictable on its own, not only as part of tearing down every
+     * contract a domain mounted.
      */
     public unregisterContract(toolKeyStr: string): void {
         const contract = this.standaloneContracts.get(toolKeyStr);
@@ -715,10 +571,7 @@ export class ServiceBroker implements IServiceBroker {
         this.standaloneContracts.delete(toolKeyStr);
         this.toolDatabases.delete(toolKeyStr);
 
-        const registry = this.registry as (IServiceRegistry & { unregisterContract?: (key: string) => void }) | undefined;
-        if (registry?.unregisterContract) {
-            registry.unregisterContract(toolKeyStr);
-        }
+        this.registry?.unregisterContract(toolKeyStr);
 
         this.logger.info(`[ServiceBroker] Contract unregistered: ${toolKeyStr}`);
     }
@@ -830,13 +683,13 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * Mounts a whole CRUD collection standalone -- `defineCrud`'s generated actions, no
-     * `ServiceModule` subclass calling `mountCrud`. Each action is wired exactly as a module-mounted
-     * one is, including the same deliberately-unreachable dispatch: `DatabaseMiddleware` intercepts
-     * every CRUD call before it ever reaches a handler, so a handler that actually *runs* means the
-     * middleware isn't installed, and saying so loudly beats returning nothing quietly.
+     * Mounts a whole CRUD collection -- every action `defineCrud` generated, in one call. Each is
+     * wired like any other contract, including a deliberately-unreachable dispatch:
+     * `DatabaseMiddleware` intercepts every CRUD call before it ever reaches a handler, so a
+     * handler that actually *runs* means the middleware isn't installed, and saying so loudly beats
+     * returning nothing quietly.
      *
-     * `hooks` is the standalone equivalent of `mountCrudHook` -- see `registerCrudHook`.
+     * `hooks` is a shorthand for calling `registerCrudHook` per action.
      */
     public registerCrud(
         crud: AnyCrudContracts,
@@ -863,10 +716,30 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * The standalone equivalent of `ServiceModule.mountCrudHook`. `CrudExecutor` resolves hooks
-     * through `getCrudHooks` below, which checks these first and falls back to a module's own --
-     * so a domain can be half-migrated (some hooks standalone, the rest still on a module) without
-     * either set going silently unrun.
+     * Mounts a whole time-series collection, the counterpart to `registerCrud`.
+     *
+     * Every action gets the same deliberately-unreachable handler: `DatabaseMiddleware` intercepts
+     * a time-series call before it ever reaches one, so a handler that actually *runs* means the
+     * middleware isn't installed, and saying so loudly beats returning nothing quietly.
+     */
+    public registerTimeSeries(contracts: AnyTimeSeriesContracts, options?: { database?: Database }): void {
+        const keys = ['insert', 'query', 'aggregate', 'latest'] as const;
+        for (const key of keys) {
+            const contract = contracts[key];
+            if (contract && typeof contract === 'object' && 'domain' in contract && 'action' in contract) {
+                const tool = contract as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
+                this.registerContract(tool, async () => {
+                    throw new Error(`Engine Error: Time Series action "${tool.action}" for domain "${tool.domain}" was not intercepted.`);
+                }, options?.database !== undefined ? { database: options.database } : undefined);
+            }
+        }
+    }
+
+    /**
+     * Registers the before/after pair for one CRUD action. `CrudExecutor` resolves them through
+     * `getCrudHooks` below. A contract's own `hooks` (see `defineCrud`) lands here too, wired by
+     * `registerContract` wherever the contract mounts -- so there is no separate registration step
+     * anyone can forget, and no second place a hook can hide.
      */
     public registerCrudHook(domain: string, action: string, hooks: { before?: CrudHook; after?: CrudHook }): void {
         this.standaloneCrudHooks.set(`${domain}.${action}`, hooks);
@@ -876,8 +749,8 @@ export class ServiceBroker implements IServiceBroker {
      * Mounts every contract a domain declares, wiring each to the handler its own `filePath` points
      * at -- the replacement for a hand-written `register(broker)` listing them one by one.
      *
-     * That listing was `ServiceModule`'s constructor with different syntax: it reconstructed, by
-     * hand, a contract-to-handler mapping the contracts already carry. Here nothing is enumerated.
+     * That listing was the old `ServiceModule` constructor with different syntax: it reconstructed,
+     * by hand, a contract-to-handler mapping the contracts already carry. Here nothing is enumerated.
      * The contracts come from `globalContractRegistry` (populated at import time by
      * `defineContract`), and `handlers` is a lookup keyed by tool key, which callers generate from
      * those same declarations rather than writing out. A precompiled bundle has no separate files
@@ -967,27 +840,16 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * Resolves the before/after hooks for one CRUD action, from whichever registration style owns
-     * them. Standalone hooks win over a module's, so a migrated hook genuinely replaces the one it
-     * was migrated from rather than both running.
+     * Resolves the before/after hooks for one CRUD action -- registered either by
+     * `registerCrudHook` or by the contract's own `hooks` (see `defineCrud`), which is wired
+     * through the same map at registration time.
      */
     public getCrudHooks(domain: string, action: string): { before?: CrudHook; after?: CrudHook } | undefined {
-        const standalone = this.standaloneCrudHooks.get(`${domain}.${action}`);
-        if (standalone) return standalone;
-
-        const module = this.getModule(domain);
-        if (!module) return undefined;
-        // A module dispatches its own hooks internally (and returns the input/output unchanged when
-        // it has none), so this adapts that shape rather than reaching into its private map.
-        return {
-            before: (input, ctx) => module.beforeCrud(domain, action, input, ctx),
-            after: (output, ctx) => module.afterCrud(domain, action, output, ctx),
-        };
+        return this.standaloneCrudHooks.get(`${domain}.${action}`);
     }
 
     /**
-     * The standalone equivalent of `ServiceModule.mountEventHandler` -- subscribes one handler,
-     * with the same `IServiceContext` a module-mounted subscriber receives.
+     * Subscribes one event handler, with the same `IServiceContext` a tool handler receives.
      */
     public registerEventHandler<K extends keyof EventRegistry>(
         name: K,
@@ -1003,79 +865,6 @@ export class ServiceBroker implements IServiceBroker {
         // broker's own public `on`, whose key type is the generated EventRegistry.
         this.localEvents.on(name as string, listener);
         this.standaloneEventHandlers.push({ name: name as string, listener });
-    }
-
-    /**
-     * unregisterModule: the real, missing other half of registerModule. Nothing before this
-     * called module.onStop, so a service's own setInterval/setTimeout/caches/sockets were never
-     * actually released -- registerModule's onStop hook existed on the interface but had no
-     * corresponding teardown path that invoked it for a live, already-registered module. Order
-     * matters: onStop runs first, before any broker/registry bookkeeping is touched, so the
-     * module still sees a fully-functional broker (able to call other services, etc.) while it
-     * cleans itself up.
-     */
-    public async unregisterModule(mountKey: string): Promise<void> {
-        const entry = this.mountedModules.get(mountKey);
-        if (!entry) {
-            throw new Error(`[ServiceBroker] Cannot unregister module '${mountKey}': not registered`);
-        }
-        const { module, aliased } = entry;
-        const domain = module.domain;
-
-        this.logger.info(`[ServiceBroker] Unregistering module: ${domain}${aliased ? ` (mount key: ${mountKey})` : ''} (Node: ${this.nodeID})`);
-
-        if (module.onStop) {
-            await module.onStop(this);
-        }
-
-        const contracts = module.getContracts();
-        for (const contract of contracts) {
-            const toolDomain = this.effectiveToolDomain(mountKey, domain, contract.domain);
-            const toolKeyStr = `${toolDomain}.${contract.action}`;
-            // Same teardown a standalone contract gets in unregisterContract -- a module can hold
-            // long-running/interval contracts too, and its onStop (already run above) knows nothing
-            // about their signals.
-            const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
-            if (lifetimeAbort) {
-                lifetimeAbort.abort();
-                this.lifetimeAborts.delete(toolKeyStr);
-            }
-            SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
-            this.intervalTimers.delete(toolKeyStr);
-            this.pendingIntervals.delete(toolKeyStr);
-
-            this.localTools.delete(toolKeyStr);
-            MeshToolSchemaRegistry.delete(toolKeyStr);
-            this.toolMountKeys.delete(toolKeyStr);
-            // The other registry a stopped module leaves entries in -- globalContractRegistry backs
-            // describe/exposure/generateClient, not RPC dispatch, so it's easy to forget it needs the
-            // same teardown. Without this, a rebuilt-and-restarted service's fresh contract object
-            // was silently discarded by register()'s first-write-wins guard in favor of the stale one
-            // registered on this process's very first load of that service, no matter how many times
-            // it was rebuilt afterward.
-            globalContractRegistry.delete(toolKeyStr);
-        }
-        this.logger.debug(`[ServiceBroker] Removed ${contracts.length} tool(s) for module '${mountKey}'`);
-
-        const tracked = this.moduleEventListeners.get(mountKey);
-        if (tracked) {
-            for (const { event, listener } of tracked) {
-                this.localEvents.off(event, listener);
-            }
-            this.moduleEventListeners.delete(mountKey);
-            this.logger.debug(`[ServiceBroker] Removed ${tracked.length} event subscription(s) for module '${mountKey}'`);
-        }
-
-        // Filter by instance identity, not domain -- a second, still-registered instance of the
-        // same domain (a different mount key) must never be removed by this call.
-        this.modules = this.modules.filter((m) => m !== module);
-        this.mountedModules.delete(mountKey);
-
-        if (this.registry && !aliased) {
-            this.registry.unregisterModule(mountKey);
-        }
-
-        this.logger.info(`[ServiceBroker] Module '${mountKey}' fully unregistered: tools, schema, event subscriptions${!aliased ? ', and registry entry' : ''} all removed.`);
     }
 
     public async call<K extends keyof IServiceToolRegistry>(
@@ -1552,12 +1341,6 @@ export class ServiceBroker implements IServiceBroker {
             if (plugin.onStart) await plugin.onStart(this);
         }
 
-        for (const module of this.modules) {
-            if (module.onStart) {
-                await module.onStart(this);
-            }
-        }
-
         // Interval contracts mounted before the broker started -- the normal case for anything
         // loaded during boot.
         for (const [toolKeyStr, contract] of this.pendingIntervals) {
@@ -1579,12 +1362,6 @@ export class ServiceBroker implements IServiceBroker {
         this.lifetimeAborts.clear();
         for (const abort of this.inFlightAborts) abort.abort();
         this.inFlightAborts.clear();
-
-        for (const module of this.modules) {
-            if (module.onStop) {
-                await module.onStop(this);
-            }
-        }
 
         for (const pending of this.pendingRequests.values()) {
             SafeTimer.clearTimeout(pending.timeout);

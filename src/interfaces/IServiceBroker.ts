@@ -1,7 +1,6 @@
 import type { IMeshNetwork, IMeshPacket } from './IMeshNetwork.js';
 import type { ILogger } from './ILogger.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
-import type { IServiceModule } from './IServiceModule.js';
 import type { IContext } from './IContext.js';
 import type { IMeshMeta } from './IMeshMeta.js';
 import type { IBrokerPlugin } from './IBrokerPlugin.js';
@@ -10,6 +9,7 @@ import type { ICallOptions, IServiceContext } from './IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import type { ToolContract } from './IToolContract.js';
 import type { AnyCrudContracts } from './ICrudContract.js';
+import type { AnyTimeSeriesContracts } from './ITimeSeriesContract.js';
 import type { IPlacement } from './IPlacement.js';
 import type { z } from 'zod';
 /**
@@ -24,25 +24,8 @@ export interface IServiceBroker {
     pipe(plugin: IBrokerPlugin): this;
     use(mw: IMiddleware): void;
     useLocal(mw: IMiddleware): void;
-    /** Registers a module's tools under its own `domain` by default. Pass `options.key` to mount
-     *  it under a different local address instead -- e.g. a second, isolated instance of a domain
-     *  already registered elsewhere on this broker (a test-namespace instance alongside the real
-     *  one). An aliased mount (`key` !== the module's `domain`) is local-only: it is never
-     *  advertised to the Registry, so it can't collide with the real instance's entry or be
-     *  routed to remotely -- only reachable via a direct local `broker.call('<key>.<action>', ...)`
-     *  on this exact broker. Throws if `key` (or `domain`, when `key` is omitted) is already in use.
-     *  Pass `options.database` to route this mount's own CRUD/time-series calls to a different
-     *  Database (a different Mongo connection/dbName) than DatabaseModule's shared broker-wide
-     *  default -- e.g. an isolated test database for a test-mounted instance. Omitted (the default),
-     *  this mount's calls use the same shared database as everything else on the broker. */
-    registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<void>;
-    /** Calls the module's own onStop for real resource cleanup, then removes its tools,
-     *  schema entries, event subscriptions, and (for a non-aliased mount) registry entry.
-     *  Takes the same key `registerModule` mounted it under (its `domain`, unless `options.key`
-     *  was passed). Throws if that key isn't currently registered. */
-    unregisterModule(mountKey: string): Promise<void>;
-    /** Resolves the Database override (if any) registered via registerModule's `options.database`
-     *  for the mount that owns `toolKey`. Undefined when the tool isn't mounted, or was mounted
+    /** Resolves the Database override (if any) registered via `registerContract`'s
+     *  `options.database` for `toolKey`. Undefined when the tool isn't mounted, or was mounted
      *  without an override -- callers (DatabaseMiddleware) fall back to their own shared default
      *  Database in either case. */
     getDatabaseForTool(toolKey: string): Database | undefined;
@@ -89,13 +72,12 @@ export interface IServiceBroker {
 
     registerProvider(name: string, provider: unknown): void;
     getProvider<T>(name: string): T;
-    getModule(domain: string): IServiceModule | undefined;
 
     /**
-     * Module-free registration -- the shape a part uses once it has migrated off `ServiceModule`
-     * (see `docs/CONTRACT_DRIVEN_PLACEMENT.md`). These are on the interface, not just the concrete
-     * broker, because a standalone part receives an `IServiceBroker` and registering itself is the
-     * entire thing it does.
+     * The registration path (see `docs/CONTRACT_DRIVEN_PLACEMENT.md`): one contract, one handler,
+     * no wrapper object. These are on the interface, not just the concrete broker, because a
+     * standalone part receives an `IServiceBroker` and registering itself is the entire thing
+     * it does.
      */
     registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
         contract: ToolContract<TIn, TOut>,
@@ -117,6 +99,8 @@ export interface IServiceBroker {
             database?: Database;
         },
     ): void;
+    /** Mounts a whole time-series collection -- the counterpart to `registerCrud`. */
+    registerTimeSeries(contracts: AnyTimeSeriesContracts, options?: { database?: Database }): void;
     registerCrudHook(domain: string, action: string, hooks: { before?: CrudHookFn; after?: CrudHookFn }): void;
     getCrudHooks(domain: string, action: string): { before?: CrudHookFn; after?: CrudHookFn } | undefined;
 
@@ -152,5 +136,5 @@ export interface IServiceBroker {
  */
 export type ContractHandlerMap = Record<string, () => Promise<unknown>>;
 
-/** One side of a CRUD hook -- the shape both `registerCrudHook` and `ServiceModule.mountCrudHook` take. */
+/** One side of a CRUD hook -- the shape both `registerCrudHook` and `defineCrud`'s `hooks` take. */
 export type CrudHookFn = (value: unknown, ctx: IServiceContext) => Promise<unknown>;

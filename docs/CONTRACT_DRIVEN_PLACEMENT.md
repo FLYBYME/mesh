@@ -19,13 +19,13 @@ a live run:
 | `PlacementRegistry` -- a second, swappable `IServiceRegistry` whose native registration is per-*contract*, not per-module | `core/PlacementRegistry.ts`, selected via `RegistryModule({ implementation })` |
 | `broker.registerContract` / `unregisterContract` / `registerCrud` / `registerCrudHook` / `registerEventHandler` -- mounting with no `ServiceModule` | `core/ServiceBroker.ts`, `interfaces/IServiceBroker.ts` |
 | `broker.loadDomain(domain, handlers?, { resolve })` -- mounts a domain from what its contracts declare; nothing enumerates them | `core/ServiceBroker.ts` |
-| Precompiled CommonJS core parts, their entry module synthesized at build time (never written to `src/`), and a loader that takes that manifest, a `register(broker)` part, or a `ServiceModule` constructor | mesh-serve `cli/core/buildCoreParts.ts`, `discoverPartContracts.ts`, `catalog/methods/loadModule.ts` |
+| Precompiled CommonJS core parts, their entry module synthesized at build time (never written to `src/`), and a loader that takes that manifest or resolves handlers from `filePath` | mesh-serve `cli/core/buildCoreParts.ts`, `discoverPartContracts.ts`, `catalog/methods/loadModule.ts` |
 | Handler resolution from `filePath` for anything unbundled -- no generated file at all | mesh-serve `catalog/methods/resolveHandler.ts` |
 | `mesh-serve start` brings up the catalog kernel *only*; `bootstrap` loads the rest via `serve.corePart.load` | mesh-serve `cli/commands/start.ts`, `bootstrap.ts` |
 | `ctx.signal`, with a lifetime that follows the contract's declared `concurrency` -- per-call for `on-demand`, per-*registration* for `long-running`/`interval`, where aborting it *is* the stop | `core/ServiceBroker.ts`, `interfaces/IServiceContext.ts` |
 | `concurrency: 'interval'` + `intervalMs` -- the broker owns the timer, skips overlapping ticks, and enforces `leaderScoped` itself | `ServiceBroker.startIntervalContract` |
 | CRUD hooks declared on `defineCrud` and wired wherever the contract mounts | `interfaces/ICrudContract.ts`, `ServiceBroker.registerContract` |
-| **`ServiceModule` dropped entirely** -- no `*.service.ts` anywhere in mesh-serve | all six parts; see the checklist entry below |
+| **`ServiceModule` dropped entirely** -- no `*.service.ts` anywhere in mesh-serve, and the class itself deleted from mesh | all six parts; `core/ServiceModule.ts` + `interfaces/IServiceModule.ts` gone; see the checklist entry below |
 | **On-demand placement** -- a call for a contract nothing serves loads it and then answers | `interfaces/IPlacement.ts`, `core/PlacementScope.ts`, mesh-serve `catalog/methods/corePartPlacement.ts` |
 | `--parts` -- the push half, for contracts nothing will ever call into existence | mesh-serve `cli/commands/start.ts` |
 | `permissions` enforced as a floor a `serve.expose` row cannot lower | mesh-serve `api/gateway.ts` checkGate |
@@ -500,6 +500,29 @@ function with no change event; nothing today notices "I just became the leader f
 - [x] **Drop `ServiceModule` entirely.** Done in `mesh-serve`: there is no `*.service.ts` file left
       in the package. All six -- hold, queue, identity, cdn, api, catalog -- are gone, and so is the
       `register(broker)` shape that briefly replaced them.
+
+      **And done in `mesh` itself**, once nothing was left calling it. `core/ServiceModule.ts` and
+      `interfaces/IServiceModule.ts` are deleted, along with everything that existed only to serve
+      them: `broker.registerModule`/`unregisterModule`/`getModule`, `MeshApp.registerModule`, the
+      registry's `registerModule`/`unregisterModule`/`getModule`/`listModules`/`registerLocalModule`,
+      and the broker's `modules`/`mountedModules`/`moduleEventListeners`/`toolMountKeys` state.
+      `IServiceRegistry` now declares `registerContract`/`unregisterContract`/`unregisterDomain`
+      instead -- per-contract advertisement is the only registration path, so the broker no longer
+      has to duck-type its own registry to find out whether it supports one.
+
+      **What went with it, deliberately:** mount keys (`registerModule`'s `key` option, and the
+      `effectiveToolDomain` aliasing behind it). A second, aliased instance of the same domain in
+      one process only meant something while a module was a *reusable instance*; a contract is its
+      domain, so there is nothing left to mount twice. The per-mount `database` override survived
+      the move -- at the granularity that was always more honest, per contract (`registerContract`'s
+      `options.database`), which is what `loadDomain` forwards.
+
+      **Nothing lost in test coverage.** Every claim the module tests made has a contract-first
+      successor that was already passing: a live timer genuinely stopping on unregister
+      (`ContractLifecycle.spec.ts`, "stops ticking once unregistered"), `globalContractRegistry`
+      left clean so a rebuild isn't shadowed by a stale entry, tearing one contract down without
+      disturbing a sibling on the same domain, and refusing to unregister something never
+      registered (all three in `StandaloneContract.spec.ts`).
 
       **What a part is now.** Its contracts, and the handler modules they point at. Nothing else.
       `broker.loadDomain(domain, handlers?, { resolve })` reads the domain's contracts out of

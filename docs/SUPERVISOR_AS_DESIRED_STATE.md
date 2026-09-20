@@ -2,6 +2,14 @@
 
 Decided 2026-09-05.
 
+> **Superseded — historical record.** The design landed, but not here: `src/supervisor/` no longer
+> exists in mesh, and neither do `registerModule`/`unregisterModule`/`ServiceModule`, which
+> everything below is written in terms of. The reconciler this doc argued for is real and lives in
+> **mesh-serve**, as `serve.part.desired` / `serve.part.runningHere` / `serve.part.reconcile` (a
+> `leaderScoped` interval contract) with eviction through `serve.corePart.unload`. Read
+> [CONTRACT_DRIVEN_PLACEMENT.md](./CONTRACT_DRIVEN_PLACEMENT.md) for what actually exists; keep
+> this for the reasoning that got there.
+
 > "i think supervise needs a curds to help it manage this advanced distrobuted system"
 
 This is the successor to [SUPERVISOR_AND_SERVICE_LIFECYCLE.md](./SUPERVISOR_AND_SERVICE_LIFECYCLE.md),

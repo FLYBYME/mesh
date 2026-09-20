@@ -9,7 +9,7 @@ import { BrokerModule } from '../../modules/BrokerModule.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
-import { ServiceModule } from '../../core/ServiceModule.js';
+import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { defineContract } from '../../interfaces/IToolContract.js';
 import { z } from 'zod';
 
@@ -217,16 +217,9 @@ describe('WSTransport Handshake Authentication', () => {
                 dependencies: [], filePath: 'src/__tests__/transports/WSTransportAuth.spec.ts', permissions: [], concurrency: 'on-demand'
             });
 
-            class MathService extends ServiceModule {
-                readonly domain = 'math';
-                constructor() {
-                    super();
-                    this.mountTool(mathContract, async (params: any) => {
-                        return { sum: params.a + params.b };
-                    });
-                }
-            }
-            await appServer.registerModule(new MathService());
+            appServer.getProvider<IServiceBroker>('broker').registerContract(mathContract, async (params: any) => {
+                return { sum: params.a + params.b };
+            });
 
             // Client with matching key
             appClientCorrect = new MeshApp({ nodeID: 'auth-client-good', logger });

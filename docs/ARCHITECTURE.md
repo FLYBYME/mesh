@@ -42,12 +42,9 @@ const broker = app.getProvider<IServiceBroker>('broker');
 
 ### Pending Queue Mechanism
 
-When `registerProvider('broker', ...)` is called, `MeshApp` flushes two queues:
-
-1. **`pendingMiddleware`** — Middleware registered via `app.use(fn)` before the broker existed.
-2. **`pendingModules`** — Service modules registered via `app.registerModule(mod)` before the broker existed.
-
-This means module registration order is flexible. You can call `app.registerModule(new SandboxService())` before `app.use(new BrokerModule())`, and it will work correctly.
+When `registerProvider('broker', ...)` is called, `MeshApp` flushes its **`pendingMiddleware`**
+queue — middleware registered via `app.use(fn)` before the broker existed — so middleware
+registration order is flexible.
 
 ### Typed RPC Interface
 
@@ -117,38 +114,44 @@ app.use(new BrokerModule());        // 4. Broker (needs 'registry' and 'network'
 
 ---
 
-## Service Modules
+## Domains and Contracts
 
-[ServiceModule.ts](file:///home/ubuntu/code/mesh/src/core/ServiceModule.ts) is the abstract base class for all domain services. A service declares:
+There is no service class. A domain is its contracts, and each contract names the handler module
+that implements it (`filePath`) plus how it runs (`concurrency`). See
+[CONTRACT_DRIVEN_PLACEMENT.md](./CONTRACT_DRIVEN_PLACEMENT.md) for the full design, and
+[MIGRATION.md](./MIGRATION.md) for moving a repo off `ServiceModule`, which no longer exists.
 
-1. **A `domain` name** — a unique namespace string (e.g. `'sandbox'`, `'agent'`, `'infer'`)
-2. **Tool mounts** — via `this.mountTool(contract, handler)`
-3. **CRUD mounts** — via `this.mountCrud(crudContracts)` (handlers are intercepted by `DatabaseMiddleware`)
-4. **Time Series mounts** — via `this.mountTimeSeries(tsContracts)`
-5. **CRUD hooks** — via `this.mountCrudHook(domain, action, { before, after })`
-6. **Event handlers** — via `this.mountEventHandler('event.name', handler)`
+A domain is mounted one of two ways:
+
+1. **`broker.loadDomain(domain, handlers?, { resolve, database })`** — reads every contract
+   declaring that domain out of `globalContractRegistry` and mounts each by what it declares.
+   `isCrud` gets the `DatabaseMiddleware` stub, `long-running` is registered *and* called,
+   `interval` self-starts on the broker-owned timer, and anything else is resolved to the handler
+   its `filePath` names. Nothing enumerates contracts by hand.
+2. **`broker.registerContract(contract, handler, options?)`** — one contract, directly. This is what
+   `loadDomain` calls per contract, and what a standalone part uses.
+
+`broker.unregisterContract(toolKey)` is the other half: it aborts the contract's registration-scoped
+`ctx.signal` (which *is* the stop for a `long-running` or `interval` contract), clears its timer,
+and removes it from local dispatch, the schema registry, `globalContractRegistry`, and this node's
+advertised presence.
 
 ### Example
 
 ```typescript
-export class SandboxService extends ServiceModule {
-    public readonly domain = 'sandbox';
+// sandbox.contract.ts — the declaration
+export const sandboxSetActiveContract = defineContract({
+    domain: 'sandbox',
+    action: 'set_active',
+    filePath: 'src/sandbox/tools/setActive.ts',
+    concurrency: 'on-demand',
+    permissions: ['sandbox.write'],
+    // ...
+});
 
-    constructor() {
-        super();
-        this.mountCrud(sandboxCrud);
-        this.mountTool(setActiveContract, this.handleSetActive.bind(this));
-        this.mountTool(fsReadContract, this.handleFsRead.bind(this));
-        this.mountEventHandler('data.created', (payload, ctx) => {
-            if (payload.domain === 'sandbox') {
-                // post-creation provisioning
-            }
-        });
-    }
-
-    private async handleSetActive(params: { id: string }, ctx: IServiceContext) {
-        // implementation
-    }
+// src/sandbox/tools/setActive.ts — the handler, a plain function
+export default async function setActive(params: { id: string }, ctx: IServiceContext) {
+    // implementation
 }
 ```
 
@@ -157,10 +160,14 @@ export class SandboxService extends ServiceModule {
 When a CRUD tool (e.g. `sandbox.create`) is invoked:
 
 1. `DatabaseMiddleware` intercepts the call (it checks `MeshToolSchemaRegistry` for `isCrud: true`)
-2. It calls `module.beforeCrud(domain, action, params, ctx)` — you can transform input here
+2. `CrudExecutor` runs the `before` hook — you can transform input here
 3. It executes the database operation via `DomainRepository`
-4. It calls `module.afterCrud(domain, action, result, ctx)` — you can transform output here
+4. It runs the `after` hook — you can transform output here
 5. It emits a `data.created` / `data.updated` / `data.deleted` event automatically
+
+Hooks are declared on `defineCrud`'s own `hooks` option (forwarded onto each action's contract, so
+they are wired wherever the contract mounts) or registered directly with
+`broker.registerCrudHook(domain, action, { before, after })`.
 
 ---
 

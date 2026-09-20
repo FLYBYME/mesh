@@ -5,7 +5,7 @@ import { DatabaseModule } from '../modules/DatabaseModule.js';
 import { Logger } from '../utils/Logger.js';
 import { LogLevel } from '../interfaces/ILogger.js';
 import { MongoClient } from 'mongodb';
-import { IServiceModule } from '../interfaces/IServiceModule.js';
+import type { IServiceBroker } from '../interfaces/IServiceBroker.js';
 
 /**
  * Configuration options for creating a test MeshApp.
@@ -15,7 +15,14 @@ export interface TestAppOptions {
     namespace?: string;
     logLevel?: LogLevel;
     mongoUri?: string;
-    modules?: IServiceModule[];
+    /**
+     * Registers whatever the test needs, once the app is started and its broker exists.
+     *
+     * Replaces a `modules: IServiceModule[]` list. A part is its contracts now, and there is no
+     * single object to hand over -- a test registers a CRUD collection, a contract, a hook, or all
+     * three, so the honest shape is a callback rather than an array of things.
+     */
+    register?: (broker: IServiceBroker) => void | Promise<void>;
 }
 
 /**
@@ -75,10 +82,8 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<{ app
 
     await app.start();
 
-    if (options.modules) {
-        for (const mod of options.modules) {
-            await app.registerModule(mod);
-        }
+    if (options.register) {
+        await options.register(app.getProvider<IServiceBroker>('broker'));
     }
 
     return { app, dbName };

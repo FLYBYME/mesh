@@ -5,7 +5,7 @@ import { RegistryModule } from '../../modules/RegistryModule.js';
 import { BrokerModule } from '../../modules/BrokerModule.js';
 import { DatabaseModule } from '../../modules/DatabaseModule.js';
 import { PlacementRegistry } from '../../core/PlacementRegistry.js';
-import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { register as registerDemo } from '../../examples/demo/demo.service.js';
 import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { generateTestDbName, withTestDatabase } from '../../testing/index.js';
 
@@ -37,7 +37,7 @@ describe('RegistryModule swapped to PlacementRegistry', () => {
 
         expect(app.getProvider('registry')).toBeInstanceOf(PlacementRegistry);
 
-        await app.registerModule(new DemoSkill());
+        registerDemo(app.getProvider<IServiceBroker>('broker'));
 
         const broker = app.getProvider<IServiceBroker>('broker');
         const result = await broker.call('demo.hello', { name: 'PlacementRegistry' });

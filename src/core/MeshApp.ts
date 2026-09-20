@@ -12,7 +12,6 @@ import type {
 } from '../interfaces/index.js';
 import { BootOrchestrator } from './BootOrchestrator.js';
 import { Logger } from '../utils/Logger.js';
-import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import type { Database } from '../db/Database.js';
 
 /**
@@ -27,7 +26,6 @@ export class MeshApp implements IMeshApp {
     protected modules: IMeshModule[] = [];
     protected pendingMiddleware: ((ctx: any, next: () => Promise<unknown>) => Promise<unknown>)[] = [];
     protected providers = new Map<string, unknown>();
-    protected pendingModules: { module: IServiceModule; options?: { key?: string; database?: Database } }[] = [];
     public orchestrator: BootOrchestrator;
 
     constructor(config: AppConfig) {
@@ -64,16 +62,6 @@ export class MeshApp implements IMeshApp {
             }
         } else {
             this.modules.push(moduleOrMiddleware);
-        }
-        return this;
-    }
-
-    public async registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<this> {
-        if (this.hasProvider('broker')) {
-            const broker = this.getProvider<IServiceBroker>('broker');
-            await broker.registerModule(module, options);
-        } else {
-            this.pendingModules.push({ module, options });
         }
         return this;
     }
@@ -121,14 +109,6 @@ export class MeshApp implements IMeshApp {
             }
             while (this.pendingMiddleware.length > 0) {
                 broker.use(this.pendingMiddleware.shift()! as any);
-            }
-            while (this.pendingModules.length > 0) {
-                const pending = this.pendingModules.shift();
-                if (pending) {
-                    broker.registerModule(pending.module, pending.options).catch((err: unknown) => {
-                        this.logger.error(`[MeshApp] Failed to register pending module: ${pending.module.domain}`, { error: err instanceof Error ? err.message : String(err) });
-                    });
-                }
             }
         }
     }

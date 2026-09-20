@@ -1,15 +1,15 @@
 import { PlacementRegistry } from '../../core/PlacementRegistry.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
-import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { demoContracts } from '../../examples/demo/demo.contract.js';
 import type { NodeInfo } from '../../interfaces/IMeshNetwork.js';
 import { idToBigInt, xorDistance } from '../../core/KademliaRoutingTable.js';
 
 /**
  * Mirrors Registry.spec.ts's own coverage for everything genuinely module-agnostic (node tracking,
  * heartbeat, findNodesForTool, selectNode, leaderFor, pruning-adjacent state) -- proving
- * PlacementRegistry is a real drop-in for Registry, not a divergent reimplementation. `registerModule`
- * is exercised the same way (via `registerModule`, not a separate `registerLocalModule` -- this
+ * PlacementRegistry is a real drop-in for Registry, not a divergent reimplementation. Registration
+ * is exercised the same way (via `registerContract` -- this
  * class doesn't split the two). The new coverage is `registerContract()`/`unregisterContract()`
  * themselves, and that a module and standalone contracts can share one domain without clobbering
  * each other.
@@ -99,8 +99,7 @@ describe('PlacementRegistry', () => {
 
     describe('registerContract()', () => {
         it('registers one contract with no module involved at all', () => {
-            const demoSkill = new DemoSkill();
-            const [contract] = demoSkill.getContracts();
+            const [contract] = demoContracts;
 
             registry.registerContract(contract);
 
@@ -110,8 +109,7 @@ describe('PlacementRegistry', () => {
         });
 
         it('merges multiple standalone contracts sharing one domain, rather than replacing the domain entry', () => {
-            const demoSkill = new DemoSkill();
-            const contracts = demoSkill.getContracts();
+            const contracts = demoContracts;
             expect(contracts.length).toBeGreaterThanOrEqual(2);
 
             for (const contract of contracts) {
@@ -124,18 +122,15 @@ describe('PlacementRegistry', () => {
             }
         });
 
-        it('a module and a standalone contract can coexist under one domain without clobbering each other', () => {
-            const demoSkill = new DemoSkill();
-            const [firstContract, ...rest] = demoSkill.getContracts();
-
-            // Register the module's own contracts one at a time via the native path, simulating a
-            // domain that's partly migrated off ServiceModule already.
-            registry.registerContract(firstContract);
-            for (const contract of rest) {
+        it('keeps every contract of a domain addressable when they are registered one at a time', () => {
+            // Registering contracts individually must not have each one replace the domain's entry
+            // -- the failure this guards is a domain that only ever advertises whichever contract
+            // registered last.
+            for (const contract of demoContracts) {
                 registry.registerContract(contract);
             }
 
-            for (const contract of demoSkill.getContracts()) {
+            for (const contract of demoContracts) {
                 const key = `${contract.domain}.${contract.action}`;
                 expect(registry.getTool(key)).toBe(contract);
             }
@@ -144,8 +139,7 @@ describe('PlacementRegistry', () => {
 
     describe('unregisterContract()', () => {
         it('removes exactly one contract, leaving sibling contracts under the same domain intact', () => {
-            const demoSkill = new DemoSkill();
-            const contracts = demoSkill.getContracts();
+            const contracts = demoContracts;
             for (const contract of contracts) {
                 registry.registerContract(contract);
             }
@@ -164,23 +158,11 @@ describe('PlacementRegistry', () => {
         });
     });
 
-    describe('registerModule() (backward compatibility)', () => {
-        it('still registers every contract a module declares', () => {
-            const demoSkill = new DemoSkill();
-            registry.registerModule(demoSkill);
-
-            const nodes = registry.findNodesForTool('demo.hello');
-            expect(nodes.some((n) => n.nodeID === localNodeID)).toBe(true);
-            expect(registry.getModule('demo')).toBe(demoSkill);
-        });
-    });
-
     // ─── selectNode ─────────────────────────────────────────────────────────
 
     describe('selectNode()', () => {
         it('should prefer local node when preferLocal is true', () => {
-            const demoSkill = new DemoSkill();
-            registry.registerModule(demoSkill);
+            for (const contract of demoContracts) registry.registerContract(contract);
 
             registry.registerNode(createNodeInfo('remote-demo', [
                 { name: 'demo', tools: { 'demo.hello': { name: 'demo.hello' } } }

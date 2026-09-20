@@ -8,8 +8,8 @@
 
 | Field | Type | Purpose |
 |---|---|---|
-| `localTools` | `Map<string, LocalTool>` | Handlers for tools registered by local service modules |
-| `modules` | `IServiceModule[]` | All registered service modules |
+| `localTools` | `Map<string, LocalTool>` | Handlers for every contract mounted on this broker |
+| `standaloneContracts` | `Map<string, ToolContract>` | The contracts themselves, by tool key — what `unregisterContract` tears down |
 | `globalMiddleware` | `IMiddleware[]` | Middleware applied to ALL calls (local and remote) |
 | `localMiddleware` | `IMiddleware[]` | Middleware applied only to LOCAL calls (e.g. `DatabaseMiddleware`) |
 | `pendingRequests` | `Map<string, {resolve, reject, timeout}>` | Correlation map for in-flight remote RPC calls |

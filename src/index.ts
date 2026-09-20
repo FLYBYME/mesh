@@ -22,12 +22,10 @@ export * from './interfaces/IToolContract.js';
 export * from './interfaces/ICrudContract.js';
 export * from './interfaces/IEventContract.js';
 export * from './interfaces/IServiceContext.js';
-export * from './interfaces/IServiceModule.js';
 export * from './interfaces/IServiceBroker.js';
 export * from './interfaces/IMeshApp.js';
 
 // Core Framework
-export * from './core/ServiceModule.js';
 export * from './core/MeshApp.js';
 export * from './core/ServiceBroker.js';
 export * from './core/ContextStack.js';

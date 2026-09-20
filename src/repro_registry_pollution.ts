@@ -5,7 +5,8 @@ import { NetworkModule } from './modules/NetworkModule.js';
 import { BrokerModule } from './modules/BrokerModule.js';
 import { WSTransport } from './transports/node/WSTransport.js';
 import { JSONSerializer } from './serializers/JSONSerializer.js';
-import { DemoSkill } from './examples/demo/demo.service.js';
+import { register as registerDemo } from './examples/demo/demo.service.js';
+import type { IServiceBroker } from './interfaces/IServiceBroker.js';
 import { LogLevel } from './browser.js';
 
 async function main() {
@@ -20,11 +21,11 @@ async function main() {
     // Node 1 (Initial Provider)
     const app1 = new MeshApp({ nodeID: 'node-1-old', logger });
     const transport1 = new WSTransport(serializer, 6005);
-    app1.use(new RegistryModule({ ttl: 5000 })); // Short TTL
+    app1.use(new RegistryModule());
     app1.use(new NetworkModule({ transports: [transport1] }));
     app1.use(new BrokerModule());
-    await app1.registerModule(new DemoSkill());
     await app1.start();
+    registerDemo(app1.getProvider<IServiceBroker>('broker'));
 
     // Node 2 (Relay)
     const app2 = new MeshApp({ nodeID: 'node-2', logger });
@@ -67,8 +68,8 @@ async function main() {
         bootstrapNodes: ['ws://127.0.0.1:6006'] // Connect back to relay
     }));
     app1New.use(new BrokerModule());
-    await app1New.registerModule(new DemoSkill());
     await app1New.start();
+    registerDemo(app1New.getProvider<IServiceBroker>('broker'));
 
     // ─────────────────────────────────────────────────────────────────────────
     // 3. WAIT FOR TTL TO CLEAN UP GHOSTS

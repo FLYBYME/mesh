@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { defineTimeSeries, TimeSeriesParamsSchema, TimeSeriesAggregateParamsSchema } from '../interfaces/ITimeSeriesContract.js';
-import { ServiceModule } from '../core/ServiceModule.js';
 import { createTestApp, destroyTestApp, dropTestDatabase } from '../testing/TestHelpers.js';
 import { IServiceBroker } from '../interfaces/IServiceBroker.js';
 import { IServiceToolRegistry } from '../interfaces/IServiceContext.js';
@@ -83,21 +82,12 @@ describe('TimeSeries Contracts & Integration', () => {
         let broker: IServiceBroker;
         let dbName: string;
 
-        class TelemetryService extends ServiceModule {
-            public readonly domain = 'telemetry';
-            constructor() {
-                super();
-                this.mountTimeSeries(TelemetryContracts);
-            }
-        }
-
         beforeAll(async () => {
-            const setup = await createTestApp({
-                modules: [new TelemetryService()]
-            });
+            const setup = await createTestApp();
             app = setup.app;
             dbName = setup.dbName;
             broker = app.getProvider<IServiceBroker>('broker');
+            broker.registerTimeSeries(TelemetryContracts);
         });
 
         afterAll(async () => {

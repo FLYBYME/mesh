@@ -1,43 +1,41 @@
-import { ServiceModule } from '../../core/ServiceModule.js';
+import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { demoHelloContract, demoStatusContract, demoNotifyContract, demoCrud, demoTimeSeries } from './demo.contract.js';
 import { demo_hello, demo_status, demo_notify } from './demo.tools.js';
 
+export const DEMO_DOMAIN = 'demo';
+
 /**
- * DemoSkill: A simple skill to verify the new Headless Engine architecture.
- * 
- * Demonstrates:
- * 1. Extension of ServiceModule.
- * 2. Strict typing of handlers.
- * 3. Use of mountCrud for automated persistence routing.
- * 4. Use of mountTimeSeries for automated time-indexed data.
- * 5. Use of mountEventHandler for declarative event handling.
+ * The demo part: everything a service can be, with no class holding it together.
+ *
+ * A part is its contracts and the handlers they point at. There is no object to construct, nothing
+ * to subclass, and no lifecycle to implement -- registering is the whole of it. Shows, in order:
+ *
+ * 1. custom contracts with strictly typed handlers
+ * 2. a CRUD collection, whose actions `DatabaseMiddleware` intercepts before dispatch
+ * 3. a time-series collection, same
+ * 4. event handlers, declared the same way
+ *
+ * In a real part this function is not written by hand either: the contracts' own `filePath`
+ * declarations are enough for `broker.loadDomain()` to do all of it. This one is explicit because
+ * it is the example.
  */
-export class DemoSkill extends ServiceModule {
-    public readonly domain = 'demo';
+export function register(broker: IServiceBroker): string {
+    broker.registerContract(demoHelloContract, demo_hello);
+    broker.registerContract(demoStatusContract, demo_status);
+    broker.registerContract(demoNotifyContract, demo_notify);
 
-    constructor() {
-        super();
+    broker.registerCrud(demoCrud);
+    broker.registerTimeSeries(demoTimeSeries);
 
-        // 1. Mount custom tools
-        this.mountTool(demoHelloContract, demo_hello);
-        this.mountTool(demoStatusContract, demo_status);
-        this.mountTool(demoNotifyContract, demo_notify);
+    broker.registerEventHandler('demo.hello.sent', () => {
+        // Logged via context in a real app, silenced for clean tests
+    });
 
-        // 2. Mount CRUD (Automated interception)
-        this.mountCrud(demoCrud);
-
-        // 3. Mount Time Series (Automated interception)
-        this.mountTimeSeries(demoTimeSeries);
-
-        // 4. Mount Event Handlers (Declarative)
-        this.mountEventHandler('demo.hello.sent', (payload) => {
+    broker.registerEventHandler('data.created', (payload) => {
+        if (payload.domain === DEMO_DOMAIN) {
             // Logged via context in a real app, silenced for clean tests
-        });
+        }
+    });
 
-        this.mountEventHandler('data.created', (payload) => {
-            if (payload.domain === this.domain) {
-                // Logged via context in a real app, silenced for clean tests
-            }
-        });
-    }
+    return DEMO_DOMAIN;
 }

@@ -104,3 +104,12 @@ export const demoNotifyContract = defineContract({
     permissions: [],
     print: defaultPrint
 });
+
+/**
+ * The demo's custom contracts as a list, for callers that want several contracts sharing one
+ * domain and do not care which -- registry tests, mostly.
+ *
+ * It exists because those tests used to construct a `DemoSkill` purely to call `getContracts()` on
+ * it. With no module to construct, the list is what they actually wanted.
+ */
+export const demoContracts = [demoHelloContract, demoStatusContract, demoNotifyContract];

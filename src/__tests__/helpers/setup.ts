@@ -1,4 +1,5 @@
-import { DemoSkill } from '../../examples/demo/demo.service.js';
+import { register as registerDemo } from '../../examples/demo/demo.service.js';
+import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import { 
     destroyTestApp,
@@ -30,7 +31,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env'), quiet: true } as any)
 const TEST_DB_NAME = generateTestDbName();
 
 /**
- * Creates a fully wired MeshApp with real Registry, Broker, Database, and DemoSkill.
+ * Creates a fully wired MeshApp with real Registry, Broker, Database, and the demo part.
  * Uses the real MongoDB connection from .env against an isolated test database.
  */
 export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
@@ -53,9 +54,7 @@ export async function createTestApp(nodeID = 'test-node-1'): Promise<MeshApp> {
 
     await app.start();
 
-    // Register the demo service module
-    const demoSkill = new DemoSkill();
-    await app.registerModule(demoSkill);
+    registerDemo(app.getProvider<IServiceBroker>('broker'));
 
     return app;
 }

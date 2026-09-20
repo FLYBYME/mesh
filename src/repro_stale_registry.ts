@@ -5,7 +5,8 @@ import { NetworkModule } from './modules/NetworkModule.js';
 import { BrokerModule } from './modules/BrokerModule.js';
 import { WSTransport } from './transports/node/WSTransport.js';
 import { JSONSerializer } from './serializers/JSONSerializer.js';
-import { DemoSkill } from './examples/demo/demo.service.js';
+import { register as registerDemo } from './examples/demo/demo.service.js';
+import type { IServiceBroker } from './interfaces/IServiceBroker.js';
 import { LogLevel } from './browser.js';
 
 async function main() {
@@ -15,11 +16,11 @@ async function main() {
     logger.info('[Repro] Initializing Stable Provider (Node 1)...');
     const app1 = new MeshApp({ nodeID: 'node-1', logger });
     const transport1 = new WSTransport(serializer, 6005);
-    app1.use(new RegistryModule({ ttl: 5000 })); // Short TTL for faster repro
+    app1.use(new RegistryModule());
     app1.use(new NetworkModule({ transports: [transport1] }));
     app1.use(new BrokerModule());
-    await app1.registerModule(new DemoSkill());
     await app1.start();
+    registerDemo(app1.getProvider<IServiceBroker>('broker'));
 
     logger.info('[Repro] Cycling ephemeral nodes...');
     for (let i = 0; i < 5; i++) {
@@ -27,15 +28,15 @@ async function main() {
         logger.info(`[Repro] Starting ${nodeID}...`);
         const app = new MeshApp({ nodeID, logger });
         const transport = new WSTransport(serializer, 7000 + i);
-        app.use(new RegistryModule({ ttl: 5000 }));
+        app.use(new RegistryModule());
         app.use(new NetworkModule({
             transports: [transport],
             bootstrapNodes: ['ws://127.0.0.1:6005']
         }));
         app.use(new BrokerModule());
-        // Register the SAME tool so we have multiple providers
-        await app.registerModule(new DemoSkill());
         await app.start();
+        // Register the SAME contracts so we have multiple providers
+        registerDemo(app.getProvider<IServiceBroker>('broker'));
 
         // Wait a bit for discovery
         await new Promise(resolve => setTimeout(resolve, 500));

@@ -1,5 +1,13 @@
 # The Supervisor, real dynamic service lifecycle, and built-in test running
 
+> **Superseded — historical record.** Every mechanism below was built and verified as described,
+> then removed: `ServiceModule`, `registerModule`/`unregisterModule`, mount keys, and
+> `src/supervisor/` are all gone from mesh. The capabilities survive in contract-driven form —
+> a contract's `ctx.signal` is the unmount, `unregisterContract` is the teardown, and the
+> supervisor is mesh-serve's reconciler. See
+> [CONTRACT_DRIVEN_PLACEMENT.md](./CONTRACT_DRIVEN_PLACEMENT.md). Keep this for the reasoning
+> and the bugs it documents; do not treat any API name in it as current.
+
 **Status: all of Part 1, 2, and 3 built and verified 2026-08-25 (see the "status" notes inline below).** Design doc + build assignment, written 2026-08-25. This is framework-level, not application-level — nothing here is specific to any one project built on `@flybyme/mesh`. Read `ARCHITECTURE.md` and `MODULES_AND_EXTENSIONS.md` first if you haven't already; this doc assumes you know what a `ServiceModule`, a `MeshApp`, and the `ServiceBroker`/`Registry` split are.
 
 ## Why this exists

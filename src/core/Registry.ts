@@ -7,7 +7,6 @@ import { RoundRobinBalancer } from '../balancers/RoundRobinBalancer.js';
 import { KademliaRoutingTable, idToBigInt, xorDistance } from './KademliaRoutingTable.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import type { NodeInfo as CoreNodeInfo, IServiceNode } from '../interfaces/IMeshNetwork.js';
-import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import { ToolContract, toolKey } from '../interfaces/IToolContract.js';
 
 // Platform-agnostic hostname, resolved once.
@@ -74,7 +73,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     private ttl: number;
     private pruneInterval: number;
 
-    private localModules = new Map<string, IServiceModule>();
     private localNamespace: string;
 
     constructor(
@@ -252,13 +250,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         }
     }
 
-    public listModules(): IServiceModule[] {
-        return Array.from(this.localModules.values());
-    }
-
-    public registerModule(module: IServiceModule): void {
-        this.registerLocalModule(module);
-    }
 
     /**
      * Advertises one contract, merging it into this node's presence under its own domain.
@@ -325,18 +316,19 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         this.emit('local:changed');
     }
 
-    public unregisterModule(domain: string): void {
-        this.localModules.delete(domain);
+    /** Withdraws every contract of a domain at once -- the counterpart to unloading a whole part. */
+    public unregisterDomain(domain: string): void {
         const localNode = this.nodes.get(this.localNodeID);
-        if (localNode) {
-            localNode.services = localNode.services.filter(s => s.name !== domain);
-            localNode.nodeSeq++;
-            this.registerNode(localNode as unknown as CoreNodeInfo);
-        }
-    }
+        if (!localNode) return;
 
-    public getModule(domain: string): IServiceModule | undefined {
-        return this.localModules.get(domain);
+        for (const service of localNode.services) {
+            if (service.name !== domain) continue;
+            for (const key of Object.keys(service.tools ?? {})) this.tools.delete(key);
+        }
+        localNode.services = localNode.services.filter((s) => s.name !== domain);
+        localNode.nodeSeq++;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
     }
 
     public unregisterNode(nodeID: string): void {
@@ -499,75 +491,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
         this.emit('changed', node.nodeID);
         this.logger.debug(`Node ${node.nodeID} registered/updated`);
-    }
-
-    public registerLocalModule(module: IServiceModule): void {
-        this.localModules.set(module.domain, module);
-
-        const localNode = this.nodes.get(this.localNodeID);
-        if (localNode) {
-            const contracts = module.getContracts();
-
-            // `this.tools` (read by `getTool()`) is the registry's own by-key contract
-            // lookup -- distinct from `localNode.services[].tools` (presence data, below)
-            // and from `ServiceBroker`'s private `localTools` map (what local dispatch
-            // actually calls through). A caller checking "is this contract really
-            // registered" via `getTool()` before calling it (e.g. deployment/reconciler's
-            // hook execution, validating an operator-authored contract name at runtime)
-            // needs this populated the same way presence data already is, or every such
-            // check fails even for a genuinely mounted, callable contract.
-            for (const contract of contracts) {
-                this.registerTool(contract);
-            }
-
-            const serviceInfo: RegistryServiceInfo = {
-                name: module.domain,
-                version: '1.0.0',
-                tools: contracts.reduce((acc: Record<string, RegistryToolInfo>, contract: ToolContract) => {
-                    const toolKeyStr = `${contract.domain}.${contract.action}`;
-                    acc[toolKeyStr] = {
-                        name: toolKeyStr,
-                        description: contract.description,
-                        visibility: 'public',
-                        metadata: {
-                            isCrud: contract.isCrud,
-                            destructive: contract.destructive
-                        },
-                        params: zodToJsonSchema(contract.inputSchema) as Record<string, unknown>,
-                        returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>,
-                        timeout: contract.timeout
-                    };
-                    return acc;
-                }, {} as Record<string, RegistryToolInfo>),
-                events: Array.from(module.getEventHandlers().keys()).reduce((acc: Record<string, any>, name: string) => {
-                    acc[name] = { name };
-                    return acc;
-                }, {})
-            };
-
-            localNode.services = localNode.services || [];
-            const idx = localNode.services.findIndex(s => s.name === module.domain);
-            if (idx >= 0) {
-                // Multiple ServiceModule instances can share one logical `domain`
-                // (e.g. a domain split across control/edge/fleet processes that
-                // still get loaded together in one process, like `dns` + `dns/fleet`
-                // both mounted under `control`). Merge each newly-registered
-                // module's tools/events into the existing entry instead of
-                // replacing it -- overwriting silently dropped the first module's
-                // tools from presence data, making them unreachable for any
-                // remote peer even though local calls still worked (local dispatch
-                // uses ServiceBroker's own flat tool map, not this services array).
-                const existing = localNode.services[idx];
-                existing.tools = { ...existing.tools, ...serviceInfo.tools };
-                existing.events = { ...existing.events, ...serviceInfo.events };
-            } else {
-                localNode.services.push(serviceInfo);
-            }
-
-            localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
-            this.registerNode(localNode as unknown as CoreNodeInfo);
-            this.emit('local:changed');
-        }
     }
 
     public registerTool(contract: ToolContract): void {

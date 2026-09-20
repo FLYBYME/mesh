@@ -242,8 +242,12 @@ In this order. Each step catches a class the previous one cannot.
 
 ## 5. What not to change
 
-- **Don't delete `ServiceModule` from `mesh`.** It is still exported and still supported; other
-  repos depend on it. The loader accepts both shapes precisely so services migrate one at a time.
+- **`ServiceModule` no longer exists in `mesh`.** It was deleted along with
+  `IServiceModule`, `broker.registerModule`/`unregisterModule`/`getModule`, mount keys
+  (`registerModule`'s `key` option), and the registry's module methods. There is no dual-shape
+  loader left to fall back on: a domain is its contracts, and `broker.registerContract` /
+  `broker.loadDomain` are the only ways to mount one. Pin the last `2.x` release of `@flybyme/mesh`
+  if a repo isn't ready to migrate; there is no half-migrated state on `3.x`.
 - **Don't migrate behaviour while migrating shape.** Move the code, keep it identical, verify, and
   make behavioural changes as separate commits. The exception is a bug the migration exposes --
   fix it, but say so.

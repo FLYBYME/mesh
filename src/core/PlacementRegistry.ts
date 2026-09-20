@@ -7,7 +7,6 @@ import { RoundRobinBalancer } from '../balancers/RoundRobinBalancer.js';
 import { KademliaRoutingTable, idToBigInt, xorDistance } from './KademliaRoutingTable.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import type { NodeInfo as CoreNodeInfo, IServiceNode } from '../interfaces/IMeshNetwork.js';
-import type { IServiceModule } from '../interfaces/IServiceModule.js';
 import { ToolContract, toolKey } from '../interfaces/IToolContract.js';
 
 // Platform-agnostic hostname resolution -- identical to Registry.ts's own; see that file's comment
@@ -48,19 +47,14 @@ const onHostnameResolved = (callback: (hostname: string) => void): void => {
  * PlacementRegistry: a second, independent `IServiceRegistry` implementation, swappable for
  * `Registry` (same interface, same constructor shape) rather than a patch to it.
  *
- * `Registry.registerLocalModule()` is the one place the existing implementation is genuinely
- * module-shaped: it builds this node's advertised presence (`localNode.services`) by calling
- * `module.getContracts()`/`module.getEventHandlers()` on a whole `IServiceModule`. Everything that
- * actually *routes* on that presence data -- `findNodesForTool`, `getNextToolEndpoint`,
- * `selectNode`, `leaderFor`, pruning, heartbeat, the DHT -- is already agnostic to how it got built,
- * copied here unchanged.
+ * Everything that actually *routes* on this node's advertised presence data --
+ * `findNodesForTool`, `getNextToolEndpoint`, `selectNode`, `leaderFor`, pruning, heartbeat, the
+ * DHT -- is agnostic to how that presence got built, and is copied here unchanged from `Registry`.
  *
- * What's different: `registerContract(contract)` is the native, first-class registration path --
- * one contract, no module wrapper required, matching "every contract stands alone"
- * (docs/CONTRACT_DRIVEN_PLACEMENT.md, "`ServiceModule` is dropped"). `registerModule()` still
- * exists, reimplemented *in terms of* `registerContract` (one call per `module.getContracts()`
- * entry) plus tracking the module object for `getModule()`/`listModules()` -- so anything not yet
- * migrated off `ServiceModule` keeps working against this registry too, unchanged.
+ * What's different: `registerContract(contract)` is the only registration path -- one contract, no
+ * module wrapper, matching "every contract stands alone" (docs/CONTRACT_DRIVEN_PLACEMENT.md,
+ * "`ServiceModule` is dropped"). A domain's presence entry is assembled contract by contract, and
+ * `unregisterDomain(domain)` takes the whole thing back down.
  *
  * Kept fully separate from `Registry.ts` -- not a subclass, not a shared base -- so nothing here can
  * ever regress the existing, working implementation. Swap it in via whatever constructs the
@@ -79,9 +73,6 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
     private ttl: number;
     private pruneInterval: number;
 
-    /** Modules registered the old way -- kept only for `getModule()`/`listModules()` backward
-     *  compatibility. Presence data itself no longer depends on this map at all. */
-    private localModules = new Map<string, IServiceModule>();
     private localNamespace: string;
 
     constructor(
@@ -253,10 +244,6 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         }
     }
 
-    public listModules(): IServiceModule[] {
-        return Array.from(this.localModules.values());
-    }
-
     /**
      * The native registration path: one contract, no module required. Merges into the domain's
      * `ServiceInfo.tools` the same way multiple modules sharing one domain already merge in
@@ -321,42 +308,19 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         this.emit('local:changed');
     }
 
-    /** Backward-compatible path for anything still `IServiceModule`-shaped: one `registerContract`
-     *  call per declared contract, plus remembering the module object for `getModule()`. */
-    public registerModule(module: IServiceModule): void {
-        this.localModules.set(module.domain, module);
-        for (const contract of module.getContracts()) {
-            this.registerContract(contract);
-        }
-
+    /** Withdraws every contract of a domain at once -- the counterpart to unloading a whole part. */
+    public unregisterDomain(domain: string): void {
         const localNode = this.nodes.get(this.localNodeID);
-        if (localNode) {
-            const idx = localNode.services.findIndex(s => s.name === module.domain);
-            if (idx >= 0) {
-                const events = Array.from(module.getEventHandlers().keys()).reduce((acc: Record<string, { name: string }>, name: string) => {
-                    acc[name] = { name };
-                    return acc;
-                }, {});
-                localNode.services[idx].events = { ...localNode.services[idx].events, ...events };
-                localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
-                this.registerNode(localNode as unknown as CoreNodeInfo);
-                this.emit('local:changed');
-            }
-        }
-    }
+        if (!localNode) return;
 
-    public unregisterModule(domain: string): void {
-        this.localModules.delete(domain);
-        const localNode = this.nodes.get(this.localNodeID);
-        if (localNode) {
-            localNode.services = localNode.services.filter(s => s.name !== domain);
-            localNode.nodeSeq++;
-            this.registerNode(localNode as unknown as CoreNodeInfo);
+        for (const service of localNode.services) {
+            if (service.name !== domain) continue;
+            for (const key of Object.keys(service.tools ?? {})) this.tools.delete(key);
         }
-    }
-
-    public getModule(domain: string): IServiceModule | undefined {
-        return this.localModules.get(domain);
+        localNode.services = localNode.services.filter((s) => s.name !== domain);
+        localNode.nodeSeq++;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
     }
 
     public unregisterNode(nodeID: string): void {

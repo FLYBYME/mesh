@@ -34,10 +34,10 @@ its consumers to vendor it.
 Read this as a design constraint, not an inconvenience. When a downstream package wants something
 from mesh, the answer is almost always to build it downstream:
 
-- `ApiService` and `McpService` are `ServiceModule` subclasses defined **in mesh-serve**, not in
-  mesh. A new kind of module belongs in whichever package needs it.
-- mesh does not provide an API surface — no HTTP, no MCP, no REST. That is not a gap. `ApiService`
-  in mesh-serve is where the api lives, and it is right that it lives there: the framework routes
+- The `api` and `mcp` domains are defined **in mesh-serve**, not in mesh. A new capability belongs
+  in whichever package needs it.
+- mesh does not provide an API surface — no HTTP, no MCP, no REST. That is not a gap. mesh-serve's
+  `api` domain is where the api lives, and it is right that it lives there: the framework routes
   calls between peers, and how those calls reach the outside world is a deployment's business.
 - If a design needs a new hook in the broker or a new field on the contract registry, that is a
   signal the design is in the wrong package — not a request for mesh.

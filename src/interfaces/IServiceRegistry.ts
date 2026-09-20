@@ -1,6 +1,5 @@
 import type { NodeInfo, IServiceNode, ToolInfo } from './IMeshNetwork.js';
 import type { ToolContract } from './IToolContract.js';
-import type { IServiceModule } from './IServiceModule.js';
 
 /**
  * IServiceRegistry — Interface for service discovery and tracking.
@@ -58,11 +57,15 @@ export interface IServiceRegistry {
     getTool(key: string): ToolContract | undefined;
     getTools(): ToolContract[];
 
-    /** Module registration */
-    registerModule(module: IServiceModule): void;
-    unregisterModule(domain: string): void;
-    getModule(domain: string): IServiceModule | undefined;
-    listModules(): IServiceModule[];
+    /**
+     * Advertises one locally-mounted contract in this node's presence data -- the only
+     * registration path there is now that `ServiceModule` is gone. A domain's presence entry is
+     * assembled contract by contract; `unregisterContract` takes one back out, and
+     * `unregisterDomain` removes the whole entry at once (part eviction).
+     */
+    registerContract(contract: ToolContract): void;
+    unregisterContract(toolKey: string): void;
+    unregisterDomain(domain: string): void;
 
     /** Starts the registry operations (e.g. pruning, monitoring). */
     start(): Promise<void>;

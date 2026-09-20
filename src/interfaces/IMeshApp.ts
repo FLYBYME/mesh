@@ -1,6 +1,5 @@
 import type { IMeshModule } from './IMeshModule.js';
 import type { ILogger } from './ILogger.js';
-import type { IServiceModule } from './IServiceModule.js';
 import type { IProviderToken } from './IProviderToken.js';
 import type { IServiceRegistry } from './IServiceRegistry.js';
 import type { IMeshMeta } from './IMeshMeta.js';
@@ -35,11 +34,6 @@ export interface IMeshApp extends IMeshNode {
 
     /** Registers a module or middleware. */
     use(moduleOrMiddleware: IMeshModule | ((ctx: any, next: () => Promise<unknown>) => Promise<unknown>)): this;
-
-    /** Registers a service module. See IServiceBroker.registerModule for `options` (mount key /
-     *  database override) -- forwarded through once the broker is available, or queued and
-     *  forwarded when it becomes available if called before then. */
-    registerModule(module: IServiceModule, options?: { key?: string; database?: Database }): Promise<this>;
 
     /** Registers a provider for DI. */
     registerProvider<T>(token: IProviderToken<T>, provider: T): void;

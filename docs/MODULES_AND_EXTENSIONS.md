@@ -173,17 +173,21 @@ app.use(new MetricsModule()); // Custom module, after broker
 
 ---
 
-## Module vs Service Module
+## Module vs Domain
 
-These are different concepts:
+These are different concepts, and only one of them is a class:
 
-| | `IMeshModule` | `ServiceModule` |
+| | `IMeshModule` | a domain |
 |---|---|---|
-| Purpose | System infrastructure plugin | Domain service with business logic |
-| Registration | `app.use(new MyModule())` | `app.registerModule(new MyService())` |
-| Lifecycle | Managed by `BootOrchestrator` | Managed by `ServiceBroker` |
-| Hooks | `onInit`, `onStart`, `onStop`, `onReady` | `onInit(broker)`, `onStart(broker)`, `onStop(broker)` |
+| Purpose | System infrastructure plugin | Business logic |
+| What it is | A class instance | A set of contracts, each naming its handler module |
+| Registration | `app.use(new MyModule())` | `broker.loadDomain('sandbox')` / `broker.registerContract(...)` |
+| Lifecycle | Managed by `BootOrchestrator` | Per contract, from its declared `concurrency`; `ctx.signal` is the stop |
 | Provides | DI providers, middleware | Tools, CRUD, Time Series, events |
-| Examples | RegistryModule, NetworkModule | SandboxService, InferService |
+| Examples | RegistryModule, NetworkModule | `sandbox`, `identity`, `serve.catalog` |
 
-`ServiceModule` instances are registered **through** the broker (either directly or via pending queue), and the broker calls their lifecycle hooks. `IMeshModule` instances are managed directly by the `BootOrchestrator`.
+There is no `ServiceModule` — it was deleted along with `broker.registerModule`. A domain has no
+object behind it at all: the broker holds its contracts and their handlers, and the contract itself
+declares everything that used to live on the class. See
+[CONTRACT_DRIVEN_PLACEMENT.md](./CONTRACT_DRIVEN_PLACEMENT.md) and
+[MIGRATION.md](./MIGRATION.md).
