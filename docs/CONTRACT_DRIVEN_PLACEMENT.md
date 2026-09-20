@@ -26,10 +26,21 @@ a live run:
 | `concurrency: 'interval'` + `intervalMs` -- the broker owns the timer, skips overlapping ticks, and enforces `leaderScoped` itself | `ServiceBroker.startIntervalContract` |
 | CRUD hooks declared on `defineCrud` and wired wherever the contract mounts | `interfaces/ICrudContract.ts`, `ServiceBroker.registerContract` |
 | **`ServiceModule` dropped entirely** -- no `*.service.ts` anywhere in mesh-serve | all six parts; see the checklist entry below |
+| **On-demand placement** -- a call for a contract nothing serves loads it and then answers | `interfaces/IPlacement.ts`, `core/PlacementScope.ts`, mesh-serve `catalog/methods/corePartPlacement.ts` |
+| `--parts` -- the push half, for contracts nothing will ever call into existence | mesh-serve `cli/commands/start.ts` |
+| `permissions` enforced as a floor a `serve.expose` row cannot lower | mesh-serve `api/gateway.ts` checkGate |
+| `isMeshError` / `MESH_ERROR_BRAND` -- recognition that survives a part boundary | `core/MeshError.ts` |
 
-Still design, not built: the automatic placement/scheduling layer (nothing yet triggers a load in
-response to a call or a leadership change), and eviction via `require.cache` deletion (the CJS
-bundles it needs now exist; nothing deletes from the cache yet).
+Still design, not built: the leadership-change watcher (nothing reacts to becoming leader for a
+singleton), and eviction via `require.cache` deletion (the CJS bundles it needs now exist; nothing
+deletes from the cache yet).
+
+**Proven end to end.** Two nodes, the second started with `--parts api,cdn` and holding no identity
+contracts at all, both serving `console.localhost` -- the real operator console, built on the
+cluster from its git repo through requestBuild -> queue -> build -> compose -> deploy. Node B
+answers `POST /api/identity/ticket` and `GET /api/identity/whoami` by routing to node A. `serve.queue`
+was never loaded by anyone: the catalog sweep called `serve.queue.create`, placement loaded queue,
+and its interval tick dispatched the builds.
 
 **`filePath` was a lie until it had a reader.** It is documented as "where the implementing code
 lives", and it pointed at the contract's own declaration file in 48 of 50 cases -- which is exactly
@@ -37,6 +48,25 @@ why loading a part needed a hand-written list of contract-to-handler pairs. Noth
 because nothing read it. All of them now name a real handler module, with
 `mesh-serve/test/unit/contracts/filePath.test.ts` failing the build if one regresses. A field
 nothing consumes will be wrong; the fix is a consumer, not more care.
+
+**Loading a part creates a second module realm, and `instanceof` does not cross it.** This is a
+structural property of the whole design, not a bug that was fixed once. A node loads
+`@flybyme/mesh` through the ESM loader for its own imports, and again through `require()` when it
+loads a precompiled `.cjs` part -- and under `tsx` those are two distinct copies. Directly
+verified: `require('@flybyme/mesh').MeshError === (await import('@flybyme/mesh')).MeshError` is
+`false` under tsx, `true` under plain node, which is why checking that question in isolation says
+everything is fine.
+
+The symptom is silent and looks like something else. A handler in a loaded part throws a real
+`MeshError` with status 404; the code choosing an HTTP status checks `instanceof` from the other
+realm, gets `false`, and answers 500. It cost three rounds of fixing genuine-but-unrelated things
+(the broker's error serialization, then all three transports' reconstruction) before the cause was
+found, because each fix was correct and none of them changed the observable behavior.
+
+The general rule this leaves: **anything that must be recognized across a part boundary needs a
+structural check, not a class identity.** `MESH_ERROR_BRAND`/`isMeshError` (a `Symbol.for`, which
+is registry-global across realms) is the pattern. It applies equally to eviction, which re-requires
+a part into a *new* realm by design.
 
 What the live run proved that tests didn't: with the default `Registry`, standalone contracts mount
 and answer *locally* while a peer is told "no node in this mesh advertises domain identity" --
@@ -354,12 +384,21 @@ function with no change event; nothing today notices "I just became the leader f
 
 ## Open forks -- real decisions, not details
 
-- **Intrinsic vs. extrinsic permissions.** Does a contract's declared `permissions` become the one
-  true authority everywhere it's ever exposed, or a floor a per-api `serve.expose` row can still
-  tighten but never loosen below? The current model (`serve.expose.add({apiId, contract, role})`)
-  is deliberately extrinsic -- the same contract can be exposed with different roles, or none, on
-  different apis. Baking a role into the contract itself is a real behavior change, not just added
-  documentation.
+- ~~Intrinsic vs. extrinsic permissions~~ **Resolved: a floor.** `permissions` is role keys the
+  caller must hold -- all of them, inheritance expanded -- enforced at the api boundary only, since
+  that is the one place a caller's identity is *established* rather than asserted (the same
+  reasoning `scopedBy` rests on). The `serve.expose` row stays extrinsic and may demand more,
+  because the same contract legitimately carries different requirements on different apis; what it
+  cannot do is demand less. Both gates apply.
+
+  The deciding argument is that the extrinsic model **fails open**. A row with no `role` is
+  anonymous, so a destructive contract published without one is reachable by anybody and nothing
+  says that was a mistake. `identity.user.grantRole` grants any role to any account with no check
+  of its own -- the only thing between it and an anonymous caller was that nobody had written its
+  row yet. A floor means a wrong expose row can now only over-restrict.
+
+  Enforcing it immediately found `serve.api.generateClient` anonymously reachable, handing out an
+  api's full exposure, with a passing test calling it unauthenticated.
 - ~~Does the new atomic-code kind coexist with `service` long-term~~ **Resolved: no `service` kind,
   no `ServiceModule`.** Every real current use of persistent state/listeners was checked and is
   already scoped to one atomic unit (see above) -- there's nothing left for `service` to be the
@@ -487,11 +526,42 @@ function with no change event; nothing today notices "I just became the leader f
       `onStart`, which meant every node loading identity ran its own seed loop against the same
       collection on every boot. Loading a part must not mutate shared cluster state; bootstrap is
       the one deliberate pass, and it calls `identity.role.ensureBuiltins` once.
-- [ ] `ServiceBroker.call()`'s empty-`selectNode`-result fallback: on-demand `import()` +
-      `registerModule()`, reusing the exact sequence `startService.ts` already proves out
+- [x] **`ServiceBroker.call()`'s empty-`selectNode` fallback** -- built. A call for a contract
+      nothing serves gets one chance to be loaded before failing. The *decision* is pluggable
+      (`IPlacement`) and the retry is not: the broker knows a tool is unreachable but cannot know
+      how a given deployment ships code. mesh-serve's provider
+      (`catalog/methods/corePartPlacement.ts`) maps a contract to a core part by reading each
+      bundle's own `domains` export, so nothing restates the mapping. With no provider installed,
+      such a call fails exactly as it always did.
+
+      The subtle part is telling **concurrent** apart from **re-entrant**: twenty callers for a
+      cold tool should share one load, but a provider that calls back into the tool it is placing
+      must not wait -- that is waiting on itself. The difference is *lineage*, not timing, so
+      `PlacementScope` tracks it with `AsyncLocalStorage`, the same mechanism `ContextStack`
+      already relies on. A plain `Set` blows the stack; there is a test for it.
+- [x] **Placement is pull *or* push, decided by `concurrency`** -- the thing this design did not
+      anticipate. **A `long-running` contract cannot be demand-loaded**: the demand arrives through
+      the thing that isn't running. An http request cannot start the http server, and a timer has
+      no caller at all. So:
+
+      | `concurrency` | placed by |
+      | --- | --- |
+      | `on-demand` | **pull** -- the first call |
+      | `long-running`, `interval` | **push** -- a decision, because nothing will ever call it |
+
+      `bootstrap` makes that decision implicitly when claiming a fresh cluster. A node *joining* an
+      existing one had no equivalent moment, so it would come up, join, and serve nothing --
+      `mesh-serve start --parts api,cdn` is where an operator says what a node is for.
 - [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
-      `interval` domains a node newly becomes leader for
-- [ ] Eviction -- **resolved**: build on-demand contracts as CJS (`format` param on `runEsbuild`),
-      load via `require()`, evict via `delete require.cache[path]`. Confirm the real deployed Node
-      version supports `require()`-of-ESM before relying on it for the external `@flybyme/mesh` ref
+      `interval` domains a node newly becomes leader for. Not on the path to a working cluster --
+      placement covers "this node needs identity"; this covers "the singleton's node died".
+- [ ] Eviction -- **resolved in approach**: build on-demand contracts as CJS (`format` param on
+      `runEsbuild`), load via `require()`, evict via `delete require.cache[path]`. The bundles exist
+      and are loaded this way; nothing deletes from the cache yet. `require()`-of-ESM is confirmed
+      working for the external `@flybyme/mesh` ref on the deployed Node (22.x).
+
+      **Caution found the hard way** (see the realm note below): each `require()` after an eviction
+      produces a *fresh* module realm for that part. Anything holding a reference across the
+      eviction -- a class, a registry entry, an `instanceof` check -- is then comparing across
+      realms. Eviction has to be designed with that in mind rather than discovered again.
 - [ ] Resolve the remaining open forks above before or during implementation, not after
