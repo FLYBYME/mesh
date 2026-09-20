@@ -153,7 +153,14 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.off('changed', check);
-                reject(new Error(`Timeout: Only ${this.getAvailableNodes().length}/${count} nodes found`));
+                // Names who it *did* see, because the count alone sends you looking at the wrong
+                // thing. Seeing only yourself after connecting successfully means the peer never
+                // answered -- most often because another live process already holds this nodeID
+                // there, which that node logs and refuses (WSTransport's DUPLICATE_NODE_ID_CLOSE).
+                const seen = this.getAvailableNodes().map((node) => node.nodeID);
+                reject(new Error(
+                    `Timeout: only ${seen.length}/${count} nodes found (this node is "${this.localNodeID}"; saw: ${seen.join(', ')})`,
+                ));
             }, timeoutMs);
             if (timer.unref) timer.unref();
 

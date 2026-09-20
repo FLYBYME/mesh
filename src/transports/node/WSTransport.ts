@@ -22,6 +22,13 @@ export interface WSTransportOptions {
 }
 
 /**
+ * Close code for "your nodeID is already connected here". In the application range (4000-4999), and
+ * 4409 for HTTP 409 Conflict, which is what this is. Reconnecting will not help while the incumbent
+ * lives, so the client stops rather than looping.
+ */
+export const DUPLICATE_NODE_ID_CLOSE = 4409;
+
+/**
  * WSTransport — Node.js implementation using 'ws' and 'http'.
  */
 export class WSTransport extends BaseTransport {
@@ -227,22 +234,47 @@ export class WSTransport extends BaseTransport {
     private setupWSSHandlers() {
         if (!this.wss) return;
         this.wss.on('connection', (ws: IWS) => {
+            // Only set once this socket actually *owns* `peers[id]`. A socket that was refused for
+            // claiming a taken id must never reach the close handler below holding an id it does
+            // not own -- that is what let a short-lived duplicate evict a healthy peer.
             let peerId: string | null = null;
             this.setupSocketKeepalive(ws, () => peerId);
 
             ws.on('message', (raw: unknown) => {
                 this.handleIncomingMessage(raw, ws, (id) => {
-                    if (!this.peers.has(id)) {
-                        this.peers.set(id, ws);
-                        this.emit('peer:connect', id);
+                    const existing = this.peers.get(id);
+
+                    if (existing === ws) return; // Already ours; every later message re-identifies.
+
+                    if (existing !== undefined) {
+                        // Two live processes claiming one nodeID. `peers` is keyed by nodeID and
+                        // `send()` resolves exactly one socket per key, so only one of them can
+                        // ever be reachable -- and silently keeping the incumbent left the newcomer
+                        // connected, accepted, and deaf: it never got a `peer:connect`, so this node
+                        // never sent it presence, and it failed a while later as "Timeout: Only 1/2
+                        // nodes found", an error about node counts that says nothing about the
+                        // collision. Found live: a `mesh-serve bootstrap` (hardcoded nodeID
+                        // `bootstrap-1`) interrupted mid-wizard made every subsequent bootstrap
+                        // against that node fail for as long as the first process lived.
+                        //
+                        // A nodeID is an identity, so two live claims is an error, not a race to
+                        // resolve. The incumbent keeps it and the newcomer is told why.
+                        this.logger?.error(`[WSTransport] Refusing connection: nodeID "${id}" is already connected from another socket. Two processes cannot share one nodeID -- give this one its own.`);
+                        ws.close(DUPLICATE_NODE_ID_CLOSE, `nodeID "${id}" already connected`);
+                        return;
                     }
+
+                    this.peers.set(id, ws);
                     peerId = id;
+                    this.emit('peer:connect', id);
                 });
             });
 
             ws.on('close', () => {
                 this.cleanupSocketKeepalive(ws);
-                if (peerId) {
+                // Ownership-checked, mirroring the client side's own guard: delete the entry only
+                // while it still points at *this* socket.
+                if (peerId !== null && this.peers.get(peerId) === ws) {
                     this.peers.delete(peerId);
                     this.emit('peer:disconnect', peerId);
                 }
@@ -527,12 +559,21 @@ export class WSTransport extends BaseTransport {
                 });
             });
 
-            ws.on('close', () => {
+            ws.on('close', (...args: unknown[]) => {
                 this.cleanupSocketKeepalive(ws);
                 if (this.peers.get(currentPeerId) === ws) {
                     this.peers.delete(currentPeerId);
                     this.emit('peer:disconnect', currentPeerId);
                 }
+
+                // Refused for claiming a nodeID another live process already holds. Retrying cannot
+                // fix that -- only changing this process's nodeID, or the other one exiting, can --
+                // so reconnecting would just hide the one message that explains the failure.
+                if (args[0] === DUPLICATE_NODE_ID_CLOSE) {
+                    this.logger?.error(`[WSTransport] ${url} refused this connection: nodeID "${this.nodeID}" is already connected there from another process. Give this process its own nodeID.`);
+                    return;
+                }
+
                 if (!isAuthFailure) {
                     // Reconnect under the identity this socket last proved, not the placeholder
                     // it started as -- otherwise every reconnect forgets the real nodeID this

@@ -227,7 +227,12 @@ export interface TransportConnectOptions {
 
 export interface ITransportSocket {
     send(data: Uint8Array | string): void;
-    close(): void;
+    /**
+     * `code`/`reason` are the WebSocket close frame's, forwarded to the peer so a refusal can say
+     * why -- see WSTransport's DUPLICATE_NODE_ID_CLOSE. Optional: an implementation that closes
+     * without them still satisfies this.
+     */
+    close(code?: number, reason?: string): void;
     readonly readyState: number;
 }
 

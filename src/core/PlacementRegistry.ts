@@ -150,7 +150,11 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.off('changed', check);
-                reject(new Error(`Timeout: Only ${this.getAvailableNodes().length}/${count} nodes found`));
+                // Same message as Registry's -- see the reasoning there.
+                const seen = this.getAvailableNodes().map((node) => node.nodeID);
+                reject(new Error(
+                    `Timeout: only ${seen.length}/${count} nodes found (this node is "${this.localNodeID}"; saw: ${seen.join(', ')})`,
+                ));
             }, timeoutMs);
             if (timer.unref) timer.unref();
 
