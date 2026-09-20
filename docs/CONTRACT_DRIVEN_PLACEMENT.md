@@ -18,15 +18,25 @@ a live run:
 | `ctx.db(domain, meta?)` -- direct CRUD access that keeps every guarantee `ctx.call()` has, because it *is* the same executor | `interfaces/IServiceContext.ts`, `core/ServiceBroker.ts` |
 | `PlacementRegistry` -- a second, swappable `IServiceRegistry` whose native registration is per-*contract*, not per-module | `core/PlacementRegistry.ts`, selected via `RegistryModule({ implementation })` |
 | `broker.registerContract` / `unregisterContract` / `registerCrud` / `registerCrudHook` / `registerEventHandler` -- mounting with no `ServiceModule` | `core/ServiceBroker.ts`, `interfaces/IServiceBroker.ts` |
-| Precompiled CommonJS core parts + a generic loader accepting either `register(broker)` or a `ServiceModule` constructor | mesh-serve `cli/core/buildCoreParts.ts`, `catalog/methods/loadModule.ts` |
+| `broker.loadDomain(domain, handlers?, { resolve })` -- mounts a domain from what its contracts declare; nothing enumerates them | `core/ServiceBroker.ts` |
+| Precompiled CommonJS core parts, their entry module synthesized at build time (never written to `src/`), and a loader that takes that manifest, a `register(broker)` part, or a `ServiceModule` constructor | mesh-serve `cli/core/buildCoreParts.ts`, `discoverPartContracts.ts`, `catalog/methods/loadModule.ts` |
+| Handler resolution from `filePath` for anything unbundled -- no generated file at all | mesh-serve `catalog/methods/resolveHandler.ts` |
 | `mesh-serve start` brings up the catalog kernel *only*; `bootstrap` loads the rest via `serve.corePart.load` | mesh-serve `cli/commands/start.ts`, `bootstrap.ts` |
 | `ctx.signal`, with a lifetime that follows the contract's declared `concurrency` -- per-call for `on-demand`, per-*registration* for `long-running`/`interval`, where aborting it *is* the stop | `core/ServiceBroker.ts`, `interfaces/IServiceContext.ts` |
 | `concurrency: 'interval'` + `intervalMs` -- the broker owns the timer, skips overlapping ticks, and enforces `leaderScoped` itself | `ServiceBroker.startIntervalContract` |
-| `serve.hold`, `identity` and `serve.queue` migrated off `ServiceModule` entirely | mesh-serve `hold/hold.service.ts`, `identity/identity.service.ts`, `queue/queue.service.ts` |
+| CRUD hooks declared on `defineCrud` and wired wherever the contract mounts | `interfaces/ICrudContract.ts`, `ServiceBroker.registerContract` |
+| **`ServiceModule` dropped entirely** -- no `*.service.ts` anywhere in mesh-serve | all six parts; see the checklist entry below |
 
 Still design, not built: the automatic placement/scheduling layer (nothing yet triggers a load in
 response to a call or a leadership change), and eviction via `require.cache` deletion (the CJS
 bundles it needs now exist; nothing deletes from the cache yet).
+
+**`filePath` was a lie until it had a reader.** It is documented as "where the implementing code
+lives", and it pointed at the contract's own declaration file in 48 of 50 cases -- which is exactly
+why loading a part needed a hand-written list of contract-to-handler pairs. Nothing caught it
+because nothing read it. All of them now name a real handler module, with
+`mesh-serve/test/unit/contracts/filePath.test.ts` failing the build if one regresses. A field
+nothing consumes will be wrong; the fix is a consumer, not more care.
 
 What the live run proved that tests didn't: with the default `Registry`, standalone contracts mount
 and answer *locally* while a peer is told "no node in this mesh advertises domain identity" --
@@ -431,23 +441,52 @@ function with no change event; nothing today notices "I just became the leader f
       to the leader and run it N times a period. `defineContract` rejects `interval` without a
       period, and a period without `interval`.
 - [ ] New `kind` for one atomic piece of code -- **replaces** `service`, not added alongside it
-- [~] **Drop `ServiceModule` entirely.** The primitives exist and are proven: `registerContract`,
-      `registerCrud`, `registerCrudHook`, `registerEventHandler`, and a loader that takes either a
-      `register(broker)` part or a `ServiceModule` constructor, so services migrate one at a time
-      rather than in a flag day. `serve.hold`, `identity` and `serve.queue` are migrated and
-      running. Still on the class: `CdnService`, `ApiService` (both own an HTTP listener ->
-      `long-running`), `CatalogService` (owns a timer -> `interval`, and is also what the kernel
-      `start` mounts statically).
+- [x] **Drop `ServiceModule` entirely.** Done in `mesh-serve`: there is no `*.service.ts` file left
+      in the package. All six -- hold, queue, identity, cdn, api, catalog -- are gone, and so is the
+      `register(broker)` shape that briefly replaced them.
 
-      `serve.queue` is the one that answers how a service with a *lifetime* migrates, and the
-      answer is that it mostly doesn't need one. The class existed to own a timer; `intervalMs`
-      replaced it outright, and the only real state left -- the per-node in-flight set -- moved to
-      module scope in `tools/tick.ts`, which has exactly the same lifetime as the instance did
-      because a part is `require()`d once per node. It returns a bare domain string, no `stop`.
-      The `{ domain, stop }` form remains for the two listeners, which genuinely do hold a
-      resource -- though `ctx.signal` may well make that unnecessary too, since a listener that
-      registers `close()` on its own signal has nothing left for a `stop` to do. Decide when
-      `ApiService` actually migrates rather than now.
+      **What a part is now.** Its contracts, and the handler modules they point at. Nothing else.
+      `broker.loadDomain(domain, handlers?, { resolve })` reads the domain's contracts out of
+      `globalContractRegistry` and mounts each one by what it declares -- `isCrud` gets the
+      middleware stub, `long-running` is registered *and called*, `interval` self-starts, and
+      anything else is resolved to its handler. Nothing enumerates contracts anywhere.
+
+      **Two lookups, one declaration.** Unbundled, the modules really are at the paths their
+      contracts name, so `catalog/methods/resolveHandler.ts` imports them and nothing is generated.
+      A precompiled bundle is one file with no modules left inside it, so `buildCoreParts` builds
+      the map at build time as a *virtual esbuild module* -- it exists only inside `dist/parts/*.cjs`,
+      never in `src/`. An earlier attempt wrote a `handlers.generated.ts` per part into the source
+      tree; that was a build concern leaking into the repo, and it was right to reject it.
+
+      **What each class was actually holding, and where it went:**
+
+      | held | went |
+      | --- | --- |
+      | a timer (`queue`, `catalog`) | `concurrency: 'interval'` + `intervalMs`; the broker owns it |
+      | an HTTP listener (`cdn`, `api`) | a `long-running` contract; `ctx.signal` is the stop |
+      | per-node state (`queue`'s in-flight set) | module scope -- a part is `require()`d once per node, so the lifetime is identical |
+      | a real resource + its request handling (`cdn`, `api` gateways) | still a class, in `gateway.ts`, holding **no contracts** |
+      | CRUD hooks | `defineCrud`'s own `hooks` option, forwarded onto each action's contract |
+      | one-time seeding (`identity`'s builtin roles) | a contract bootstrap calls once |
+
+      Dropping `ServiceModule` was never about banning classes. It was about removing the
+      *tool-grouping* one -- the bag that made several unrelated contracts share a lifecycle. The
+      two gateways are still classes and should be: each owns one cohesive resource and no
+      contracts at all.
+
+      **`{ domain, stop }` was never needed.** It was built for the two listeners, and `ctx.signal`
+      made it redundant before either migrated -- a handler that registers `close()` on its own
+      signal leaves a `stop` with nothing to do. Nothing uses it.
+
+      **The one hand-written list left** is `mesh-serve/src/catalog/domains.ts`, and it is a real
+      exception rather than an oversight: the catalog owns `serve.corePart.load`, so it cannot be
+      loaded through the path it provides. `start.ts` mounts it directly and something has to say
+      which domains. A test holds that list against what the contracts declare.
+
+      **Seeding moved out of load on purpose.** `identity`'s builtin roles used to be seeded in
+      `onStart`, which meant every node loading identity ran its own seed loop against the same
+      collection on every boot. Loading a part must not mutate shared cluster state; bootstrap is
+      the one deliberate pass, and it calls `identity.role.ensureBuiltins` once.
 - [ ] `ServiceBroker.call()`'s empty-`selectNode`-result fallback: on-demand `import()` +
       `registerModule()`, reusing the exact sequence `startService.ts` already proves out
 - [ ] A leadership-change watcher that triggers the same load sequence once, for `long-running`/
