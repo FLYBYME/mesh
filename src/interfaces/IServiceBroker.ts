@@ -6,8 +6,11 @@ import type { IContext } from './IContext.js';
 import type { IMeshMeta } from './IMeshMeta.js';
 import type { IBrokerPlugin } from './IBrokerPlugin.js';
 import type { IMiddleware } from './IInterceptor.js';
-import type { ICallOptions } from './IServiceContext.js';
+import type { ICallOptions, IServiceContext } from './IServiceContext.js';
 import type { Database } from '../db/Database.js';
+import type { ToolContract } from './IToolContract.js';
+import type { AnyCrudContracts } from './ICrudContract.js';
+import type { z } from 'zod';
 /**
  * IServiceBroker — Interface for the central communication kernel.
  */
@@ -86,4 +89,32 @@ export interface IServiceBroker {
     registerProvider(name: string, provider: unknown): void;
     getProvider<T>(name: string): T;
     getModule(domain: string): IServiceModule | undefined;
+
+    /**
+     * Module-free registration -- the shape a part uses once it has migrated off `ServiceModule`
+     * (see `docs/CONTRACT_DRIVEN_PLACEMENT.md`). These are on the interface, not just the concrete
+     * broker, because a standalone part receives an `IServiceBroker` and registering itself is the
+     * entire thing it does.
+     */
+    registerContract<TIn extends z.ZodTypeAny, TOut extends z.ZodTypeAny>(
+        contract: ToolContract<TIn, TOut>,
+        handler: (params: z.infer<TIn>, ctx: IServiceContext) => Promise<z.infer<TOut>>,
+    ): void;
+    unregisterContract(toolKey: string): void;
+    listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
+
+    registerCrud(
+        crud: AnyCrudContracts,
+        options?: { hooks?: Partial<Record<string, { before?: CrudHookFn; after?: CrudHookFn }>> },
+    ): void;
+    registerCrudHook(domain: string, action: string, hooks: { before?: CrudHookFn; after?: CrudHookFn }): void;
+    getCrudHooks(domain: string, action: string): { before?: CrudHookFn; after?: CrudHookFn } | undefined;
+
+    registerEventHandler<K extends keyof EventRegistry>(
+        name: K,
+        handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
+    ): void;
 }
+
+/** One side of a CRUD hook -- the shape both `registerCrudHook` and `ServiceModule.mountCrudHook` take. */
+export type CrudHookFn = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
