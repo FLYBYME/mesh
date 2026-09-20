@@ -4,7 +4,11 @@ import { Database } from './Database.js';
 import { FindOptions, StrictFilterQuery } from './types.js';
 import { MeshError } from '../core/MeshError.js';
 import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
-import type { CrudRepo } from '../interfaces/IServiceContext.js';
+import type { CrudRepo, IServiceContext } from '../interfaces/IServiceContext.js';
+
+/** Mirrors ServiceBroker's own `CrudHook` -- declared here rather than imported to keep this module
+ *  free of a circular dependency back on ServiceBroker. */
+type CrudHookFn = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
 interface BaseDoc {
     id: string;
@@ -128,7 +132,13 @@ export class CrudExecutor {
             }
         }
 
-        const module = broker.getModule(domain);
+        // Resolved through the broker rather than reaching for a module directly: hooks can now be
+        // registered standalone (`broker.registerCrudHook`, no ServiceModule) as well as by a
+        // module, and `getCrudHooks` is the one place that knows which owns a given action.
+        const brokerWithHooks = broker as IServiceBroker & {
+            getCrudHooks?: (domain: string, action: string) => { before?: CrudHookFn; after?: CrudHookFn } | undefined;
+        };
+        const hooks = brokerWithHooks.getCrudHooks?.(domain, action);
 
         // Same shape DatabaseMiddleware has always built for beforeCrud/afterCrud -- `meta` has to be
         // the real caller's meta (see the comment history in DatabaseMiddleware.ts: omitting it here
@@ -166,8 +176,8 @@ export class CrudExecutor {
             logger: broker.logger
         };
 
-        if (module) {
-            const beforeResult = await module.beforeCrud(domain, action, params, serviceCtx);
+        if (hooks?.before) {
+            const beforeResult = await hooks.before(params, serviceCtx as never);
             if (isRecord(beforeResult)) {
                 params = beforeResult;
             }
@@ -340,8 +350,8 @@ export class CrudExecutor {
                     throw new MeshError({ code: 'BAD_REQUEST', status: 400, message: `CrudExecutor: unknown CRUD action "${action}" for domain "${domain}".` });
             }
 
-            if (module) {
-                result = await module.afterCrud(domain, action, result, serviceCtx);
+            if (hooks?.after) {
+                result = await hooks.after(result, serviceCtx as never);
             }
 
             return stripHidden(domain, result);

@@ -13,6 +13,7 @@ import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/ISer
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry, type ToolContract } from '../interfaces/IToolContract.js';
+import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -55,6 +56,9 @@ export const MeshToolSchemaRegistry: Map<string, {
 }> = new Map();
 
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
+
+/** One side of a CRUD hook -- the same shape `ServiceModule.mountCrudHook` already takes. */
+export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
 export class ServiceBroker implements IServiceBroker {
     /**
@@ -147,6 +151,10 @@ export class ServiceBroker implements IServiceBroker {
     // without touching a module's grouped mount, and so the two can never be confused for each
     // other during the migration off `ServiceModule`.
     private standaloneContracts = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
+    // `<domain>.<action>` -> hooks registered without a module (registerCrudHook). Checked before a
+    // module's own, so a half-migrated domain runs each hook exactly once.
+    private standaloneCrudHooks = new Map<string, { before?: CrudHook; after?: CrudHook }>();
+    private standaloneEventHandlers: { name: string; listener: (data: unknown, packet?: IMeshPacket) => void }[] = [];
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -412,37 +420,7 @@ export class ServiceBroker implements IServiceBroker {
             for (const [name, handler] of eventHandlers.entries()) {
                 this.logger.info(`[ServiceBroker] Subscribing service ${domain} (mount key: ${mountKey}) to event: ${String(name)}`);
                 const listener = (data: unknown, packet?: IMeshPacket) => {
-                    const ctx = {
-                        broker: this,
-                        correlationId: packet?.id || randomUUID(),
-                        nodeID: this.nodeID,
-                        meta: packet?.meta,
-                        call: async <K extends keyof IServiceToolRegistry>(
-                            tool: K,
-                            params: IServiceToolRegistry[K]['params'],
-                            options?: ICallOptions<IMeshMeta>
-                        ): Promise<IServiceToolRegistry[K]['returns']> => {
-                            const result = await this.call(tool, params, options);
-                            return result as IServiceToolRegistry[K]['returns'];
-                        },
-                        callOnLeader: async <K extends keyof IServiceToolRegistry>(
-                            leaderDomain: string,
-                            tool: K,
-                            params: IServiceToolRegistry[K]['params'],
-                            options?: { timeout?: number }
-                        ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
-                        acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
-                        release: (key: string, token: string) => this.release(key, token),
-                        withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
-                        emit: <K extends keyof EventRegistry>(
-                            event: K,
-                            payload: EventRegistry[K],
-                            options?: { skipNetwork?: boolean }
-                        ) => this.emit(event, payload, options),
-                        db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
-                            this.makeCrudRepo(domain, meta ? { ...packet?.meta, ...meta } : packet?.meta),
-                        logger: this.logger
-                    };
+                    const ctx = this.makeEventContext(packet);
                     void Promise.resolve(handler(data, ctx as never)).catch((err: unknown) => {
                         this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
                     });
@@ -457,6 +435,45 @@ export class ServiceBroker implements IServiceBroker {
         if (this.isStarted && module.onStart) {
             await module.onStart(this);
         }
+    }
+
+    /**
+     * The `IServiceContext` an event subscriber receives -- shared by module-mounted handlers
+     * (`registerModule`) and standalone ones (`registerEventHandler`), so a subscriber sees exactly
+     * the same context either way.
+     */
+    private makeEventContext(packet?: IMeshPacket): Record<string, unknown> {
+        return {
+            broker: this,
+            correlationId: packet?.id || randomUUID(),
+            nodeID: this.nodeID,
+            meta: packet?.meta,
+            call: async <K extends keyof IServiceToolRegistry>(
+                tool: K,
+                params: IServiceToolRegistry[K]['params'],
+                options?: ICallOptions<IMeshMeta>
+            ): Promise<IServiceToolRegistry[K]['returns']> => {
+                const result = await this.call(tool, params, options);
+                return result as IServiceToolRegistry[K]['returns'];
+            },
+            callOnLeader: async <K extends keyof IServiceToolRegistry>(
+                leaderDomain: string,
+                tool: K,
+                params: IServiceToolRegistry[K]['params'],
+                options?: { timeout?: number }
+            ): Promise<IServiceToolRegistry[K]['returns']> => this.callOnLeader(leaderDomain, tool, params, options),
+            acquire: (key: string, options?: { ttlMs?: number; waitMs?: number }) => this.acquire(key, options),
+            release: (key: string, token: string) => this.release(key, token),
+            withLock: <T>(key: string, fn: () => Promise<T>, options?: { ttlMs?: number; waitMs?: number }): Promise<T> => this.withLock(key, fn, options),
+            emit: <K extends keyof EventRegistry>(
+                event: K,
+                payload: EventRegistry[K],
+                options?: { skipNetwork?: boolean }
+            ) => this.emit(event, payload, options),
+            db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
+                this.makeCrudRepo(domain, meta ? { ...packet?.meta, ...meta } : packet?.meta),
+            logger: this.logger
+        };
     }
 
     /**
@@ -606,6 +623,84 @@ export class ServiceBroker implements IServiceBroker {
     /** Every standalone contract currently mounted here, by tool key. */
     public listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[] {
         return Array.from(this.standaloneContracts.values());
+    }
+
+    /**
+     * Mounts a whole CRUD collection standalone -- `defineCrud`'s generated actions, no
+     * `ServiceModule` subclass calling `mountCrud`. Each action is wired exactly as a module-mounted
+     * one is, including the same deliberately-unreachable dispatch: `DatabaseMiddleware` intercepts
+     * every CRUD call before it ever reaches a handler, so a handler that actually *runs* means the
+     * middleware isn't installed, and saying so loudly beats returning nothing quietly.
+     *
+     * `hooks` is the standalone equivalent of `mountCrudHook` -- see `registerCrudHook`.
+     */
+    public registerCrud(
+        crud: AnyCrudContracts,
+        options?: { hooks?: Partial<Record<string, { before?: CrudHook; after?: CrudHook }>> },
+    ): void {
+        const keys = ['create', 'find', 'findOne', 'get', 'update', 'delete', 'count', 'replace', 'resolve', 'createMany'] as const;
+        for (const key of keys) {
+            const contract = crud[key];
+            if (contract && typeof contract === 'object' && 'domain' in contract && 'action' in contract) {
+                const tool = contract as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
+                this.registerContract(tool, async () => {
+                    throw new Error(`Engine Error: CRUD action "${tool.action}" for domain "${tool.domain}" was not intercepted.`);
+                });
+            }
+        }
+
+        for (const [action, hook] of Object.entries(options?.hooks ?? {})) {
+            if (hook) this.registerCrudHook(crud.domain, action, hook);
+        }
+    }
+
+    /**
+     * The standalone equivalent of `ServiceModule.mountCrudHook`. `CrudExecutor` resolves hooks
+     * through `getCrudHooks` below, which checks these first and falls back to a module's own --
+     * so a domain can be half-migrated (some hooks standalone, the rest still on a module) without
+     * either set going silently unrun.
+     */
+    public registerCrudHook(domain: string, action: string, hooks: { before?: CrudHook; after?: CrudHook }): void {
+        this.standaloneCrudHooks.set(`${domain}.${action}`, hooks);
+    }
+
+    /**
+     * Resolves the before/after hooks for one CRUD action, from whichever registration style owns
+     * them. Standalone hooks win over a module's, so a migrated hook genuinely replaces the one it
+     * was migrated from rather than both running.
+     */
+    public getCrudHooks(domain: string, action: string): { before?: CrudHook; after?: CrudHook } | undefined {
+        const standalone = this.standaloneCrudHooks.get(`${domain}.${action}`);
+        if (standalone) return standalone;
+
+        const module = this.getModule(domain);
+        if (!module) return undefined;
+        // A module dispatches its own hooks internally (and returns the input/output unchanged when
+        // it has none), so this adapts that shape rather than reaching into its private map.
+        return {
+            before: (input, ctx) => module.beforeCrud(domain, action, input, ctx),
+            after: (output, ctx) => module.afterCrud(domain, action, output, ctx),
+        };
+    }
+
+    /**
+     * The standalone equivalent of `ServiceModule.mountEventHandler` -- subscribes one handler,
+     * with the same `IServiceContext` a module-mounted subscriber receives.
+     */
+    public registerEventHandler<K extends keyof EventRegistry>(
+        name: K,
+        handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
+    ): void {
+        const listener = (data: unknown, packet?: IMeshPacket) => {
+            const ctx = this.makeEventContext(packet);
+            void Promise.resolve(handler(data as EventRegistry[K], ctx as never)).catch((err: unknown) => {
+                this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
+            });
+        };
+        // localEvents, the same emitter registerModule subscribes module handlers on -- not the
+        // broker's own public `on`, whose key type is the generated EventRegistry.
+        this.localEvents.on(name as string, listener);
+        this.standaloneEventHandlers.push({ name: name as string, listener });
     }
 
     /**
