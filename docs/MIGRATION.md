@@ -151,8 +151,21 @@ domain's contracts out of `globalContractRegistry` and wires each one by what it
 Two ways to give it handlers, and a repo usually needs both:
 
 - **Unbundled** (running from source or `dist/`): the modules really are at the declared paths, so
-  a resolver imports them. Copy `mesh-serve/src/catalog/methods/resolveHandler.ts` (87 lines) and
-  change the package-root walk if the layout differs.
+  a resolver imports them. `@flybyme/mesh/node` ships it -- the whole binding is six lines:
+
+  ```ts
+  import path from 'node:path';
+  import { fileURLToPath } from 'node:url';
+  import { createHandlerResolver, findPackageRoot } from '@flybyme/mesh/node';
+
+  const root = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
+  export const resolveHandler = createHandlerResolver({ root, load: (url) => import(url) });
+  ```
+
+  **Pass `load` from your own package.** It looks redundant and is not: under tsx or vitest only
+  modules that runtime owns get transformed, so the identical `import()` made from inside
+  `node_modules` refuses a `.ts` handler with "Unknown file extension". See
+  `mesh-serve/src/catalog/methods/resolveHandler.ts`.
 - **Bundled** (one `.cjs` per part): there are no separate modules left inside the bundle, so the
   map is built at build time. Copy the pattern in `mesh-serve/src/cli/core/buildCoreParts.ts` and
   `discoverPartContracts.ts`.
@@ -200,6 +213,13 @@ into existence by the first call; `long-running` and `interval` must be *pushed*
 claiming one key were resolved silently by last-write-wins. `registerContract` refuses instead.
 Expect to find at least one real collision; fix it by renaming the generated action
 (`defineCrud`'s `actions` option) rather than by passing `{ replace: true }`.
+
+**8. `import()` performed from the wrong package.** Under tsx or vitest, only modules that runtime
+owns get transformed. A dynamic `import()` of a `.ts` file executed from inside `node_modules` is
+outside that graph and fails with "Unknown file extension .ts", while the identical call written in
+your own package works. This is why `createHandlerResolver` takes a `load` option instead of
+importing for you. It generalises: **any module loading you delegate to a library has to be handed
+back your own importer** if the target might be TypeScript.
 
 ---
 
