@@ -1,4 +1,6 @@
 import type { ContractHandlerMap, IServiceBroker } from '../interfaces/IServiceBroker.js';
+import type { IPlacement } from '../interfaces/IPlacement.js';
+import { PlacementScope } from './PlacementScope.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import type { IMeshNetwork } from '../interfaces/IMeshNetwork.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
@@ -141,6 +143,14 @@ export class ServiceBroker implements IServiceBroker {
     // at mount time, so a part loaded onto a not-yet-started node doesn't tick against half-wired
     // infrastructure.
     private pendingIntervals = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
+    // ── Placement ────────────────────────────────────────────────────────────────────────────
+    // Optional, and absent by default: with no provider, a call for a tool nothing serves fails
+    // exactly as it always has. See IPlacement.
+    private placement?: IPlacement;
+    // One attempt per tool at a time. Twenty concurrent calls for a tool nothing serves should
+    // cause one load, not twenty -- and the nineteen that arrive second should wait for it rather
+    // than failing while it is in progress.
+    private placementInFlight = new Map<string, Promise<string | undefined>>();
     // registerModule's event subscriptions use an inline closure per handler, so nothing
     // keeps a reference to hand back to EventEmitter#off later -- without this, unregisterModule
     // has no way to remove only this module's listeners. Keyed by mount key (see below).
@@ -737,6 +747,59 @@ export class ServiceBroker implements IServiceBroker {
         this.logger.info(`[ServiceBroker] interval contract "${toolKeyStr}" ticking every ${contract.intervalMs}ms`);
     }
 
+    /**
+     * Installs the placement layer -- what happens when a call arrives for a contract nothing in
+     * the cluster serves. See `IPlacement`; without one, such a call fails as it always has.
+     */
+    public setPlacement(placement: IPlacement): void {
+        this.placement = placement;
+        this.logger.info('[ServiceBroker] Placement provider installed');
+    }
+
+    /**
+     * One placement attempt per tool name, shared by everyone waiting on it.
+     *
+     * Re-entrancy is refused rather than queued: if placing `X` leads back here for `X`, awaiting
+     * the in-flight attempt would be awaiting ourselves. Returning `undefined` instead lets that
+     * inner call fail with the ordinary "nobody advertises this" error, which is a bad outcome but
+     * a finite one -- and it names a real mistake in the provider (see `IPlacement`: a provider
+     * addresses its own calls explicitly).
+     */
+    private async ensurePlaced(toolName: string): Promise<string | undefined> {
+        // Re-entrancy first, and by *lineage* rather than by timing -- a shared flag cannot tell
+        // "the provider called us back" from "another caller arrived meanwhile". See PlacementScope.
+        if (PlacementScope.isPlacing(toolName)) return undefined;
+
+        const inFlight = this.placementInFlight.get(toolName);
+        if (inFlight !== undefined) return inFlight;
+
+        const contract = globalContractRegistry.get(toolName);
+        const attempt = PlacementScope.run(toolName, async (): Promise<string | undefined> => {
+            try {
+                const placedOn = await this.placement?.place(toolName, contract);
+                if (placedOn === undefined) {
+                    this.logger.debug(`[ServiceBroker] placement declined "${toolName}"`);
+                } else {
+                    this.logger.info(`[ServiceBroker] placed "${toolName}" on ${placedOn}`);
+                }
+                return placedOn;
+            } catch (err) {
+                // A failed placement is not a different error than an unplaceable call: the caller
+                // still gets "nobody serves this", which is true. Logged rather than thrown so the
+                // real cause isn't lost behind it.
+                this.logger.error(`[ServiceBroker] placement failed for "${toolName}"`, err);
+                return undefined;
+            }
+        });
+
+        this.placementInFlight.set(toolName, attempt);
+        try {
+            return await attempt;
+        } finally {
+            this.placementInFlight.delete(toolName);
+        }
+    }
+
     /** Every standalone contract currently mounted here, by tool key. */
     public listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[] {
         return Array.from(this.standaloneContracts.values());
@@ -1187,6 +1250,19 @@ export class ServiceBroker implements IServiceBroker {
                 if (endpoint) {
                     targetNodeID = endpoint.nodeID;
                 }
+            }
+
+            // Nobody serves this. Before failing, give the placement layer a chance to load it
+            // somewhere -- this is what makes an `on-demand` contract genuinely on-demand rather
+            // than something an operator has to have started in advance. No provider configured
+            // (the default) means the call fails exactly as it always did.
+            if (targetNodeID === undefined && this.placement !== undefined) {
+                const placedOn = await this.ensurePlaced(toolName);
+                if (placedOn !== undefined && placedOn !== this.nodeID) {
+                    targetNodeID = placedOn;
+                }
+                // Placed locally: leave targetNodeID undefined so it dispatches through
+                // localTools, which `place` has just populated.
             }
         }
 

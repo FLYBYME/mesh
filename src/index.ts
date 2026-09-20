@@ -15,6 +15,7 @@ export * from './utils/Crypto.js';
 export * from './interfaces/ILogger.js';
 export * from './interfaces/IMeshNetwork.js';
 export * from './interfaces/IServiceRegistry.js';
+export * from './interfaces/IPlacement.js';
 export * from './interfaces/ITransport.js';
 export * from './interfaces/IInterceptor.js';
 export * from './interfaces/IToolContract.js';
