@@ -19,6 +19,18 @@ export interface MeshNetworkOptions {
     transports: BaseTransport[];
     port?: number;
     host?: string;
+    /**
+     * The address this node tells peers to dial, when that is not the interface it binds.
+     *
+     * A node's identity in the registry is its address: `registerNode` discards any peer whose
+     * address overlaps the local node's, as a "ghost of self". Advertising the *bind* host breaks
+     * that the moment it is a wildcard -- every node on a `0.0.0.0` bind advertises
+     * `ws://0.0.0.0:<port>` (and loopback, since interface enumeration falls back to it), so on
+     * real machines all sharing one port every peer looked identical to the local node and was
+     * silently dropped, while the transport itself connected fine. Invisible on one machine, where
+     * each test node has its own port. When set, this is the *only* address advertised.
+     */
+    advertiseHost?: string;
 }
 
 /**
@@ -160,9 +172,17 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
 
             const localNode = this.registry.getNode(this.nodeID);
             if (localNode) {
-                localNode.addresses = [`ws://${host}:${port}`];
+                localNode.addresses = [`ws://${this.options.advertiseHost ?? host}:${port}`];
                 this.registry.registerNode(localNode);
             }
+        }
+
+        if (this.options.advertiseHost === undefined && (host === '0.0.0.0' || host === '::')) {
+            this.logger.warn(
+                `[MeshNetwork] Node ${this.nodeID} binds the wildcard "${host}" without an advertiseHost, so it tells peers to ` +
+                `dial "${host}". Peers on other machines will see it as themselves and drop it from their registry. ` +
+                `Set advertiseHost to the address other nodes reach this one on.`,
+            );
         }
 
         // --- FIXED: Pass the bootstrap URL to the transports ---
@@ -180,7 +200,10 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
 
         // --- ADDED: Populate addresses from transports ---
         const localNode = this.registry.getNode(this.nodeID);
-        if (localNode) {
+        // An explicit advertiseHost is the whole answer -- merging the enumerated interface/loopback
+        // addresses back in would reintroduce exactly the addresses every node on a shared port has
+        // in common, which is what made peers look like the local node.
+        if (localNode && this.options.advertiseHost === undefined) {
             const transportAddresses = this.transport.getAddresses();
             if (transportAddresses.length > 0) {
                 localNode.addresses = [...new Set([...(localNode.addresses || []), ...transportAddresses])];

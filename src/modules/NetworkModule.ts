@@ -5,6 +5,11 @@ import { BaseTransport } from '../transports/BaseTransport.js';
 export interface NetworkModuleOptions {
     port?: number;
     host?: string;
+    /**
+     * The address peers should dial this node on, when it differs from the interface it binds.
+     * Needed as soon as `host` is a wildcard (`0.0.0.0`) -- see MeshNetworkOptions.advertiseHost.
+     */
+    advertiseHost?: string;
     namespace?: string;
     bootstrapNodes?: string[];
     transports: BaseTransport[];
@@ -32,6 +37,7 @@ export class NetworkModule implements IMeshModule {
             nodeId: app.nodeID,
             port: this.options.port,
             host: this.options.host,
+            advertiseHost: this.options.advertiseHost,
             namespace: this.options.namespace || app.namespace || 'default',
             bootstrapNodes: this.options.bootstrapNodes || [],
             transports: this.options.transports
