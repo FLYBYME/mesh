@@ -255,6 +255,15 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         });
         this.node.registry.registerNode(data.node);
 
+        // registerNode can refuse a node (a ghost of self, an address conflict). A refused peer is
+        // still "new" on its next packet, and a reply to every "new" packet is a reply to every
+        // packet -- and if the peer refuses us the same way, an unbounded ping-pong with no timer
+        // and nothing logged. Not registered means there is nobody here to greet.
+        if (this.node.registry.getNode(data.node.nodeID) === undefined) {
+            this.logger.debug(`Presence: ${data.node.nodeID} was not registered; not replying`, { internal: true });
+            return;
+        }
+
         // A presence packet is the node speaking for ITSELF -- first-party proof
         // of life, arriving every 15s. registerNode deliberately refuses to
         // refresh the lease when nodeSeq is unchanged, so that second-hand PEX
