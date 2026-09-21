@@ -2,7 +2,7 @@ import type { IMeshModule, IMeshApp, ILogger, IServiceBroker, IServiceRegistry }
 import { Registry } from '../core/Registry.js';
 import { PRESENCE_INTERVAL_MS } from '../core/MeshOrchestrator.js';
 
-type RegistryOptions = { preferLocal?: boolean; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; localNodeID?: string; namespace?: string };
+type RegistryOptions = { preferLocal?: boolean; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; localNodeID?: string; namespace?: string; metadata?: Record<string, string> };
 type RegistryClass = new (logger: ILogger, options: RegistryOptions) => IServiceRegistry;
 
 /**

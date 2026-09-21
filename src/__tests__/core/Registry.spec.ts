@@ -47,6 +47,23 @@ describe('Registry', () => {
             expect(local!.nodeID).toBe(localNodeID);
         });
 
+        it('carries a constructor-supplied metadata (label) set on the local node, and it survives a later registerContract', async () => {
+            const labeled = new Registry(new Logger(LogLevel.WARN), {
+                localNodeID: 'labeled-node',
+                metadata: { role: 'dns', region: 'bhs' },
+            });
+            try {
+                expect(labeled.getNode('labeled-node')!.metadata).toEqual({ role: 'dns', region: 'bhs' });
+
+                const [contract] = demoContracts;
+                labeled.registerContract(contract);
+
+                expect(labeled.getNode('labeled-node')!.metadata).toEqual({ role: 'dns', region: 'bhs' });
+            } finally {
+                await labeled.stop();
+            }
+        });
+
         it('should register a remote node', () => {
             registry.registerNode(createNodeInfo('remote-1'));
             const node = registry.getNode('remote-1');

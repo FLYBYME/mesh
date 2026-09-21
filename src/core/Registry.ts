@@ -77,7 +77,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
     constructor(
         private logger: ILogger,
-        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; namespace?: string } = {}
+        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; namespace?: string; metadata?: Record<string, string> } = {}
     ) {
         super();
         this.preferLocal = options.preferLocal ?? true;
@@ -105,7 +105,10 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             hostname: getHostname(),
             services: [],
             trustLevel: 'internal',
-            metadata: {},
+            // Same reasoning as PlacementRegistry's own copy of this constructor: nothing else writes
+            // this field, and the self-mutating registerContract/unregisterContract/unregisterDomain
+            // path preserves whatever is set here across every later presence update.
+            metadata: options.metadata ?? {},
             capabilities: {
                 transports: ['ws'],
                 features: ['relay']

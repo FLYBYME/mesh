@@ -77,7 +77,7 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
 
     constructor(
         private logger: ILogger,
-        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; namespace?: string } = {}
+        options: { preferLocal?: boolean; localNodeID?: string; dhtEnabled?: boolean; ttl?: number; pruneInterval?: number; namespace?: string; metadata?: Record<string, string> } = {}
     ) {
         super();
         this.preferLocal = options.preferLocal ?? true;
@@ -104,7 +104,12 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
             hostname: getHostname(),
             services: [],
             trustLevel: 'internal',
-            metadata: {},
+            // An operator-declared label set (mesh-serve's `--labels role=dns`), carried verbatim in
+            // every presence broadcast (broadcastPresence sends this whole node record) since nothing
+            // else writes this field -- see registerContract/unregisterContract/unregisterDomain,
+            // which mutate this same object in place and re-register it, so a value set here survives
+            // every later change to what this node advertises.
+            metadata: options.metadata ?? {},
             capabilities: {
                 transports: ['ws'],
                 features: ['relay']
