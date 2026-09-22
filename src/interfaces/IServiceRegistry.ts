@@ -16,7 +16,11 @@ export interface IServiceRegistry {
     getNode(nodeID: string): NodeInfo | undefined;
     getNodes(): NodeInfo[];
     getAvailableNodes(): NodeInfo[];
-    registerNode(node: NodeInfo): void;
+    /**
+     * `trusted`: the node speaking for itself, first-hand (handlePresence) -- always wins over
+     * whatever nodeSeq a stale relay (PEX) may still be holding for it. Never set by PEX itself.
+     */
+    registerNode(node: NodeInfo, trusted?: boolean): void;
     unregisterNode(nodeID: string): void;
     heartbeat(nodeID: string, data?: { cpu?: number; activeRequests?: number }): void;
     findNodesForTool(toolName: string): NodeInfo[];

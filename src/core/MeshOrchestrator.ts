@@ -257,7 +257,10 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             serviceCount: data.node.services.length,
             internal: true
         });
-        this.node.registry.registerNode(data.node);
+        // trusted: true -- this packet is the node speaking for itself, always more current than
+        // whatever nodeSeq a stale PEX relay of it may still be holding. See registerNode's own
+        // comment for the full story (mesh v4.2.4).
+        this.node.registry.registerNode(data.node, true);
 
         // registerNode can refuse a node (a ghost of self, an address conflict). A refused peer is
         // still "new" on its next packet, and a reply to every "new" packet is a reply to every

@@ -418,7 +418,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         };
     }
 
-    public registerNode(node: CoreNodeInfo): void {
+    public registerNode(node: CoreNodeInfo, trusted = false): void {
         const existing = this.nodes.get(node.nodeID);
 
         // Normalize addresses for better matching (e.g. localhost -> 127.0.0.1)
@@ -453,31 +453,61 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             }
         }
 
-        // If node exists and seq is lower, ignore incoming (stale info)
-        if (existing && (existing.nodeSeq ?? 0) > (node.nodeSeq ?? 0)) {
-            return;
-        }
+        // `bootedAt` is a real generation marker (set once, at process start, never recomputed) --
+        // unlike nodeSeq, which is not a boot generation, it is just how many contracts a node has
+        // registered so far in its *current* process, and resets low on every restart. When both
+        // sides have one and they disagree, that alone settles which record is newer: a later
+        // `bootedAt` is always a later boot, full stop, regardless of trusted or nodeSeq. An earlier
+        // `bootedAt` than what's on record is unambiguously a stale packet describing a boot we've
+        // already moved past -- refused outright, even if trusted (a live connection should never
+        // report an older bootedAt than what it already told us). This is what actually closes the
+        // gap `trusted` alone left open: a relay caching a peer's *previous* boot (higher nodeSeq,
+        // because that boot ran longer and registered more contracts) arriving *after* that peer's
+        // own genuine post-restart presence would still win on nodeSeq alone -- bootedAt can't be
+        // fooled the same way, because it doesn't grow with contract count, only with real time.
+        if (existing?.bootedAt !== undefined && node.bootedAt !== undefined && existing.bootedAt !== node.bootedAt) {
+            if (node.bootedAt < existing.bootedAt) return;
+            // else: a genuinely newer boot -- fall through to the full replace below, bypassing
+            // nodeSeq entirely (a fresh process legitimately starts back at a low nodeSeq).
+        } else {
+            // Same boot (or one side predates this field) -- nodeSeq is the only signal available,
+            // same as before.
+            //
+            // If node exists and seq is lower, ignore incoming (stale info) -- unless this is the
+            // node speaking for itself right now (trusted, set only by handlePresence, never by
+            // PEX). A relay still holding this node's nodeSeq from a previous, longer-lived boot
+            // would otherwise permanently outrank every real update from a freshly-restarted node --
+            // not just metadata, anything -- because this guard returns before any later logic runs.
+            // Found live: a spoke reconnecting to the hub still showed {} for its own --labels no
+            // matter how many times it reconnected, because a stale PEX relay of it, from before its
+            // restart, had already won this comparison. A trusted call skips straight to the full
+            // replace below, which also resets nodeSeq to this node's real current value for every
+            // future comparison.
+            if (!trusted && existing && (existing.nodeSeq ?? 0) > (node.nodeSeq ?? 0)) {
+                return;
+            }
 
-        // If node exists and seq is same, DO NOT refresh timestamp.
-        // Timestamp refresh should only happen via direct heartbeat() or seq update.
-        // This prevents PEX (gossip) from keeping dead nodes alive indefinitely.
-        if (existing && (existing.nodeSeq ?? 0) === (node.nodeSeq ?? 0)) {
-            // Only update metadata/metrics if needed, but NOT the lease timestamp
-            existing.available = node.available ?? existing.available;
-            if (node.cpu !== undefined) existing.cpu = node.cpu;
-            if (node.activeRequests !== undefined) existing.activeRequests = node.activeRequests;
-            // A node's --labels never change after boot, so there is no staleness risk in taking
-            // them whenever a packet actually has them -- only in refusing to. Without this, a
-            // registration that reaches us first with no metadata (an intermediary relaying its own
-            // stale, pre-fix copy of a peer's labels, or simply racing a peer's own direct presence
-            // on reconnect) locks that peer's labels at {} forever: this same-nodeSeq path is the
-            // only one every later packet for that nodeSeq takes, and it never used to touch
-            // metadata at all. Found live, after the PEX metadata fix (v4.2.2): two nodes that
-            // reconnected to a third at the same moment still raced each other into this path.
-            if (node.metadata && Object.keys(node.metadata).length > 0) existing.metadata = node.metadata;
+            // If node exists and seq is same, DO NOT refresh timestamp.
+            // Timestamp refresh should only happen via direct heartbeat() or seq update.
+            // This prevents PEX (gossip) from keeping dead nodes alive indefinitely.
+            if (!trusted && existing && (existing.nodeSeq ?? 0) === (node.nodeSeq ?? 0)) {
+                // Only update metadata/metrics if needed, but NOT the lease timestamp
+                existing.available = node.available ?? existing.available;
+                if (node.cpu !== undefined) existing.cpu = node.cpu;
+                if (node.activeRequests !== undefined) existing.activeRequests = node.activeRequests;
+                // A node's --labels never change after boot, so there is no staleness risk in taking
+                // them whenever a packet actually has them -- only in refusing to. Without this, a
+                // registration that reaches us first with no metadata (an intermediary relaying its
+                // own stale, pre-fix copy of a peer's labels, or simply racing a peer's own direct
+                // presence on reconnect) locks that peer's labels at {} forever: this same-nodeSeq
+                // path is the only one every later packet for that nodeSeq takes, and it never used
+                // to touch metadata at all. Found live, after the PEX metadata fix (v4.2.2): two
+                // nodes that reconnected to a third at the same moment still raced into this path.
+                if (node.metadata && Object.keys(node.metadata).length > 0) existing.metadata = node.metadata;
 
-            this.emit('changed', node.nodeID);
-            return;
+                this.emit('changed', node.nodeID);
+                return;
+            }
         }
 
         const registryNode: RegistryNodeInfo = {
