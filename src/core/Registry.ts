@@ -466,7 +466,16 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             existing.available = node.available ?? existing.available;
             if (node.cpu !== undefined) existing.cpu = node.cpu;
             if (node.activeRequests !== undefined) existing.activeRequests = node.activeRequests;
-            
+            // A node's --labels never change after boot, so there is no staleness risk in taking
+            // them whenever a packet actually has them -- only in refusing to. Without this, a
+            // registration that reaches us first with no metadata (an intermediary relaying its own
+            // stale, pre-fix copy of a peer's labels, or simply racing a peer's own direct presence
+            // on reconnect) locks that peer's labels at {} forever: this same-nodeSeq path is the
+            // only one every later packet for that nodeSeq takes, and it never used to touch
+            // metadata at all. Found live, after the PEX metadata fix (v4.2.2): two nodes that
+            // reconnected to a third at the same moment still raced each other into this path.
+            if (node.metadata && Object.keys(node.metadata).length > 0) existing.metadata = node.metadata;
+
             this.emit('changed', node.nodeID);
             return;
         }
