@@ -106,10 +106,13 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         const allKnown = this.node.registry.getNodes();
         const subset = allKnown.sort(() => 0.5 - Math.random()).slice(0, 50);
 
-        // hostname travels with PEX too. It is carried by $node.presence (which
-        // sends the whole node record), but this projection used to drop it -- so
-        // a node learned about second-hand showed up as "unknown" forever, while
-        // the same node seen over a direct connection had a name.
+        // hostname and metadata travel with PEX too. Both are carried by $node.presence (which
+        // sends the whole node record), but this projection used to drop them one at a time -- first
+        // hostname (a node learned about second-hand showed up as "unknown" forever), now metadata
+        // (an operator-declared --labels set learned about second-hand showed up as {} forever): the
+        // registry's equal-nodeSeq fast path in registerNode only refreshes available/cpu/
+        // activeRequests, so once a peer is first registered via PEX with no metadata, a later
+        // $node.presence for that same nodeSeq can never backfill it.
         const peers = subset.map(n => ({
             nodeID: n.nodeID,
             addresses: n.addresses,
@@ -122,7 +125,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             nodeSeq: n.nodeSeq,
             nodeType: n.nodeType,
             parentID: n.parentID,
-            hostname: n.hostname
+            hostname: n.hostname,
+            metadata: n.metadata
         }));
 
         this.node.publish('$node.pex', { peers }).catch(() => { });
