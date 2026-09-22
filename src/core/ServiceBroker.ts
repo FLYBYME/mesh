@@ -1289,7 +1289,15 @@ export class ServiceBroker implements IServiceBroker {
     public async executeRemote(nodeID: string, toolName: string, params: unknown, meta: Record<string, unknown> = {}): Promise<unknown> {
         if (!this.network) throw new Error('[ServiceBroker] Network not initialized');
 
-        const requestId = (meta.correlationID as string) || (meta.id as string) || randomUUID();
+        // The packet id -- what a response is matched on, and what a receiver's duplicate filter keys
+        // on (MeshNetwork drops any non-response packet whose id it saw in the last 10s) -- has to be
+        // unique to *this* call. It used to be the caller's correlationID, which is shared by every
+        // call in a chain: the first remote call from inside a handler worked, and every later one
+        // carried the same id, was dropped at the receiver as a duplicate, and left its caller
+        // waiting out the full timeout for a request nobody had seen. The correlationID still
+        // travels in meta, where it belongs, so the callee's ctx and traces stay linked to the chain.
+        const requestId = randomUUID();
+        const correlationID = (meta.correlationID as string) || (meta.id as string) || requestId;
 
         const currentCtx = this.getContext();
         const tracingMeta = {
@@ -1323,7 +1331,7 @@ export class ServiceBroker implements IServiceBroker {
             this.network.send(nodeID, toolName, params, {
                 id: requestId,
                 type: 'REQUEST',
-                meta: { ...meta, ...tracingMeta, timeout: timeoutMs, correlationID: requestId },
+                meta: { ...meta, ...tracingMeta, timeout: timeoutMs, correlationID },
                 senderNodeID: this.nodeID,
                 topic: toolName
             }).catch(err => {
