@@ -26,12 +26,26 @@ const DIAL_RETRY_FLOOR_MS = 20000;
  */
 export const PRESENCE_INTERVAL_MS = 15_000;
 
+/**
+ * How often the configured bootstrap peers are re-checked and redialed if not connected. Bootstrap
+ * used to run once, at start: a bootstrap peer lost later came back only if the transport's own
+ * reconnect loop happened to survive, or if some other peer's PEX mentioned it -- and a peer that
+ * just disconnected has also just been removed from the registry, so PEX rarely did. Found live: the
+ * cluster left as a star around one node, or with nodes holding no links at all, until restarted by
+ * hand. Only a URL the transport says needs a dial is dialed (BaseTransport.needsDial), so this
+ * cannot pile up dials.
+ */
+export const BOOTSTRAP_SUPERVISION_INTERVAL_MS = 15_000;
+
 export class MeshOrchestrator implements IMeshOrchestrator {
     private logger: ILogger;
     private gossipInterval?: TimerHandle;
     private presenceInterval?: TimerHandle;
+    private supervisionInterval?: TimerHandle;
     /** nodeID -> last dial attempt, so a PEX round cannot become a dial storm. */
     private dialAttempts = new Map<string, number>();
+    /** One placeholder id per bootstrap URL, kept for the process's life so its logs line up. */
+    private bootstrapIds = new Map<string, string>();
 
     constructor(
         private node: IMeshNetworkNode,
@@ -50,6 +64,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
 
         if (this.options.bootstrapNodes?.length) {
             await this.bootstrap();
+            this.supervisionInterval = setInterval(() => this.superviseBootstrapPeers(), BOOTSTRAP_SUPERVISION_INTERVAL_MS);
+            SafeTimer.unref(this.supervisionInterval);
         }
 
         // Start Gossip interval
@@ -73,19 +89,50 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             SafeTimer.clearInterval(this.presenceInterval);
             this.presenceInterval = undefined;
         }
+        if (this.supervisionInterval) {
+            SafeTimer.clearInterval(this.supervisionInterval);
+            this.supervisionInterval = undefined;
+        }
     }
 
     private async bootstrap(): Promise<void> {
         for (const addr of this.options.bootstrapNodes || []) {
             try {
                 this.logger.info(`Bootstrapping from ${addr}`);
-                // Attempt to connect to the bootstrap peer. 
-                // We use a temporary ID; the actual ID will be resolved during handshake.
-                await this.node.connectToPeer(`bootstrap_${Math.random().toString(36).substr(2, 5)}`, addr);
+                await this.node.connectToPeer(this.bootstrapId(addr), addr);
             } catch (err) {
                 this.logger.warn(`Failed to bootstrap from ${addr}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
+    }
+
+    /**
+     * Redial every bootstrap peer that is not connected. The transport decides what "connected"
+     * means for a URL -- including a link the peer dialed to us, and a URL that is this node -- and
+     * does nothing for those, or while a dial or a scheduled redial is already pending.
+     */
+    private superviseBootstrapPeers(): void {
+        for (const addr of this.options.bootstrapNodes || []) {
+            // A transport that cannot say (undefined) gets no redials: it has not promised that
+            // dialing an already-connected peer again is harmless.
+            if (this.node.needsDial?.(addr) !== true) continue;
+            this.node.connectToPeer(this.bootstrapId(addr), addr).catch((err) => {
+                this.logger.debug(
+                    `Bootstrap peer ${addr} still unreachable: ${err instanceof Error ? err.message : String(err)}`,
+                    { internal: true }
+                );
+            });
+        }
+    }
+
+    /** A temporary ID; the peer's real one is learned during the handshake. */
+    private bootstrapId(addr: string): string {
+        let id = this.bootstrapIds.get(addr);
+        if (id === undefined) {
+            id = `bootstrap_${Math.random().toString(36).slice(2, 7)}`;
+            this.bootstrapIds.set(addr, id);
+        }
+        return id;
     }
 
     /**

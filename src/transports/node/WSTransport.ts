@@ -29,6 +29,64 @@ export interface WSTransportOptions {
 export const DUPLICATE_NODE_ID_CLOSE = 4409;
 
 /**
+ * Close code for a second connection between the same two live processes -- both dialed each other
+ * at once, which every node does now that each dials every peer. Exactly one of the two is kept,
+ * chosen identically on both ends; the other is closed with this. Not an error and not a reason to
+ * reconnect: the kept connection carries the link.
+ */
+export const REDUNDANT_CONNECTION_CLOSE = 4000;
+
+/**
+ * Carries a transport's per-process instance id: sent on dial, echoed on the upgrade response. It is
+ * what tells "the same peer process, a second socket" (keep one) apart from "a different process
+ * claiming the same nodeID" (a restart, or a genuine duplicate) -- a nodeID alone cannot.
+ */
+const INSTANCE_HEADER = 'x-mesh-instance';
+
+/**
+ * Carries a transport's nodeID in the same handshake, so both ends know who is on a socket the moment
+ * it opens instead of at its first message. Without it an outbound bootstrap dial sat under a
+ * `bootstrap_<rand>` placeholder until the peer spoke, and a collision with another socket to the
+ * same peer could not be seen until then. Older peers send neither header; identification by first
+ * message still works for them.
+ */
+const NODE_HEADER = 'x-mesh-node';
+
+/** Ceiling for per-peer reconnect backoff, and the delay after a duplicate-nodeID refusal. */
+const RECONNECT_BACKOFF_CAP_MS = 30_000;
+
+/** Consecutive failed reconnects to one URL before it is worth a warning (logged once). */
+const RECONNECT_WARN_AFTER = 5;
+
+/** What this transport knows about one socket beyond what `ws` does. */
+interface SocketInfo {
+    /** Who opened it: this process ('self', an outbound dial) or the peer ('remote', inbound). */
+    dialedBy: 'self' | 'remote';
+    /** The peer process's instance id, when it sent one (older peers do not). */
+    remoteInstance?: string;
+    /** The nodeID this socket has identified as -- whether or not it currently owns `peers[id]`. */
+    peerId?: string;
+    /** A liveness probe of the socket already holding this peer's id is in flight. */
+    resolving?: boolean;
+    /** Closed on purpose in favour of another socket to the same peer: not a loss, not a reconnect. */
+    superseded?: boolean;
+    /** A ping is out and its pong has not come back. */
+    awaitingPong: boolean;
+    /** When a real frame last arrived -- stronger proof of life than a pong; see hasRecentTraffic. */
+    lastMessageAt: number;
+    pingTimeoutTimer?: NodeJS.Timeout;
+}
+
+/** A header's value from an http request/response-shaped object, without trusting its type. */
+function headerValue(source: unknown, name: string): string | undefined {
+    if (typeof source !== 'object' || source === null || !('headers' in source)) return undefined;
+    const headers: unknown = source.headers;
+    if (typeof headers !== 'object' || headers === null) return undefined;
+    const value: unknown = Reflect.get(headers, name);
+    return typeof value === 'string' ? value : undefined;
+}
+
+/**
  * WSTransport — Node.js implementation using 'ws' and 'http'.
  */
 export class WSTransport extends BaseTransport {
@@ -45,10 +103,27 @@ export class WSTransport extends BaseTransport {
 
     private pendingRPCs = new Map<string, PendingRPC>();
     private static readonly RPC_TIMEOUT_MS = 10000;
-    private reconnectAttempts = 0;
-    private static readonly MAX_RECONNECT_ATTEMPTS = 10;
+    /**
+     * Consecutive failed reconnects, per peer URL. Per peer, not one counter for the whole
+     * transport: a single shared count with a hard cap of ten meant that after ten reconnects across
+     * *all* peers it logged "Max reconnection attempts reached" and never reconnected anyone again --
+     * one of the reasons links on the live cluster stayed down after restarts.
+     */
+    private readonly reconnectFailures = new Map<string, number>();
+    /** URLs whose duplicate-nodeID refusal has been logged, so a slow retry loop logs it once. */
+    private readonly refusalLogged = new Set<string>();
     private heartbeatTimer?: NodeJS.Timeout;
-    private reconnectionTimers = new Set<NodeJS.Timeout>();
+    /** A scheduled redial, per peer URL -- at most one each. */
+    private readonly reconnectionTimers = new Map<string, NodeJS.Timeout>();
+    /** This process's own instance id -- see INSTANCE_HEADER. */
+    public readonly instanceId = randomUUID();
+    private readonly socketInfo = new WeakMap<IWS, SocketInfo>();
+    /** Every socket not yet closed, owned or not -- a standby is promoted from here; see releasePeer. */
+    private readonly liveSockets = new Set<IWS>();
+    /** The outbound socket currently open or opening to each URL -- at most one each. */
+    private readonly outbound = new Map<string, IWS>();
+    /** The nodeID each dialed URL turned out to be, so a redial can tell it is already connected. */
+    private readonly urlNode = new Map<string, string>();
 
     public pingIntervalMs: number;
     public pingTimeoutMs: number;
@@ -233,60 +308,202 @@ export class WSTransport extends BaseTransport {
 
     private setupWSSHandlers() {
         if (!this.wss) return;
-        this.wss.on('connection', (ws: IWS) => {
-            // Only set once this socket actually *owns* `peers[id]`. A socket that was refused for
-            // claiming a taken id must never reach the close handler below holding an id it does
-            // not own -- that is what let a short-lived duplicate evict a healthy peer.
-            let peerId: string | null = null;
-            this.setupSocketKeepalive(ws, () => peerId);
+
+        // Answer every upgrade with who we are, so the dialer knows at 'open' -- see NODE_HEADER.
+        this.wss.on('headers', (headers: string[]) => {
+            headers.push(`${NODE_HEADER}: ${this.nodeID}`, `${INSTANCE_HEADER}: ${this.instanceId}`);
+        });
+
+        this.wss.on('connection', (ws: IWS, req: unknown) => {
+            const info = this.trackSocket(ws, 'remote');
+            info.remoteInstance = headerValue(req, INSTANCE_HEADER) || undefined;
+            const remoteNode = headerValue(req, NODE_HEADER) || undefined;
 
             ws.on('message', (raw: unknown) => {
-                this.handleIncomingMessage(raw, ws, (id) => {
-                    const existing = this.peers.get(id);
-
-                    if (existing === ws) return; // Already ours; every later message re-identifies.
-
-                    if (existing !== undefined) {
-                        // Two live processes claiming one nodeID. `peers` is keyed by nodeID and
-                        // `send()` resolves exactly one socket per key, so only one of them can
-                        // ever be reachable -- and silently keeping the incumbent left the newcomer
-                        // connected, accepted, and deaf: it never got a `peer:connect`, so this node
-                        // never sent it presence, and it failed a while later as "Timeout: Only 1/2
-                        // nodes found", an error about node counts that says nothing about the
-                        // collision. Found live: a `mesh-serve bootstrap` (hardcoded nodeID
-                        // `bootstrap-1`) interrupted mid-wizard made every subsequent bootstrap
-                        // against that node fail for as long as the first process lived.
-                        //
-                        // A nodeID is an identity, so two live claims is an error, not a race to
-                        // resolve. The incumbent keeps it and the newcomer is told why.
-                        this.logger?.error(`[WSTransport] Refusing connection: nodeID "${id}" is already connected from another socket. Two processes cannot share one nodeID -- give this one its own.`);
-                        ws.close(DUPLICATE_NODE_ID_CLOSE, `nodeID "${id}" already connected`);
-                        return;
-                    }
-
-                    this.peers.set(id, ws);
-                    peerId = id;
-                    this.emit('peer:connect', id);
-                });
+                this.handleIncomingMessage(raw, ws, (id) => this.claimPeer(id, ws));
             });
 
             ws.on('close', () => {
-                this.cleanupSocketKeepalive(ws);
-                // Ownership-checked, mirroring the client side's own guard: delete the entry only
-                // while it still points at *this* socket.
-                if (peerId !== null && this.peers.get(peerId) === ws) {
-                    this.peers.delete(peerId);
-                    this.emit('peer:disconnect', peerId);
-                }
+                this.forgetSocket(ws);
+                // releasePeer is ownership-checked: a socket that was refused, superseded, or left
+                // standing by never owned `peers[id]` and so can never evict the socket that does.
+                if (info.peerId !== undefined) this.releasePeer(info.peerId, ws);
             });
+
+            if (remoteNode === this.nodeID) {
+                this.refuseOwnNodeId(ws, info);
+                return;
+            }
+            if (remoteNode !== undefined) this.claimPeer(remoteNode, ws);
         });
+    }
+
+    /** An inbound socket whose dialer claims *our* nodeID: ourselves (a bootstrap list that includes
+     *  this node's own address), or a second process configured with our id. */
+    private refuseOwnNodeId(ws: IWS, info: SocketInfo): void {
+        if (info.remoteInstance === this.instanceId) {
+            info.superseded = true;
+            ws.close(REDUNDANT_CONNECTION_CLOSE, 'connected to itself');
+            return;
+        }
+        this.logger?.error(`[WSTransport] Refusing connection: another process is using this node's own nodeID "${this.nodeID}". Two processes cannot share one nodeID -- give that one its own.`);
+        ws.close(DUPLICATE_NODE_ID_CLOSE, `nodeID "${this.nodeID}" already connected`);
+    }
+
+    /**
+     * `ws` has identified as `id`. The one place a socket becomes the connection for a peer -- used
+     * by inbound and outbound sockets alike, at the handshake and again on every message.
+     *
+     * When another open socket already holds `id`, this decides which one keeps it:
+     *
+     * - **Same remote process** (same instance id): a second socket between the same two processes,
+     *   normally because both dialed each other at once. See resolveRedundant.
+     * - **A different process, or one that cannot say** (no instance id): either the peer restarted
+     *   and the incumbent is a stale socket to its old process, or two live processes really do share
+     *   one nodeID. See probeIncumbent.
+     *
+     * Before this, the server side refused *every* such second socket as a duplicate identity (4409),
+     * which is permanent to the dialer -- so a simultaneous dial could leave the pair with no link at
+     * all, and a restarted peer was refused by its own stale socket and never retried. The client
+     * side did the opposite, overwriting the live entry unchecked.
+     */
+    private claimPeer(id: string, ws: IWS): void {
+        const mine = this.infoOf(ws);
+        if (mine.superseded || mine.resolving || ws.readyState !== WebSocket.OPEN) return;
+        mine.peerId = id;
+
+        const existing = this.peers.get(id);
+        if (existing === ws) return;
+
+        if (existing === undefined || existing.readyState !== WebSocket.OPEN) {
+            // Nothing live holds it. A closing socket's own close handler finds it no longer owns
+            // the entry, so it emits nothing.
+            this.peers.set(id, ws);
+            this.emit('peer:connect', id);
+            return;
+        }
+
+        const theirs = this.infoOf(existing);
+        if (mine.remoteInstance !== undefined && mine.remoteInstance === theirs.remoteInstance) {
+            this.resolveRedundant(id, ws, existing);
+            return;
+        }
+        this.probeIncumbent(id, ws, existing);
+    }
+
+    /**
+     * Two open sockets to the same peer process. Exactly one is kept, and both ends must choose the
+     * same one without talking about it:
+     *
+     * - Dialed by different ends (simultaneous dial): keep the one dialed by the lexicographically
+     *   smaller nodeID -- the same socket as seen from either side.
+     * - Dialed by the same end (two dials raced, e.g. a bootstrap dial and a PEX dial): only the
+     *   dialing end closes one. The other end leaves the second as a standby, so whichever of the two
+     *   the dialer keeps, releasePeer promotes it here when the other closes.
+     *
+     * The loser is closed with REDUNDANT_CONNECTION_CLOSE and marked superseded: it emits no
+     * `peer:disconnect` and starts no reconnect, because the peer is still connected.
+     */
+    private resolveRedundant(id: string, newcomer: IWS, incumbent: IWS): void {
+        const mine = this.infoOf(newcomer);
+        const theirs = this.infoOf(incumbent);
+
+        if (mine.dialedBy !== theirs.dialedBy) {
+            const keptDialer: SocketInfo['dialedBy'] = this.nodeID < id ? 'self' : 'remote';
+            const keep = mine.dialedBy === keptDialer ? newcomer : incumbent;
+            const drop = keep === newcomer ? incumbent : newcomer;
+            if (keep === newcomer) this.peers.set(id, newcomer);
+            this.supersede(drop);
+            return;
+        }
+
+        if (mine.dialedBy === 'self') this.supersede(newcomer);
+    }
+
+    /**
+     * A socket from a different process (or one that sends no instance id) claims a nodeID a live
+     * socket already holds. Ask the incumbent: one ping, `pingTimeoutMs` to answer.
+     *
+     * - No answer: it is a stale socket to a process that is gone -- the usual case, a peer that
+     *   restarted before this side noticed the old connection die. Terminate it and let the newcomer
+     *   have the id.
+     * - An answer: two live processes really do share one nodeID. `peers` is keyed by nodeID and
+     *   `send()` resolves exactly one socket per key, so only one can ever be reachable. Refuse the
+     *   newcomer with DUPLICATE_NODE_ID_CLOSE and say why -- a silently accepted newcomer was
+     *   connected but deaf (found live: a `mesh-serve bootstrap` with a hardcoded nodeID, interrupted
+     *   mid-wizard, made every later bootstrap against that node fail while the first lived).
+     */
+    private probeIncumbent(id: string, newcomer: IWS, incumbent: IWS): void {
+        const mine = this.infoOf(newcomer);
+        mine.resolving = true;
+
+        let settled = false;
+        const settle = (incumbentAnswered: boolean): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            mine.resolving = false;
+            if (newcomer.readyState !== WebSocket.OPEN) return;
+
+            const stillHeld = this.peers.get(id) === incumbent && incumbent.readyState === WebSocket.OPEN;
+            if (incumbentAnswered && stillHeld) {
+                this.logger?.error(`[WSTransport] Refusing connection: nodeID "${id}" is already connected from another live process. Two processes cannot share one nodeID -- give this one its own.`);
+                newcomer.close(DUPLICATE_NODE_ID_CLOSE, `nodeID "${id}" already connected`);
+                return;
+            }
+            if (stillHeld) {
+                this.terminatePeerForPingFailure(id, incumbent, `did not answer a probe while a new process claims its nodeID; replacing the stale socket`);
+            }
+            this.claimPeer(id, newcomer);
+        };
+
+        const timer = setTimeout(() => settle(false), this.pingTimeoutMs);
+        timer.unref();
+        incumbent.once('pong', () => settle(true));
+        incumbent.once('close', () => settle(false));
+
+        if (!incumbent.ping) {
+            // Cannot ask, so do what was done before probing existed: the incumbent keeps it.
+            settle(true);
+            return;
+        }
+        try {
+            incumbent.ping();
+        } catch {
+            settle(false);
+        }
+    }
+
+    /** Close `ws` in favour of another socket to the same peer -- see resolveRedundant. */
+    private supersede(ws: IWS): void {
+        this.infoOf(ws).superseded = true;
+        ws.close(REDUNDANT_CONNECTION_CLOSE, 'redundant connection');
+    }
+
+    /**
+     * `ws` is going away. If it held `peers[id]`, hand the entry to another open socket already
+     * identified as the same peer (a standby, see resolveRedundant) -- the peer never left, so no
+     * event. Only with no such socket is the peer actually disconnected.
+     */
+    private releasePeer(id: string, ws: IWS): void {
+        if (this.peers.get(id) !== ws) return;
+        this.peers.delete(id);
+
+        for (const candidate of this.liveSockets) {
+            if (candidate === ws || candidate.readyState !== WebSocket.OPEN) continue;
+            const info = this.infoOf(candidate);
+            if (info.peerId !== id || info.superseded || info.resolving) continue;
+            this.peers.set(id, candidate);
+            return;
+        }
+        this.emit('peer:disconnect', id);
     }
 
     private handleIncomingMessage(raw: unknown, socket: IWS, onIdentify?: (id: string) => void) {
         // Any real inbound frame is stronger liveness evidence than a control-frame pong --
         // sendHeartbeats() reads this to avoid killing a socket that's actively exchanging
         // application data but happened to lose one ping/pong round-trip (see its own comment).
-        (socket as any).lastMessageAt = Date.now();
+        this.infoOf(socket).lastMessageAt = Date.now();
         try {
             const payloadString = this.decodePayload(raw);
             const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
@@ -347,7 +564,7 @@ export class WSTransport extends BaseTransport {
         this.isDraining = true;
         this.logger?.info('[WSTransport] Draining connections...');
 
-        for (const timer of this.reconnectionTimers) {
+        for (const timer of this.reconnectionTimers.values()) {
             clearTimeout(timer);
         }
         this.reconnectionTimers.clear();
@@ -368,7 +585,7 @@ export class WSTransport extends BaseTransport {
         }
 
         this.stopHeartbeat();
-        for (const ws of this.peers.values()) {
+        for (const ws of this.liveSockets) {
             if (ws.terminate) ws.terminate();
             else ws.close();
         }
@@ -486,8 +703,22 @@ export class WSTransport extends BaseTransport {
         }
     }
 
+    /**
+     * Dial `url` -- unless it needs no dial: its node is already connected (by any socket, in either
+     * direction), a dial to it is already open or in flight, or a redial is already scheduled. That
+     * makes this safe to call repeatedly for the same peer, which is how MeshOrchestrator keeps its
+     * bootstrap peers connected, and why PEX, bootstrap and supervision dials cannot pile up.
+     */
     async connectToPeer(nodeID: string, url: string): Promise<void> {
+        if (this.isPeerConnected(nodeID) || !this.needsDial(url)) return;
         return this.internalConnectToPeer(nodeID, url);
+    }
+
+    override needsDial(url: string): boolean {
+        if (this.isDraining) return false;
+        const known = this.urlNode.get(url);
+        if (known !== undefined && (known === this.nodeID || this.isPeerConnected(known))) return false;
+        return !this.outbound.has(url) && !this.reconnectionTimers.has(url);
     }
 
     override isPeerConnected(nodeID: string): boolean {
@@ -496,33 +727,56 @@ export class WSTransport extends BaseTransport {
     }
 
     private async internalConnectToPeer(nodeID: string, url: string, attempt = 0): Promise<void> {
-        this.logger?.info(`[WSTransport] Connecting to peer ${nodeID} at ${url}...`);
+        const line = `[WSTransport] Connecting to peer ${nodeID} at ${url}...`;
+        if (attempt === 0) this.logger?.info(line);
+        else this.logger?.debug(line);
         return new Promise((resolve, reject) => {
             const key = this.authKey ?? process.env.MESH_KEY;
-            const ws = (key
-                ? new WebSocket(url, {
-                    headers: {
-                        'x-mesh-key': key,
-                        'authorization': `Bearer ${key}`
-                    }
-                })
-                : new WebSocket(url)) as IWS;
+            const headers: Record<string, string> = {
+                [NODE_HEADER]: this.nodeID,
+                [INSTANCE_HEADER]: this.instanceId,
+            };
+            if (key) {
+                headers['x-mesh-key'] = key;
+                headers['authorization'] = `Bearer ${key}`;
+            }
+            const ws: IWS = new WebSocket(url, { headers });
+            this.outbound.set(url, ws);
 
-            // A bootstrap connection opens under a temporary placeholder id (MeshOrchestrator's
-            // `bootstrap_<rand>`) and only learns the peer's real nodeID once its first message
-            // arrives. currentPeerId tracks whichever key this socket is *actually* filed under
-            // in `this.peers` right now, so identifying it and cleaning it up both operate on the
-            // same, current key -- not two different ones.
+            // A bootstrap dial starts under a temporary placeholder id (MeshOrchestrator's
+            // `bootstrap_<rand>`) until the peer says who it is -- in its upgrade response, or, from
+            // a peer too old to, its first message. currentPeerId tracks whichever key this socket
+            // is *actually* filed under in `this.peers` right now, so identifying it and cleaning it
+            // up both operate on the same, current key -- not two different ones.
             let currentPeerId = nodeID;
-            this.setupSocketKeepalive(ws, () => currentPeerId);
+            let remoteNode: string | undefined;
+            const info = this.trackSocket(ws, 'self');
 
             let isAuthFailure = false;
 
+            ws.on('upgrade', (res: unknown) => {
+                info.remoteInstance = headerValue(res, INSTANCE_HEADER) || undefined;
+                remoteNode = headerValue(res, NODE_HEADER) || undefined;
+            });
+
             ws.on('open', () => {
-                this.reconnectAttempts = 0;
-                this.peers.set(currentPeerId, ws);
-                this.emit('peer:connect', currentPeerId);
+                this.reconnectFailures.delete(url);
+                this.refusalLogged.delete(url);
                 this.startHeartbeat();
+
+                if (remoteNode !== undefined) {
+                    this.urlNode.set(url, remoteNode);
+                    if (remoteNode === this.nodeID) {
+                        // Our own address is in the bootstrap list (every node is given every
+                        // node's). Nothing to connect to; connectToPeer skips this URL from now on.
+                        this.logger?.debug(`[WSTransport] ${url} is this node itself; not connecting`, { internal: true });
+                        this.supersede(ws);
+                        resolve();
+                        return;
+                    }
+                    currentPeerId = remoteNode;
+                }
+                this.claimPeer(currentPeerId, ws);
                 resolve();
             });
 
@@ -541,93 +795,125 @@ export class WSTransport extends BaseTransport {
 
             ws.on('message', (data: unknown) => {
                 this.handleIncomingMessage(data, ws, (id) => {
-                    if (id === currentPeerId) return;
-                    // Identified as someone other than the placeholder (or a previous identity)
-                    // it was filed under -- move the entry, don't just add a second one. The old
-                    // client-side bug here: this only ever *added* peers[id], leaving
-                    // peers[<old placeholder>] pointing at the same live socket forever, so
-                    // sendHeartbeats() pinged the same connection under two keys at once (and
-                    // 'close' below, closed over the original `nodeID`, only ever cleaned up one
-                    // of them) -- found live as a repeating "bootstrap_XXXXX missed pong,
-                    // terminating socket" that never stopped, once every heartbeat tick, for as
-                    // long as the process ran.
-                    if (this.peers.get(currentPeerId) === ws) {
-                        this.peers.delete(currentPeerId);
+                    if (id !== currentPeerId) {
+                        // Identified as someone other than the placeholder (or a previous identity)
+                        // it was filed under -- move the entry, don't just add a second one. The old
+                        // client-side bug here: this only ever *added* peers[id], leaving
+                        // peers[<old placeholder>] pointing at the same live socket forever, so
+                        // sendHeartbeats() pinged the same connection under two keys at once --
+                        // found live as a repeating "bootstrap_XXXXX missed pong, terminating
+                        // socket" that never stopped, once every heartbeat tick.
+                        if (this.peers.get(currentPeerId) === ws) {
+                            this.peers.delete(currentPeerId);
+                        }
+                        currentPeerId = id;
+                        this.urlNode.set(url, id);
                     }
-                    currentPeerId = id;
-                    this.peers.set(currentPeerId, ws);
+                    // Through claimPeer, never a bare peers.set: another live socket may already
+                    // hold this id, and overwriting it is what dropped working links.
+                    this.claimPeer(id, ws);
                 });
             });
 
             ws.on('close', (...args: unknown[]) => {
-                this.cleanupSocketKeepalive(ws);
-                if (this.peers.get(currentPeerId) === ws) {
-                    this.peers.delete(currentPeerId);
-                    this.emit('peer:disconnect', currentPeerId);
-                }
+                this.forgetSocket(ws);
+                if (this.outbound.get(url) === ws) this.outbound.delete(url);
+                this.releasePeer(currentPeerId, ws);
 
-                // Refused for claiming a nodeID another live process already holds. Retrying cannot
-                // fix that -- only changing this process's nodeID, or the other one exiting, can --
-                // so reconnecting would just hide the one message that explains the failure.
+                // Closed in favour of another socket to the same peer, by either end: the peer is
+                // still connected, so there is nothing to reconnect.
+                if (info.superseded || args[0] === REDUNDANT_CONNECTION_CLOSE) return;
+                if (isAuthFailure) return;
+
                 if (args[0] === DUPLICATE_NODE_ID_CLOSE) {
-                    this.logger?.error(`[WSTransport] ${url} refused this connection: nodeID "${this.nodeID}" is already connected there from another process. Give this process its own nodeID.`);
+                    // Refused for claiming a nodeID another live process holds there. Not
+                    // permanent: before probing existed, a stale socket to this node's own previous
+                    // process was refused the same way, and never retried. Retry slowly, and say
+                    // why once rather than on every attempt.
+                    if (!this.refusalLogged.has(url)) {
+                        this.refusalLogged.add(url);
+                        this.logger?.error(`[WSTransport] ${url} refused this connection: nodeID "${this.nodeID}" is already connected there from another live process. Give this process its own nodeID. Retrying every ${RECONNECT_BACKOFF_CAP_MS / 1000}s.`);
+                    }
+                    this.handleReconnection(currentPeerId, url, RECONNECT_BACKOFF_CAP_MS);
                     return;
                 }
 
-                if (!isAuthFailure) {
-                    // Reconnect under the identity this socket last proved, not the placeholder
-                    // it started as -- otherwise every reconnect forgets the real nodeID this
-                    // connection already learned and starts back over as an anonymous bootstrap
-                    // peer, every time.
-                    this.handleReconnection(currentPeerId, url);
-                }
+                // Reconnect under the identity this socket last proved, not the placeholder it
+                // started as -- otherwise every reconnect forgets the real nodeID this connection
+                // already learned and starts back over as an anonymous bootstrap peer, every time.
+                this.handleReconnection(currentPeerId, url);
             });
         });
     }
 
-    private handleReconnection(nodeID: string, url: string) {
-        if (this.isDraining) return;
-        if (this.reconnectAttempts >= WSTransport.MAX_RECONNECT_ATTEMPTS) {
-            this.logger?.error(`Max reconnection attempts reached for node ${nodeID}`);
-            return;
+    /**
+     * Schedule a redial of `url`, backing off per URL up to RECONNECT_BACKOFF_CAP_MS, and never
+     * giving up while the transport runs -- a peer that is down for an hour is reconnected when it
+     * comes back. Skipped when the peer turns out to be connected by then (it dialed us, say).
+     */
+    private handleReconnection(nodeID: string, url: string, fixedDelayMs?: number): void {
+        if (this.isDraining || this.reconnectionTimers.has(url)) return;
+
+        const failures = this.reconnectFailures.get(url) ?? 0;
+        this.reconnectFailures.set(url, failures + 1);
+        if (failures + 1 === RECONNECT_WARN_AFTER) {
+            this.logger?.warn(`[WSTransport] Still cannot reach peer ${nodeID} at ${url} after ${RECONNECT_WARN_AFTER} attempts; retrying every ~${RECONNECT_BACKOFF_CAP_MS / 1000}s until it answers`);
         }
 
-        const baseDelay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
+        const baseDelay = fixedDelayMs ?? Math.min(RECONNECT_BACKOFF_CAP_MS, Math.pow(2, failures) * 1000);
         // Add 0-25% jitter
-        const jitter = Math.random() * 0.25 * baseDelay;
-        const delay = baseDelay + jitter;
-
-        this.reconnectAttempts++;
+        const delay = baseDelay + Math.random() * 0.25 * baseDelay;
 
         const timer = setTimeout(() => {
-            this.reconnectionTimers.delete(timer);
-            this.internalConnectToPeer(nodeID, url, this.reconnectAttempts).catch(() => { });
+            this.reconnectionTimers.delete(url);
+            const known = this.urlNode.get(url);
+            if (this.isPeerConnected(nodeID) || (known !== undefined && this.isPeerConnected(known))) {
+                this.reconnectFailures.delete(url);
+                return;
+            }
+            if (this.isDraining || this.outbound.has(url)) return;
+            this.internalConnectToPeer(nodeID, url, failures + 1).catch(() => { });
         }, delay);
-        this.reconnectionTimers.add(timer);
+        this.reconnectionTimers.set(url, timer);
         timer.unref();
     }
 
-    private setupSocketKeepalive(ws: IWS, getPeerId: () => string | null): void {
-        const socket = ws as any;
-        socket.isAlive = true;
-        socket.awaitingPong = false;
-        socket.lastMessageAt = Date.now();
+    /** Start tracking a new socket: its SocketInfo, its keepalive, and liveSockets. */
+    private trackSocket(ws: IWS, dialedBy: SocketInfo['dialedBy']): SocketInfo {
+        const info: SocketInfo = { dialedBy, awaitingPong: false, lastMessageAt: Date.now() };
+        this.socketInfo.set(ws, info);
+        this.liveSockets.add(ws);
 
         ws.on('pong', () => {
-            socket.isAlive = true;
-            socket.awaitingPong = false;
-            if (socket._pingTimeoutTimer) {
-                clearTimeout(socket._pingTimeoutTimer);
-                socket._pingTimeoutTimer = undefined;
+            info.awaitingPong = false;
+            if (info.pingTimeoutTimer) {
+                clearTimeout(info.pingTimeoutTimer);
+                info.pingTimeoutTimer = undefined;
             }
         });
+        return info;
+    }
+
+    /** Every socket is tracked from creation; this only covers one that somehow was not. */
+    private infoOf(ws: IWS): SocketInfo {
+        let info = this.socketInfo.get(ws);
+        if (info === undefined) {
+            info = { dialedBy: 'remote', awaitingPong: false, lastMessageAt: Date.now() };
+            this.socketInfo.set(ws, info);
+        }
+        return info;
+    }
+
+    private forgetSocket(ws: IWS): void {
+        this.liveSockets.delete(ws);
+        this.cleanupSocketKeepalive(ws);
     }
 
     private cleanupSocketKeepalive(ws: IWS): void {
-        const socket = ws as any;
-        if (socket._pingTimeoutTimer) {
-            clearTimeout(socket._pingTimeoutTimer);
-            socket._pingTimeoutTimer = undefined;
+        const info = this.infoOf(ws);
+        if (info.pingTimeoutTimer) {
+            clearTimeout(info.pingTimeoutTimer);
+            info.pingTimeoutTimer = undefined;
         }
     }
 
@@ -635,8 +921,7 @@ export class WSTransport extends BaseTransport {
      *  missed pong (see terminatePeerForPingFailure's own comment) -- shared by both places that
      *  decide whether a missed pong/timeout is real. */
     private hasRecentTraffic(ws: IWS): boolean {
-        const lastMessageAt = (ws as any).lastMessageAt as number | undefined;
-        return lastMessageAt !== undefined && (Date.now() - lastMessageAt) < this.pingIntervalMs;
+        return (Date.now() - this.infoOf(ws).lastMessageAt) < this.pingIntervalMs;
     }
 
     /**
@@ -656,19 +941,21 @@ export class WSTransport extends BaseTransport {
     private terminatePeerForPingFailure(peerId: string, ws: IWS, reason: string): void {
         this.logger?.warn(`[WSTransport] Peer ${peerId} ${reason}`);
         this.cleanupSocketKeepalive(ws);
-        if (this.peers.get(peerId) === ws) {
-            this.peers.delete(peerId);
-            this.emit('peer:disconnect', peerId);
-        }
+        this.releasePeer(peerId, ws);
         if (ws.terminate) ws.terminate();
         else if (ws.close) ws.close();
     }
 
+    /**
+     * Every open socket, not only the ones in `peers`: a standby or a socket that never identified is
+     * still a connection, and one that has died must be found and closed like any other.
+     */
     private sendHeartbeats(): void {
-        for (const [peerId, ws] of this.peers.entries()) {
+        for (const ws of this.liveSockets) {
             if (ws.readyState !== 1) continue;
 
-            const socket = ws as any;
+            const socket = this.infoOf(ws);
+            const peerId = socket.peerId ?? 'unidentified';
             if (socket.awaitingPong) {
                 // A pong is one control-frame round-trip on the same connection real request/
                 // response traffic flows over -- under sustained load it can lose a single race
@@ -684,15 +971,14 @@ export class WSTransport extends BaseTransport {
             }
 
             socket.awaitingPong = true;
-            socket.isAlive = false;
 
-            if (socket._pingTimeoutTimer) {
-                clearTimeout(socket._pingTimeoutTimer);
+            if (socket.pingTimeoutTimer) {
+                clearTimeout(socket.pingTimeoutTimer);
             }
 
-            socket._pingTimeoutTimer = setTimeout(() => {
+            socket.pingTimeoutTimer = setTimeout(() => {
                 if (!socket.awaitingPong) return;
-                socket._pingTimeoutTimer = undefined;
+                socket.pingTimeoutTimer = undefined;
                 // Same escape hatch as the missed-pong branch above -- this timer fires
                 // independently of sendHeartbeats()'s own tick, and previously had no such check
                 // at all: a socket that was demonstrably still exchanging real traffic got killed
@@ -704,9 +990,7 @@ export class WSTransport extends BaseTransport {
                 this.terminatePeerForPingFailure(peerId, ws, `ping timeout (${this.pingTimeoutMs}ms), terminating socket`);
             }, this.pingTimeoutMs);
 
-            if (socket._pingTimeoutTimer.unref) {
-                socket._pingTimeoutTimer.unref();
-            }
+            socket.pingTimeoutTimer.unref();
 
             if (ws.ping) {
                 try {
@@ -731,7 +1015,7 @@ export class WSTransport extends BaseTransport {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = undefined;
         }
-        for (const ws of this.peers.values()) {
+        for (const ws of this.liveSockets) {
             this.cleanupSocketKeepalive(ws);
         }
     }

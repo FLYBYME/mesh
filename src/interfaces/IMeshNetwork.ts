@@ -202,6 +202,8 @@ export interface IMeshNetworkNode extends IMeshBaseNode {
     connectToPeer(nodeID: string, url: string): Promise<void>;
     /** Whether a direct connection to this peer is currently open. */
     isPeerConnected?(nodeID: string): boolean;
+    /** Whether `url` needs dialing; `undefined` when the transport cannot tell. See BaseTransport.needsDial. */
+    needsDial?(url: string): boolean | undefined;
 }
 
 // --- Transport Types ---
@@ -238,6 +240,7 @@ export interface ITransportSocket {
 
 export interface IWS extends ITransportSocket {
     on(event: string, cb: (...args: unknown[]) => void): void;
+    once(event: string, cb: (...args: unknown[]) => void): void;
     terminate?(): void;
     ping?(): void;
     bufferedAmount: number;
@@ -245,6 +248,8 @@ export interface IWS extends ITransportSocket {
 
 export interface IWSServer {
     on(event: 'connection', cb: (ws: IWS, req: unknown) => void): void;
+    /** The response headers of an upgrade, before they are sent -- mutable, to add our own. */
+    on(event: 'headers', cb: (headers: string[], req: unknown) => void): void;
     close(cb?: (err?: Error) => void): void;
 }
 

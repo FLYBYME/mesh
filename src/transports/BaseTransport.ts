@@ -44,6 +44,16 @@ export abstract class BaseTransport extends EventEmitter {
         return false;
     }
 
+    /**
+     * Whether `url` needs dialing: false when this transport already holds a link to whatever node
+     * is there (in either direction), is dialing it, has a redial scheduled, or knows it is this
+     * node. `undefined` means the transport does not track links per URL -- and so cannot promise
+     * that a repeated `connectToPeer` is harmless -- which is the default.
+     */
+    needsDial(_url: string): boolean | undefined {
+        return undefined;
+    }
+
     /** Establish a direct peer connection (optional implementation) */
     async connectToPeer(_nodeID: string, _url: string, _options?: Record<string, unknown>): Promise<void> {
         throw new Error(`Transport ${this.protocol} does not support direct peer connections`);

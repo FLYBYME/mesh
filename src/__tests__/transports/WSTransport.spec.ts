@@ -133,7 +133,11 @@ describe('WSTransport', () => {
 
             await promise;
 
-            expect(MockedWebSocket).toHaveBeenCalledWith('ws://remote:5005');
+            // Every dial says who is dialing -- nodeID and process instance -- so the other end can
+            // tell a second socket from the same process apart from a different process.
+            expect(MockedWebSocket).toHaveBeenCalledWith('ws://remote:5005', {
+                headers: { 'x-mesh-node': 'test-node', 'x-mesh-instance': transport.instanceId },
+            });
             expect(peerConnectSpy).toHaveBeenCalledWith('remote-node');
         });
 
@@ -174,6 +178,33 @@ describe('WSTransport', () => {
             jest.runOnlyPendingTimers(); 
             
             expect(MockedWebSocket).toHaveBeenCalledTimes(2);
+            jest.useRealTimers();
+        });
+
+        it('keeps reconnecting past ten failures, backing off to a ceiling instead of giving up', async () => {
+            // One counter shared by every peer, capped at ten, used to end reconnection for good:
+            // "Max reconnection attempts reached" and the link never came back, even once the peer
+            // was up again. A peer that is down for a while must still be reconnected.
+            await transport.connect({ nodeID: 'test-node', namespace: 'default', url: '', logger });
+            jest.useFakeTimers();
+
+            const closeHandlers: Array<(code: number) => void> = [];
+            MockedWebSocket.mockImplementation(() => {
+                const mockWS = createMockWS();
+                mockWS.on.mockImplementation((event: string, cb: any) => {
+                    if (event === 'close') closeHandlers.push(cb);
+                });
+                return mockWS as any;
+            });
+
+            void transport.connectToPeer('remote-node', 'ws://remote:5005').catch(() => undefined);
+            for (let failure = 0; failure < 15; failure++) {
+                closeHandlers[closeHandlers.length - 1](1006);
+                // The backoff ceiling (30s) plus its largest jitter (25%).
+                jest.advanceTimersByTime(37_500);
+            }
+
+            expect(MockedWebSocket).toHaveBeenCalledTimes(16);
             jest.useRealTimers();
         });
 

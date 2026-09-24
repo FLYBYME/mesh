@@ -222,6 +222,10 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         return this.transport.getTransport().isPeerConnected(nodeID);
     }
 
+    public needsDial(url: string): boolean | undefined {
+        return this.transport.getTransport().needsDial(url);
+    }
+
     async stop(): Promise<void> {
         await this.orchestrator.stop();
         await this.transport.disconnect();
