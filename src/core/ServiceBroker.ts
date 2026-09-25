@@ -14,6 +14,7 @@ import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/ISer
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry, type ToolContract } from '../interfaces/IToolContract.js';
+import { declarationFromToolInfo, declarationOf, mergeDeclarations, type ContractDeclaration } from './ContractDeclaration.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
@@ -740,6 +741,46 @@ export class ServiceBroker implements IServiceBroker {
     /** Every standalone contract currently mounted here, by tool key. */
     public listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[] {
         return Array.from(this.standaloneContracts.values());
+    }
+
+    /**
+     * How a contract is called and who may call it, whether or not this node runs it: this node's
+     * own definition when it has one, otherwise what the available peers that run it advertise with
+     * their presence (merged, stricter reading winning -- see mergeDeclarations). The api gateway
+     * publishes contracts that run elsewhere; with only local definitions, a contract no module on
+     * the api's node defines could never be exposed at all.
+     */
+    public contractDeclaration(key: string): ContractDeclaration | undefined {
+        const local = globalContractRegistry.get(key);
+        if (local !== undefined) return declarationOf(local);
+        return this.advertisedDeclaration(key);
+    }
+
+    private advertisedDeclaration(key: string): ContractDeclaration | undefined {
+
+        let merged: ContractDeclaration | undefined;
+        let conflicted = false;
+        for (const node of this.registry?.getNodes() ?? []) {
+            if (node.nodeID === this.nodeID || node.available === false) continue;
+            for (const service of node.services ?? []) {
+                const info = service.tools?.[key];
+                if (info === undefined) continue;
+                const advertised = declarationFromToolInfo(key, info);
+                if (advertised === undefined) continue;
+                if (merged === undefined) {
+                    merged = advertised;
+                    continue;
+                }
+                const next = mergeDeclarations(merged, advertised);
+                if (next === undefined) conflicted = true;
+                else merged = next;
+            }
+        }
+        if (conflicted) {
+            this.logger.warn(`[ServiceBroker] peers advertise "${key}" with different routes; not publishing it until they agree`);
+            return undefined;
+        }
+        return merged;
     }
 
     /**

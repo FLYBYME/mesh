@@ -1,5 +1,5 @@
 import { EventEmitter } from 'eventemitter3';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { toolInfoOf } from './ContractDeclaration.js';
 import type { NodeInfo as RegistryNodeInfo, ServiceInfo as RegistryServiceInfo, ToolInfo as RegistryToolInfo } from '../types/registry.schema.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import { BaseBalancer } from '../balancers/BaseBalancer.js';
@@ -266,18 +266,9 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         if (!localNode) return;
 
         const key = toolKey(contract);
-        const toolInfo: RegistryToolInfo = {
-            name: key,
-            description: contract.description,
-            visibility: 'public',
-            metadata: {
-                isCrud: contract.isCrud,
-                destructive: contract.destructive
-            },
-            params: zodToJsonSchema(contract.inputSchema) as Record<string, unknown>,
-            returns: zodToJsonSchema(contract.outputSchema) as Record<string, unknown>,
-            timeout: contract.timeout
-        };
+        // What peers learn about this contract: its real visibility, route and permissions, so a node
+        // that does not run it (the api gateway's) can still publish it correctly.
+        const toolInfo: RegistryToolInfo = toolInfoOf(contract);
 
         localNode.services = localNode.services || [];
         const idx = localNode.services.findIndex(s => s.name === contract.domain);

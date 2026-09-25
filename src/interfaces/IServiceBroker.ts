@@ -8,6 +8,7 @@ import type { IMiddleware } from './IInterceptor.js';
 import type { ICallOptions, IServiceContext } from './IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import type { ToolContract } from './IToolContract.js';
+import type { ContractDeclaration } from '../core/ContractDeclaration.js';
 import type { AnyCrudContracts } from './ICrudContract.js';
 import type { AnyTimeSeriesContracts } from './ITimeSeriesContract.js';
 import type { IPlacement } from './IPlacement.js';
@@ -99,6 +100,8 @@ export interface IServiceBroker {
     ): void;
     unregisterContract(toolKey: string): void;
     listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
+    /** How a contract is called and who may call it, from this node's definition or its peers' advertisements. */
+    contractDeclaration(key: string): ContractDeclaration | undefined;
 
     registerCrud(
         crud: AnyCrudContracts,
