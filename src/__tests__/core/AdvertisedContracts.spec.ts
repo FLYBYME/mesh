@@ -101,6 +101,37 @@ describe('peers that disagree', () => {
     it('publishes neither of two different routes', () => {
         expect(mergeDeclarations(base, { ...base, rest: { method: 'POST', path: '/a/b' } })).toBeUndefined();
     });
+
+    it('keeps the longer timeout, and one either side declares', () => {
+        expect(mergeDeclarations({ ...base, timeout: 10_000 }, { ...base, timeout: 1_800_000 })?.timeout).toBe(1_800_000);
+        expect(mergeDeclarations(base, { ...base, timeout: 60_000 })?.timeout).toBe(60_000);
+        expect(mergeDeclarations(base, base)?.timeout).toBeUndefined();
+    });
+});
+
+/**
+ * A caller on another node needs a contract's timeout as much as its route: the api gateway on
+ * edge1 called machine.import (on surf, declared 30 minutes) with the 10 s default, answered 500,
+ * and the import carried on without anyone hearing how it ended.
+ */
+describe('a contract\'s timeout travels with its declaration', () => {
+    const slow = defineContract({
+        domain: 'advc', action: 'slow', description: 'Takes minutes.',
+        inputSchema: z.object({}), outputSchema: z.object({}),
+        rest: { method: 'POST', path: '/advc/slow' }, visibility: 'public', destructive: true,
+        filePath: 'src/advc.ts', concurrency: 'on-demand', permissions: ['operator'], print: defaultPrint,
+        timeout: 1_800_000,
+    });
+
+    it('is advertised and read back by a peer', () => {
+        expect(declarationFromToolInfo('advc.slow', toolInfoOf(slow))?.timeout).toBe(1_800_000);
+    });
+
+    it('is absent when the contract declares none, and ignored when malformed', () => {
+        expect(declarationFromToolInfo('advc.secret', toolInfoOf(internalContract))?.timeout).toBeUndefined();
+        expect(declarationFromToolInfo('advc.x', { ...advertisedTool('advc.x'), timeout: 'soon' })?.timeout).toBeUndefined();
+        expect(declarationFromToolInfo('advc.x', { ...advertisedTool('advc.x'), timeout: -5 })?.timeout).toBeUndefined();
+    });
 });
 
 describe('ServiceBroker.contractDeclaration', () => {

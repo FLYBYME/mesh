@@ -20,6 +20,13 @@ export interface ContractDeclaration {
     readonly destructive: boolean;
     readonly input: Record<string, unknown>;
     readonly output: Record<string, unknown>;
+    /**
+     * How long a call may run, in ms, when the contract says (absent: the broker's default). A
+     * caller on another node needs it as much as the route: the api gateway on edge1 called
+     * machine.import (running on surf, declared 30 minutes) with the 10 s default and answered 500
+     * while the import carried on.
+     */
+    readonly timeout?: number;
 }
 
 function jsonSchema(schema: ToolContract['inputSchema']): Record<string, unknown> {
@@ -44,6 +51,7 @@ export function declarationOf(contract: ToolContract): ContractDeclaration | und
         destructive: contract.destructive === true,
         input: jsonSchema(contract.inputSchema),
         output: jsonSchema(contract.outputSchema),
+        ...(contract.timeout !== undefined ? { timeout: contract.timeout } : {}),
     };
 }
 
@@ -99,6 +107,7 @@ export function declarationFromToolInfo(key: string, info: unknown): ContractDec
     if (!Array.isArray(roles) || !roles.every((r) => typeof r === 'string')) return undefined;
     if (typeof domain !== 'string' || typeof action !== 'string' || `${domain}.${action}` !== key) return undefined;
     const description = field(info, 'description');
+    const timeout = field(info, 'timeout');
     return {
         key,
         domain,
@@ -110,20 +119,25 @@ export function declarationFromToolInfo(key: string, info: unknown): ContractDec
         destructive: field(metadata, 'destructive') === true,
         input: plainObject(field(info, 'params')) ?? {},
         output: plainObject(field(info, 'returns')) ?? {},
+        ...(typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
     };
 }
 
 /**
  * Two nodes advertising one contract differently (two builds mid-deploy, say): the stricter reading
  * of each field wins -- internal over public, every permission either demands, destructive if either
- * says so. Two different routes cannot both be right, so neither is used.
+ * says so. Two different routes cannot both be right, so neither is used. The longer timeout wins:
+ * cutting off a call one build allows to run is the worse mistake.
  */
 export function mergeDeclarations(a: ContractDeclaration, b: ContractDeclaration): ContractDeclaration | undefined {
     if (a.rest.method !== b.rest.method || a.rest.path !== b.rest.path) return undefined;
+    const timeout = a.timeout === undefined ? b.timeout : b.timeout === undefined ? a.timeout : Math.max(a.timeout, b.timeout);
+    const { timeout: _dropped, ...rest } = a;
     return {
-        ...a,
+        ...rest,
         visibility: a.visibility === 'internal' || b.visibility === 'internal' ? 'internal' : 'public',
         permissions: [...new Set([...a.permissions, ...b.permissions])],
         destructive: a.destructive || b.destructive,
+        ...(timeout !== undefined ? { timeout } : {}),
     };
 }
