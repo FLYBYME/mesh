@@ -340,7 +340,14 @@ export class CrudExecutor {
                     result = { success };
                     if (success) {
                         broker.emit('data.deleted', { domain, id });
-                        emitNamed(broker, domain, 'deleted', { id });
+                        // The scope rides along: a delete's payload used to be `{ id }` alone, so
+                        // nothing said whose row it was, and a scoped collection's deletes could be
+                        // neither streamed to its owner nor handled for them (see core/EventScope).
+                        // The delete was already constrained to this scope, so it is the row's.
+                        emitNamed(broker, domain, 'deleted', {
+                            id,
+                            ...(scopedBy && callerScope ? { [scopedBy]: callerScope } : {}),
+                        });
                     }
                     break;
                 }

@@ -17,6 +17,9 @@ import { globalContractRegistry, type ToolContract } from '../interfaces/IToolCo
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
+import type { EventHandlerDefinition } from '../interfaces/IEventHandler.js';
+import { eventScope, scopeOfOccurrence } from './EventScope.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
@@ -61,6 +64,12 @@ const MAX_RPC_TIMEOUT = 3600000; // 1 hour
 
 /** One side of a CRUD hook -- the shape `registerCrudHook` and `defineCrud`'s `hooks` both take. */
 export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
+
+/** One thing a `withOwner` scope registered, as `unregisterOwner` needs to find it again. */
+type OwnedRegistration =
+    | { readonly kind: 'contract'; readonly key: string }
+    | { readonly kind: 'crudHook'; readonly key: string; readonly hooks: { before?: CrudHook; after?: CrudHook } }
+    | { readonly kind: 'eventHandler'; readonly id: string };
 
 export class ServiceBroker implements IServiceBroker {
     /**
@@ -158,7 +167,23 @@ export class ServiceBroker implements IServiceBroker {
     private standaloneContracts = new Map<string, ToolContract<z.ZodTypeAny, z.ZodTypeAny>>();
     // `<domain>.<action>` -> CRUD hooks (registerCrudHook, or a contract's own `hooks`).
     private standaloneCrudHooks = new Map<string, { before?: CrudHook; after?: CrudHook }>();
-    private standaloneEventHandlers: { name: string; listener: (data: unknown, packet?: IMeshPacket) => void }[] = [];
+    // Every event handler subscribed through `registerEventHandler`, by registration id -- each
+    // with the unsubscribe that also aborts the `ctx.signal` its handler received.
+    private readonly eventHandlers = new Map<string, { readonly unregister: () => void }>();
+    // Unscopable events a handler has run for, so the log says so once per event name, not per event.
+    private readonly unscopedHandlerEventsLogged = new Set<string>();
+
+    // Registration ownership -- see `withOwner`. The owner in effect follows async lineage, so a
+    // part's `await`ing `register(broker)` is attributed however deep it registers.
+    private static readonly ownerStorage: AsyncLocalStorage<string> | undefined =
+        typeof AsyncLocalStorage === 'function' ? new AsyncLocalStorage<string>() : undefined;
+    // Without AsyncLocalStorage only the synchronous part of `withOwner`'s `fn` is attributed. A
+    // browser bundle never loads parts, so it never needs more.
+    private ownerFallback: string | undefined;
+    private readonly ownedRegistrations = new Map<string, OwnedRegistration[]>();
+    // Which owner mounted each contract key *now*, so an owner that was since overridden (a
+    // `replace: true` by someone else) cannot unmount the contract that replaced its own.
+    private readonly contractOwners = new Map<string, string>();
 
     private globalMiddleware: IMiddleware[] = [];
     private localMiddleware: IMiddleware[] = [];
@@ -352,22 +377,35 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     /**
-     * The `IServiceContext` an event subscriber receives (`registerEventHandler`).
+     * The `IServiceContext` an event subscriber receives (`registerEventHandler`) -- a real one,
+     * `signal` included. It used to be an untyped record, missing `signal`, cast to fit.
      */
-    private makeEventContext(packet?: IMeshPacket): Record<string, unknown> {
+    private makeEventContext(name: string, payload: unknown, packet: IMeshPacket | undefined, signal: AbortSignal): IServiceContext {
+        const occurrence = scopeOfOccurrence(name, payload);
+        if (occurrence === undefined && !this.unscopedHandlerEventsLogged.has(name)) {
+            this.unscopedHandlerEventsLogged.add(name);
+            const scope = eventScope(name);
+            const why = scope !== undefined && scope !== 'global' && 'refusal' in scope ? scope.refusal : 'nothing here defines it';
+            this.logger.debug(`[ServiceBroker] Event handlers for "${name}" run with no tenant: ${why}`);
+        }
+        const meta: IMeshMeta = {
+            ...(packet?.meta ?? {}),
+            ...(occurrence !== undefined && 'scope' in occurrence ? { tenant_id: occurrence.scope } : {}),
+        };
+
         return {
             broker: this,
             correlationId: packet?.id || randomUUID(),
             nodeID: this.nodeID,
-            meta: packet?.meta,
+            signal,
+            meta,
             call: async <K extends keyof IServiceToolRegistry>(
                 tool: K,
                 params: IServiceToolRegistry[K]['params'],
                 options?: ICallOptions<IMeshMeta>
-            ): Promise<IServiceToolRegistry[K]['returns']> => {
-                const result = await this.call(tool, params, options);
-                return result as IServiceToolRegistry[K]['returns'];
-            },
+            ): Promise<IServiceToolRegistry[K]['returns']> =>
+                // On behalf of the event's tenant unless the handler says otherwise.
+                this.call(tool, params, { ...options, meta: { ...meta, ...options?.meta } }),
             callOnLeader: async <K extends keyof IServiceToolRegistry>(
                 leaderDomain: string,
                 tool: K,
@@ -382,8 +420,8 @@ export class ServiceBroker implements IServiceBroker {
                 payload: EventRegistry[K],
                 options?: { skipNetwork?: boolean }
             ) => this.emit(event, payload, options),
-            db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
-                this.makeCrudRepo(domain, meta ? { ...packet?.meta, ...meta } : packet?.meta),
+            db: <D extends keyof IServiceCollectionRegistry & string>(domain: D, override?: IMeshMeta): CrudRepo<D> =>
+                this.makeCrudRepo(domain, override ? { ...meta, ...override } : meta),
             logger: this.logger
         };
     }
@@ -513,6 +551,14 @@ export class ServiceBroker implements IServiceBroker {
         this.standaloneContracts.set(toolKeyStr, asAny);
         globalContractRegistry.register(asAny);
 
+        const owner = this.currentOwner();
+        if (owner !== undefined) {
+            this.contractOwners.set(toolKeyStr, owner);
+            this.recordOwned(owner, { kind: 'contract', key: toolKeyStr });
+        } else {
+            this.contractOwners.delete(toolKeyStr);
+        }
+
         // Per contract, not per mount: "this collection lives in another database" is a fact about
         // the domain, and survives however it came to be mounted.
         if (options?.database !== undefined) {
@@ -570,6 +616,7 @@ export class ServiceBroker implements IServiceBroker {
         globalContractRegistry.delete(toolKeyStr);
         this.standaloneContracts.delete(toolKeyStr);
         this.toolDatabases.delete(toolKeyStr);
+        this.contractOwners.delete(toolKeyStr);
 
         this.registry?.unregisterContract(toolKeyStr);
 
@@ -742,7 +789,77 @@ export class ServiceBroker implements IServiceBroker {
      * anyone can forget, and no second place a hook can hide.
      */
     public registerCrudHook(domain: string, action: string, hooks: { before?: CrudHook; after?: CrudHook }): void {
-        this.standaloneCrudHooks.set(`${domain}.${action}`, hooks);
+        const key = `${domain}.${action}`;
+        this.standaloneCrudHooks.set(key, hooks);
+        const owner = this.currentOwner();
+        if (owner !== undefined) this.recordOwned(owner, { kind: 'crudHook', key, hooks });
+    }
+
+    public unregisterCrudHook(domain: string, action: string): void {
+        this.standaloneCrudHooks.delete(`${domain}.${action}`);
+    }
+
+    /**
+     * Runs `fn` with every registration it makes recorded under `owner` -- contracts (and so every
+     * CRUD collection, which mounts as contracts), CRUD hooks, event handlers -- including ones made
+     * after an `await`, because the owner follows async lineage (AsyncLocalStorage), not a flag.
+     *
+     * The reason it exists: a part loaded through `register(broker)` told nobody what it mounted, so
+     * unloading it could not take anything back. Deploying is re-pinning a part and reloading it in
+     * place, so the old module's handlers stayed subscribed beside the new module's, and every event
+     * ran both.
+     */
+    public withOwner<T>(owner: string, fn: () => T): T {
+        if (ServiceBroker.ownerStorage !== undefined) {
+            return ServiceBroker.ownerStorage.run(owner, fn);
+        }
+        const previous = this.ownerFallback;
+        this.ownerFallback = owner;
+        try {
+            return fn();
+        } finally {
+            this.ownerFallback = previous;
+        }
+    }
+
+    /**
+     * Reverses everything `owner` registered, newest first. Each piece is removed only while it is
+     * still the one `owner` put there: a contract since replaced by another owner, or a hook since
+     * overwritten, is left alone.
+     */
+    public unregisterOwner(owner: string): void {
+        const registrations = this.ownedRegistrations.get(owner);
+        if (registrations === undefined) return;
+        this.ownedRegistrations.delete(owner);
+
+        for (const registration of [...registrations].reverse()) {
+            switch (registration.kind) {
+                case 'contract':
+                    if (this.contractOwners.get(registration.key) === owner && this.standaloneContracts.has(registration.key)) {
+                        this.unregisterContract(registration.key);
+                    }
+                    break;
+                case 'crudHook':
+                    if (this.standaloneCrudHooks.get(registration.key) === registration.hooks) {
+                        this.standaloneCrudHooks.delete(registration.key);
+                    }
+                    break;
+                case 'eventHandler':
+                    this.eventHandlers.get(registration.id)?.unregister();
+                    break;
+            }
+        }
+        this.logger.info(`[ServiceBroker] Unregistered everything owned by ${owner} (${registrations.length} registrations)`);
+    }
+
+    private currentOwner(): string | undefined {
+        return ServiceBroker.ownerStorage?.getStore() ?? this.ownerFallback;
+    }
+
+    private recordOwned(owner: string, registration: OwnedRegistration): void {
+        const list = this.ownedRegistrations.get(owner);
+        if (list === undefined) this.ownedRegistrations.set(owner, [registration]);
+        else list.push(registration);
     }
 
     /**
@@ -850,21 +967,59 @@ export class ServiceBroker implements IServiceBroker {
 
     /**
      * Subscribes one event handler, with the same `IServiceContext` a tool handler receives.
+     *
+     * Takes a declared handler (`defineEventHandler`) or, the older form, a bare event name --
+     * which has no domain to elect a leader by, so it is delivered `'each'`.
+     *
+     * - `'one'` runs only on the leader for the handler's domain; every other node drops the event
+     *   here. No leader known (nothing advertises that domain yet) runs it locally, the same
+     *   fallback a `leaderScoped` interval contract has.
+     * - `ctx.meta` carries the tenant the event belongs to, read from its payload by its own
+     *   definition (`eventScope`), so `ctx.db` and `ctx.call` act for that tenant. Before this a
+     *   handler got the packet's meta, which for an event from another node names nobody.
+     * - `ctx.signal` belongs to the registration: it aborts when the handler is unsubscribed.
+     *
+     * Returns the unsubscribe. `unregisterOwner` calls it too, for handlers registered in a
+     * `withOwner` scope.
      */
     public registerEventHandler<K extends keyof EventRegistry>(
-        name: K,
+        definition: EventHandlerDefinition<K> | K,
         handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
-    ): void {
+    ): () => void {
+        const declared = typeof definition === 'object' ? definition : undefined;
+        const name: string = typeof definition === 'object' ? definition.event : definition;
+        const id = randomUUID();
+        const lifetime = new AbortController();
+
         const listener = (data: unknown, packet?: IMeshPacket) => {
-            const ctx = this.makeEventContext(packet);
-            void Promise.resolve(handler(data as EventRegistry[K], ctx as never)).catch((err: unknown) => {
-                this.logger.error(`[ServiceBroker] Error in event handler for ${String(name)}:`, err);
-            });
+            if (declared?.delivery === 'one') {
+                const leader = this.registry?.leaderFor(declared.domain);
+                if (leader !== undefined && leader.nodeID !== this.nodeID) return;
+            }
+            const ctx = this.makeEventContext(name, data, packet, lifetime.signal);
+            // The payload arrives untyped off the emitter (and possibly off the network); its type is
+            // the generated EventRegistry entry for this name, which is what the handler declares.
+            void Promise.resolve()
+                .then(() => handler(data as EventRegistry[K], ctx))
+                .catch((err: unknown) => {
+                    this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
+                });
         };
+
         // localEvents, the same emitter registerModule subscribes module handlers on -- not the
         // broker's own public `on`, whose key type is the generated EventRegistry.
-        this.localEvents.on(name as string, listener);
-        this.standaloneEventHandlers.push({ name: name as string, listener });
+        this.localEvents.on(name, listener);
+
+        const unregister = (): void => {
+            if (!this.eventHandlers.delete(id)) return;
+            this.localEvents.off(name, listener);
+            lifetime.abort();
+        };
+        this.eventHandlers.set(id, { unregister });
+
+        const owner = this.currentOwner();
+        if (owner !== undefined) this.recordOwned(owner, { kind: 'eventHandler', id });
+        return unregister;
     }
 
     public async call<K extends keyof IServiceToolRegistry>(

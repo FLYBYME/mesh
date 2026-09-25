@@ -11,6 +11,7 @@ import type { ToolContract } from './IToolContract.js';
 import type { AnyCrudContracts } from './ICrudContract.js';
 import type { AnyTimeSeriesContracts } from './ITimeSeriesContract.js';
 import type { IPlacement } from './IPlacement.js';
+import type { EventHandlerDefinition } from './IEventHandler.js';
 import type { z } from 'zod';
 /**
  * IServiceBroker — Interface for the central communication kernel.
@@ -102,12 +103,28 @@ export interface IServiceBroker {
     /** Mounts a whole time-series collection -- the counterpart to `registerCrud`. */
     registerTimeSeries(contracts: AnyTimeSeriesContracts, options?: { database?: Database }): void;
     registerCrudHook(domain: string, action: string, hooks: { before?: CrudHookFn; after?: CrudHookFn }): void;
+    /** Removes the hooks for one CRUD action -- `registerCrudHook`'s other half. */
+    unregisterCrudHook(domain: string, action: string): void;
     getCrudHooks(domain: string, action: string): { before?: CrudHookFn; after?: CrudHookFn } | undefined;
 
+    /**
+     * Subscribes a declared handler (`defineEventHandler`), or -- the older form -- a bare event
+     * name, which is delivered `'each'`. Returns the unsubscribe; `unregisterOwner` also removes it.
+     */
     registerEventHandler<K extends keyof EventRegistry>(
-        name: K,
+        definition: EventHandlerDefinition<K> | K,
         handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
-    ): void;
+    ): () => void;
+
+    /**
+     * Runs `fn` with every registration it makes -- contracts, CRUD collections and hooks, event
+     * handlers -- recorded under `owner`, however deep in `fn`'s async work it happens.
+     * `unregisterOwner(owner)` then reverses exactly those. What a part loader wraps a part's
+     * `register(broker)` in, so unloading the part removes what loading it added.
+     */
+    withOwner<T>(owner: string, fn: () => T): T;
+    /** Removes everything registered under `owner`, newest first. A no-op for an unknown owner. */
+    unregisterOwner(owner: string): void;
 
     /** Mounts every contract a domain declares, wiring each to its own `filePath`'s handler --
      *  the replacement for a hand-written `register(broker)`. See the implementation in
