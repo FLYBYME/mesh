@@ -361,6 +361,12 @@ export class ServiceBroker implements IServiceBroker {
         return () => this.off(event, handler);
     }
 
+    public subscribe(event: string, handler: (payload: unknown) => void): () => void {
+        const listener = (payload: unknown): void => handler(payload);
+        this.localEvents.on(event, listener);
+        return () => { this.localEvents.off(event, listener); };
+    }
+
     public off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void {
         const topic = String(event);
         if (topic.includes('*')) {

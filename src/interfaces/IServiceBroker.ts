@@ -63,6 +63,14 @@ export interface IServiceBroker {
     on<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): (() => void);
     off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void;
 
+    /**
+     * Subscribes to an event whose name is *data* -- read from a record at runtime, like the events
+     * an api exposes -- rather than code. `on` needs the name at compile time to type the payload;
+     * here the name is any string and the payload is honestly `unknown`, for the caller to treat as
+     * such. Returns the unsubscribe.
+     */
+    subscribe(event: string, handler: (payload: unknown) => void): () => void;
+
     getContext(): IContext<Record<string, unknown>, IMeshMeta> | undefined;
 
     start(): Promise<void>;

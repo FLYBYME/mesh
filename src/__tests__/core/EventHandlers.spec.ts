@@ -241,7 +241,23 @@ describe('event handler delivery across two nodes', () => {
         await appA?.stop();
     });
 
+    it('subscribe() hears an event by a runtime name, from another node, until unsubscribed', async () => {
+        const heard: unknown[] = [];
+        const name: string = ['evtest', 'ping'].join('.');
+        const off = appB.getProvider<IServiceBroker>('broker').subscribe(name, (payload) => { heard.push(payload); });
+
+        appA.getProvider<IServiceBroker>('broker').emit('evtest.ping', { n: 7 });
+        await settle(300);
+        off();
+        appA.getProvider<IServiceBroker>('broker').emit('evtest.ping', { n: 8 });
+        await settle(300);
+
+        expect(heard).toEqual([{ n: 7 }]);
+    });
+
     it("runs 'each' on every node and 'one' on the domain's leader only", async () => {
+        ran.each.length = 0;
+        ran.one.length = 0;
         appA.getProvider<IServiceBroker>('broker').emit('evtest.ping', { n: 1 });
         await settle(300);
 
