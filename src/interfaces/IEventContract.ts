@@ -122,6 +122,36 @@ export function defineEvent<T extends z.ZodTypeAny>(
  */
 export class EventContractRegistry {
     private readonly events = new Map<string, EventDefinition<z.ZodTypeAny>>();
+    /** Definitions peers advertised (presence), for events no module on this node defines. */
+    private readonly advertised = new Map<string, { readonly scopedBy?: string }>();
+
+    /**
+     * Records a peer's definition of an event, for resolving its scope here without its code.
+     *
+     * A local definition always outranks any advertisement (`eventScope` reads it first). Between
+     * peers that disagree, the stricter answer is kept -- no scope (delivered to nobody) over a
+     * field over `'global'` -- so a mistaken or stale advertisement can narrow who receives an event
+     * but never widen it. Returns false when an existing, stricter answer was kept instead.
+     */
+    public advertise(name: string, scopedBy: string | undefined): boolean {
+        const strictness = (scope: string | undefined): number => (scope === undefined ? 2 : scope === 'global' ? 0 : 1);
+        const existing = this.advertised.get(name);
+        if (existing !== undefined && strictness(existing.scopedBy) >= strictness(scopedBy)) {
+            return existing.scopedBy === scopedBy;
+        }
+        this.advertised.set(name, scopedBy === undefined ? {} : { scopedBy });
+        return true;
+    }
+
+    public getAdvertised(name: string): { readonly scopedBy?: string } | undefined {
+        return this.advertised.get(name);
+    }
+
+    /** This node's own definitions, as it advertises them to peers. */
+    public advertisable(): Array<{ name: string; scopedBy?: string }> {
+        return [...this.events.values()].map((event) =>
+            event.scopedBy === undefined ? { name: event.name } : { name: event.name, scopedBy: event.scopedBy });
+    }
 
     public register<T extends z.ZodTypeAny>(event: EventDefinition<T>): void {
         if (this.events.has(event.name)) {

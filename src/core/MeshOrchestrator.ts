@@ -1,6 +1,7 @@
 import { IMeshNetworkNode, NodeInfo, IMeshOrchestrator, MeshPacket } from '../interfaces/IMeshNetwork.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
+import { globalEventRegistry } from '../interfaces/IEventContract.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 
 export interface MeshOrchestratorOptions {
@@ -179,14 +180,34 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         this.node.publish('$node.pex', { peers }).catch(() => { });
     }
 
+    /**
+     * Learns the event definitions a peer advertised, so this node can resolve who those events
+     * belong to without loading the peer's code. The payload is off the wire: each entry is checked
+     * rather than trusted, and a disagreement between peers keeps the stricter scope (see
+     * EventContractRegistry.advertise) -- logged, since two builds disagreeing is worth knowing.
+     */
+    private recordAdvertisedEvents(node: NodeInfo): void {
+        const events: unknown = node.events;
+        if (!Array.isArray(events)) return;
+        for (const entry of events) {
+            if (typeof entry !== 'object' || entry === null || !('name' in entry) || typeof entry.name !== 'string') continue;
+            const scopedBy = 'scopedBy' in entry && typeof entry.scopedBy === 'string' ? entry.scopedBy : undefined;
+            if (!globalEventRegistry.advertise(entry.name, scopedBy)) {
+                this.logger.warn(`Node ${node.nodeID} defines event "${entry.name}" scoped by ${scopedBy ?? 'nothing'}, which disagrees with another node's definition -- keeping the stricter one`);
+            }
+        }
+    }
+
     public async broadcastPresence(targetNodeID?: string): Promise<void> {
         const localNode = this.node.registry.getNode(this.node.nodeID);
         if (!localNode) return;
 
         try {
             //this.logger.debug(`Broadcasting presence for ${this.node.nodeID}${targetNodeID ? ` to ${targetNodeID}` : ''}...`);
+            // With this node's event definitions, read fresh each time: a part loaded since the last
+            // broadcast has defined more of them (see NodeInfo.events).
             await this.node.send(targetNodeID || '*', '$node.presence', {
-                node: localNode
+                node: { ...localNode, events: globalEventRegistry.advertisable() }
             });
         } catch (err) {
             this.logger.warn(`Failed to broadcast presence to ${targetNodeID || '*'}: ${err instanceof Error ? err.message : String(err)}`);
@@ -298,6 +319,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
 
     async handlePresence(data: { node: NodeInfo }): Promise<void> {
         if (!data.node || data.node.nodeID === this.node.nodeID) return;
+
+        this.recordAdvertisedEvents(data.node);
 
         const isNew = !this.node.registry.getNode(data.node.nodeID);
         this.logger.debug(`Presence: Discovered node ${data.node.nodeID}`, {

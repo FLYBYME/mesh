@@ -21,7 +21,8 @@ export type EventScope =
     | { readonly refusal: string };
 
 export function eventScope(name: string): EventScope | undefined {
-    const declared = globalEventRegistry.get(name);
+    // This node's own definition first; otherwise what a peer that has the definition advertised.
+    const declared = globalEventRegistry.get(name) ?? globalEventRegistry.getAdvertised(name);
     if (declared !== undefined) {
         if (declared.scopedBy === undefined) {
             return {

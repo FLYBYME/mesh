@@ -195,6 +195,19 @@ export interface NodeInfo {
     lastHeartbeatTime?: number;
     publicKey?: string;
     bootedAt?: number;
+    /**
+     * The events this node has definitions for, and how each is scoped -- carried by presence so a
+     * node can resolve who an event belongs to without loading the code that defines it (an api
+     * streaming another part's events). See `EventContractRegistry.advertise`.
+     */
+    events?: readonly AdvertisedEvent[];
+}
+
+/** One event definition as advertised to peers: its name and the payload field that scopes it. */
+export interface AdvertisedEvent {
+    readonly name: string;
+    /** A payload path, `'global'`, or absent -- the definition declares no scope. */
+    readonly scopedBy?: string;
 }
 
 export interface IServiceNode {
