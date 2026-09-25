@@ -1,6 +1,6 @@
 import { EventEmitter } from 'eventemitter3';
 import { BaseTransport } from '../transports/BaseTransport.js';
-import type { IMeshNetworkNode, TransportType, TransportConnectOptions, MeshPacket } from '../interfaces/IMeshNetwork.js';
+import type { IMeshNetworkNode, TransportType, TransportConnectOptions, MeshPacket, LinkChange, PeerLink } from '../interfaces/IMeshNetwork.js';
 
 export interface TransportManagerOptions {
     transports: BaseTransport[];
@@ -31,6 +31,7 @@ export class TransportManager extends EventEmitter {
                 if (this.node.orchestrator) {
                     this.node.orchestrator.handlePeerConnect(peerNodeID);
                 }
+                this.emitLinkChange(peerNodeID, 'up');
             });
             transport.on('peer:disconnect', (peerNodeID: string) => {
                 this.node.logger.info(`Peer disconnected: ${peerNodeID}`, { 
@@ -40,12 +41,29 @@ export class TransportManager extends EventEmitter {
                 if (this.node.orchestrator) {
                     this.node.orchestrator.handlePeerDisconnect(peerNodeID);
                 }
+                this.emitLinkChange(peerNodeID, 'down');
             });
             this.transports.set(transport.protocol, transport);
         }
 
         // Use the first provided transport as primary
         this.primaryTransport = options.transports[0];
+    }
+
+    /**
+     * A link to a real node came up or went down. A `bootstrap_<rand>` placeholder -- a dial to a
+     * peer too old to say who it is at the handshake -- is not a node, and its entry is renamed,
+     * not lost, when the peer identifies; reporting it would be noise that names nobody.
+     */
+    private emitLinkChange(peer: string, state: LinkChange['state']): void {
+        if (peer.startsWith('bootstrap_')) return;
+        const change: LinkChange = { peer, state };
+        this.emit('link', change);
+    }
+
+    /** Every direct link the primary transport holds. */
+    peerLinks(): readonly PeerLink[] {
+        return this.primaryTransport.peerLinks();
     }
 
     async connect(opts: Partial<TransportConnectOptions>): Promise<void> {

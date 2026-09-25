@@ -93,10 +93,33 @@ export interface IMeshNetwork {
     /** Whether a direct connection to this peer is currently open. */
     isPeerConnected?(nodeID: string): boolean;
 
+    /** Every direct link this node holds right now. */
+    peerLinks?(): readonly PeerLink[];
+
+    /** Calls `handler` each time a direct link comes up or goes down. Returns the unsubscribe. */
+    onLinkChange?(handler: (change: LinkChange) => void): () => void;
+
     start(): Promise<void>;
     stop(): Promise<void>;
 
     server?: unknown;
+}
+
+/** One direct transport link from this node to a peer. */
+export interface PeerLink {
+    readonly nodeID: string;
+    /** Which end opened it: this node (`'self'`) or the peer (`'remote'`). */
+    readonly dialedBy: 'self' | 'remote';
+    /** When the link was opened (epoch ms). */
+    readonly openedAt: number;
+    /** When a frame last arrived on it (epoch ms). */
+    readonly lastMessageAt: number;
+}
+
+/** A direct link to `peer` coming up or going down. */
+export interface LinkChange {
+    readonly peer: string;
+    readonly state: 'up' | 'down';
 }
 
 // --- Discovery & Node Types ---

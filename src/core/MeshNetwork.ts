@@ -1,5 +1,5 @@
 import { EventEmitter } from 'eventemitter3';
-import { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode } from '../interfaces/IMeshNetwork.js';
+import { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode, LinkChange, PeerLink } from '../interfaces/IMeshNetwork.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import { Env } from '../utils/Env.js';
@@ -220,6 +220,15 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
 
     public isPeerConnected(nodeID: string): boolean {
         return this.transport.getTransport().isPeerConnected(nodeID);
+    }
+
+    public peerLinks(): readonly PeerLink[] {
+        return this.transport.peerLinks();
+    }
+
+    public onLinkChange(handler: (change: LinkChange) => void): () => void {
+        this.transport.on('link', handler);
+        return () => { this.transport.off('link', handler); };
     }
 
     public needsDial(url: string): boolean | undefined {

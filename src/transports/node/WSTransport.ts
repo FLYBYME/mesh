@@ -1,7 +1,7 @@
 import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
 import { errorFromWire } from '../../core/MeshError.js';
-import type { TransportConnectOptions, IWS, IWSServer, MeshPacket } from '../../interfaces/IMeshNetwork.js';
+import type { TransportConnectOptions, IWS, IWSServer, MeshPacket, PeerLink } from '../../interfaces/IMeshNetwork.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -74,6 +74,8 @@ interface SocketInfo {
     awaitingPong: boolean;
     /** When a real frame last arrived -- stronger proof of life than a pong; see hasRecentTraffic. */
     lastMessageAt: number;
+    /** When the socket was accepted or dialed. */
+    readonly openedAt: number;
     pingTimeoutTimer?: NodeJS.Timeout;
 }
 
@@ -721,6 +723,17 @@ export class WSTransport extends BaseTransport {
         return !this.outbound.has(url) && !this.reconnectionTimers.has(url);
     }
 
+    /** The socket that owns each peer's entry -- a standby or a closing socket is not a link. */
+    override peerLinks(): readonly PeerLink[] {
+        const links: PeerLink[] = [];
+        for (const [nodeID, ws] of this.peers) {
+            if (ws.readyState !== WebSocket.OPEN) continue;
+            const info = this.infoOf(ws);
+            links.push({ nodeID, dialedBy: info.dialedBy, openedAt: info.openedAt, lastMessageAt: info.lastMessageAt });
+        }
+        return links.sort((a, b) => a.nodeID.localeCompare(b.nodeID));
+    }
+
     override isPeerConnected(nodeID: string): boolean {
         const ws = this.peers.get(nodeID);
         return !!ws && ws.readyState === WebSocket.OPEN;
@@ -880,7 +893,7 @@ export class WSTransport extends BaseTransport {
 
     /** Start tracking a new socket: its SocketInfo, its keepalive, and liveSockets. */
     private trackSocket(ws: IWS, dialedBy: SocketInfo['dialedBy']): SocketInfo {
-        const info: SocketInfo = { dialedBy, awaitingPong: false, lastMessageAt: Date.now() };
+        const info: SocketInfo = { dialedBy, awaitingPong: false, lastMessageAt: Date.now(), openedAt: Date.now() };
         this.socketInfo.set(ws, info);
         this.liveSockets.add(ws);
 
@@ -898,7 +911,7 @@ export class WSTransport extends BaseTransport {
     private infoOf(ws: IWS): SocketInfo {
         let info = this.socketInfo.get(ws);
         if (info === undefined) {
-            info = { dialedBy: 'remote', awaitingPong: false, lastMessageAt: Date.now() };
+            info = { dialedBy: 'remote', awaitingPong: false, lastMessageAt: Date.now(), openedAt: Date.now() };
             this.socketInfo.set(ws, info);
         }
         return info;

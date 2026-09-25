@@ -1,6 +1,6 @@
 import { EventEmitter } from 'eventemitter3';
 import { BaseSerializer } from '../serializers/BaseSerializer.js';
-import type { TransportConnectOptions, TransportType, MeshPacket } from '../interfaces/IMeshNetwork.js';
+import type { TransportConnectOptions, TransportType, MeshPacket, PeerLink } from '../interfaces/IMeshNetwork.js';
 
 /**
  * BaseTransport — abstract contract for node-to-node communication.
@@ -42,6 +42,11 @@ export abstract class BaseTransport extends EventEmitter {
      */
     isPeerConnected(_nodeID: string): boolean {
         return false;
+    }
+
+    /** Every direct link this transport holds. A transport that does not track links reports none. */
+    peerLinks(): readonly PeerLink[] {
+        return [];
     }
 
     /**

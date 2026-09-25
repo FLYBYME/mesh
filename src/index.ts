@@ -30,6 +30,7 @@ export * from './interfaces/IMeshApp.js';
 export * from './core/MeshApp.js';
 export * from './core/ServiceBroker.js';
 export * from './core/EventScope.js';
+export * from './core/MeshEvents.js';
 export * from './core/ContextStack.js';
 export * from './core/MeshError.js';
 export * from './core/BootOrchestrator.js';

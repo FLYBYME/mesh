@@ -19,6 +19,7 @@ import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.j
 import { SafeTimer } from '../utils/SafeTimer.js';
 import type { EventHandlerDefinition } from '../interfaces/IEventHandler.js';
 import { eventScope, scopeOfOccurrence } from './EventScope.js';
+import './MeshEvents.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -269,6 +270,12 @@ export class ServiceBroker implements IServiceBroker {
 
     private setupNetworkListeners() {
         if (!this.network) return;
+
+        // Every link change on this node, told to this node and (through the links still up) to
+        // its peers -- see core/MeshEvents.
+        this.network.onLinkChange?.((change) => {
+            this.emit('mesh.link.changed', { nodeID: this.nodeID, peer: change.peer, state: change.state, at: Date.now() });
+        });
 
         this.network.onMessage('*', (data: unknown, packet: IMeshPacket) => {
             if (packet.type === 'RESPONSE' || packet.type === 'RESPONSE_ERROR') {
