@@ -40,9 +40,10 @@ describe('mesh link status', () => {
     const settle = (ms = 400): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
     beforeAll(async () => {
-        appA = await start('links-node-a', 6551);
+        // 657x: every lower 65x1/65x2 pair is taken by another spec, and jest runs suites in parallel.
+        appA = await start('links-node-a', 6571);
         appA.getProvider<IServiceBroker>('broker').on('mesh.link.changed', (change) => { seenOnA.push(change); });
-        appB = await start('links-node-b', 6552, 'ws://127.0.0.1:6551');
+        appB = await start('links-node-b', 6572, 'ws://127.0.0.1:6571');
         await settle(800);
     });
 
