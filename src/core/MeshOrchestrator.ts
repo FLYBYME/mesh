@@ -38,6 +38,8 @@ export const PRESENCE_INTERVAL_MS = 15_000;
  * cannot pile up dials.
  */
 export const BOOTSTRAP_SUPERVISION_INTERVAL_MS = 15_000;
+/** How long a burst of local registry changes is gathered into one presence broadcast. */
+export const PRESENCE_COALESCE_MS = 50;
 
 export class MeshOrchestrator implements IMeshOrchestrator {
     private logger: ILogger;
@@ -55,10 +57,30 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     ) {
         this.logger = node.logger.child({ name: 'MeshOrchestrator' });
 
-        // Re-broadcast presence when local registry changes (e.g. new services)
+        // Re-broadcast presence when the local registry changes (e.g. new services) -- once per burst.
         this.node.registry.on('local:changed', () => {
-            this.broadcastPresence();
+            this.schedulePresence();
         });
+    }
+
+    private presenceTimer: TimerHandle | undefined;
+
+    /**
+     * Coalesces presence broadcasts. Every contract registered or unregistered changes the local
+     * registry, and a presence is the node's *whole* description -- every service, every contract's
+     * info, every event -- serialized and sent to every peer, each of which then processes it. A part
+     * of ~200 contracts loading or unloading did that ~200 times in a row: ~42 ms each, 8 s with the
+     * event loop held, at both ends of every redeploy -- the node timed out even calling itself, and
+     * its peers stalled processing the flood (surf and edge1, 2026-09-26). Now a burst of changes
+     * sends one presence, PRESENCE_COALESCE_MS after the first.
+     */
+    private schedulePresence(): void {
+        if (this.presenceTimer !== undefined) return;
+        this.presenceTimer = setTimeout(() => {
+            this.presenceTimer = undefined;
+            void this.broadcastPresence();
+        }, PRESENCE_COALESCE_MS);
+        SafeTimer.unref(this.presenceTimer);
     }
 
     async start(): Promise<void> {
@@ -83,6 +105,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     }
 
     async stop(): Promise<void> {
+        SafeTimer.clearTimeout(this.presenceTimer);
+        this.presenceTimer = undefined;
         if (this.gossipInterval) {
             SafeTimer.clearInterval(this.gossipInterval);
             this.gossipInterval = undefined;
