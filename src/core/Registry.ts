@@ -411,6 +411,16 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         };
     }
 
+    /** This node's own labels, replaced while it runs -- see PlacementRegistry.setLocalMetadata. */
+    public setLocalMetadata(metadata: Record<string, string>): void {
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode) return;
+        localNode.metadata = { ...metadata };
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
     public registerNode(node: CoreNodeInfo, trusted = false): void {
         const existing = this.nodes.get(node.nodeID);
 

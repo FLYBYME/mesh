@@ -254,6 +254,21 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
     }
 
     /**
+     * Replaces this node's own labels (`--labels` at boot) while it runs -- how a machine is given a
+     * role through the api. Bumps nodeSeq, so every peer takes the new labels from the next
+     * presence, and a relay still holding the old ones (same boot, lower nodeSeq) is refused by
+     * `registerNode` rather than reverting them.
+     */
+    public setLocalMetadata(metadata: Record<string, string>): void {
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode) return;
+        localNode.metadata = { ...metadata };
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
+    /**
      * The native registration path: one contract, no module required. Merges into the domain's
      * `ServiceInfo.tools` the same way multiple modules sharing one domain already merge in
      * `Registry.ts` (several standalone contracts sharing a domain is now the *normal* case, not an
@@ -466,8 +481,9 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
                 existing.available = node.available ?? existing.available;
                 if (node.cpu !== undefined) existing.cpu = node.cpu;
                 if (node.activeRequests !== undefined) existing.activeRequests = node.activeRequests;
-                // A node's --labels never change after boot, so there is no staleness risk in taking
-                // them whenever a packet actually has them -- only in refusing to. Without this, a
+                // A node's labels change only with a nodeSeq bump (setLocalMetadata), so at the *same*
+                // nodeSeq there is no staleness risk in taking them whenever a packet actually has
+                // them -- only in refusing to. Without this, a
                 // registration that reaches us first with no metadata (an intermediary relaying its
                 // own stale, pre-fix copy of a peer's labels, or simply racing a peer's own direct
                 // presence on reconnect) locks that peer's labels at {} forever: this same-nodeSeq

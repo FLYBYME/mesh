@@ -21,6 +21,11 @@ export interface IServiceRegistry {
      * whatever nodeSeq a stale relay (PEX) may still be holding for it. Never set by PEX itself.
      */
     registerNode(node: NodeInfo, trusted?: boolean): void;
+    /**
+     * Replaces this node's own labels while it runs (how a machine is given a role through the
+     * api), bumping nodeSeq so peers take the change and a stale relay cannot revert it.
+     */
+    setLocalMetadata(metadata: Record<string, string>): void;
     unregisterNode(nodeID: string): void;
     heartbeat(nodeID: string, data?: { cpu?: number; activeRequests?: number }): void;
     findNodesForTool(toolName: string): NodeInfo[];
