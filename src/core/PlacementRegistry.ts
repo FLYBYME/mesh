@@ -316,7 +316,11 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         if (idx < 0) return;
 
         const { [key]: _removed, ...rest } = localNode.services[idx].tools ?? {};
-        localNode.services[idx].tools = rest;
+        // The domain's last contract gone: the domain goes too. Left as an empty entry, this node
+        // still counted as offering it -- leaderFor chose it, and every leader-scoped call went to
+        // a node answering "not found" (the build queue moved off edge1, 2026-09-26: no build ran).
+        if (Object.keys(rest).length === 0) localNode.services.splice(idx, 1);
+        else localNode.services[idx].tools = rest;
 
         localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
         this.registerNode(localNode as unknown as CoreNodeInfo);
