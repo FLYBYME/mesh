@@ -122,29 +122,51 @@ export function defineEvent<T extends z.ZodTypeAny>(
  */
 export class EventContractRegistry {
     private readonly events = new Map<string, EventDefinition<z.ZodTypeAny>>();
-    /** Definitions peers advertised (presence), for events no module on this node defines. */
-    private readonly advertised = new Map<string, { readonly scopedBy?: string }>();
+    /**
+     * Definitions peers advertised (presence), for events no module on this node defines -- kept
+     * per advertising node, so a node's latest presence replaces what it said before.
+     */
+    private readonly advertised = new Map<string, Map<string, { readonly scopedBy?: string }>>();
 
     /**
-     * Records a peer's definition of an event, for resolving its scope here without its code.
+     * Records one peer's definition of an event, for resolving its scope here without its code.
      *
      * A local definition always outranks any advertisement (`eventScope` reads it first). Between
-     * peers that disagree, the stricter answer is kept -- no scope (delivered to nobody) over a
-     * field over `'global'` -- so a mistaken or stale advertisement can narrow who receives an event
-     * but never widen it. Returns false when an existing, stricter answer was kept instead.
+     * *different* peers that disagree, the stricter answer is used -- no scope (delivered to nobody)
+     * over a field over `'global'` -- so a mistaken or stale peer can narrow who receives an event
+     * but never widen it. The *same* peer's newer answer replaces its older one: kept as "the
+     * strictest ever heard", a node that gained a scope in a redeploy stayed unscoped on every
+     * gateway until the gateway restarted (surfdns-compute's volume events, 2026-09-26).
+     * Returns false when another peer's stricter answer still decides.
      */
-    public advertise(name: string, scopedBy: string | undefined): boolean {
-        const strictness = (scope: string | undefined): number => (scope === undefined ? 2 : scope === 'global' ? 0 : 1);
-        const existing = this.advertised.get(name);
-        if (existing !== undefined && strictness(existing.scopedBy) >= strictness(scopedBy)) {
-            return existing.scopedBy === scopedBy;
+    public advertise(name: string, scopedBy: string | undefined, from = 'unknown'): boolean {
+        let byNode = this.advertised.get(name);
+        if (byNode === undefined) {
+            byNode = new Map();
+            this.advertised.set(name, byNode);
         }
-        this.advertised.set(name, scopedBy === undefined ? {} : { scopedBy });
-        return true;
+        byNode.set(from, scopedBy === undefined ? {} : { scopedBy });
+        return this.getAdvertised(name)?.scopedBy === scopedBy;
+    }
+
+    /** Replaces everything `from` advertised with `entries` -- one peer's presence, in full. */
+    public advertiseAll(from: string, entries: ReadonlyArray<{ name: string; scopedBy?: string }>): string[] {
+        for (const byNode of this.advertised.values()) byNode.delete(from);
+        const disagreements: string[] = [];
+        for (const e of entries) if (!this.advertise(e.name, e.scopedBy, from)) disagreements.push(e.name);
+        for (const [name, byNode] of this.advertised) if (byNode.size === 0) this.advertised.delete(name);
+        return disagreements;
     }
 
     public getAdvertised(name: string): { readonly scopedBy?: string } | undefined {
-        return this.advertised.get(name);
+        const byNode = this.advertised.get(name);
+        if (byNode === undefined || byNode.size === 0) return undefined;
+        const strictness = (scope: string | undefined): number => (scope === undefined ? 2 : scope === 'global' ? 0 : 1);
+        let strictest: { readonly scopedBy?: string } | undefined;
+        for (const answer of byNode.values()) {
+            if (strictest === undefined || strictness(answer.scopedBy) > strictness(strictest.scopedBy)) strictest = answer;
+        }
+        return strictest;
     }
 
     /** This node's own definitions, as it advertises them to peers. */

@@ -184,18 +184,22 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     /**
      * Learns the event definitions a peer advertised, so this node can resolve who those events
      * belong to without loading the peer's code. The payload is off the wire: each entry is checked
-     * rather than trusted, and a disagreement between peers keeps the stricter scope (see
+     * rather than trusted. A presence is the node's whole list: it replaces what that node said
+     * before. A disagreement between peers keeps the stricter scope (see
      * EventContractRegistry.advertise) -- logged, since two builds disagreeing is worth knowing.
      */
     private recordAdvertisedEvents(node: NodeInfo): void {
         const events: unknown = node.events;
         if (!Array.isArray(events)) return;
+        const entries: Array<{ name: string; scopedBy?: string }> = [];
         for (const entry of events) {
             if (typeof entry !== 'object' || entry === null || !('name' in entry) || typeof entry.name !== 'string') continue;
             const scopedBy = 'scopedBy' in entry && typeof entry.scopedBy === 'string' ? entry.scopedBy : undefined;
-            if (!globalEventRegistry.advertise(entry.name, scopedBy)) {
-                this.logger.warn(`Node ${node.nodeID} defines event "${entry.name}" scoped by ${scopedBy ?? 'nothing'}, which disagrees with another node's definition -- keeping the stricter one`);
-            }
+            entries.push(scopedBy === undefined ? { name: entry.name } : { name: entry.name, scopedBy });
+        }
+        for (const name of globalEventRegistry.advertiseAll(node.nodeID, entries)) {
+            const mine = entries.find((e) => e.name === name)?.scopedBy;
+            this.logger.warn(`Node ${node.nodeID} defines event "${name}" scoped by ${mine ?? 'nothing'}, which disagrees with another node's definition -- keeping the stricter one`);
         }
     }
 

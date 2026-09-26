@@ -146,18 +146,35 @@ describe('advertised CRUD events', () => {
 });
 
 describe('EventContractRegistry.advertise', () => {
-    it('keeps the stricter scope when peers disagree -- it can narrow, never widen', () => {
+    it('keeps the stricter scope when different peers disagree -- one can narrow, never widen', () => {
         const registry = new EventContractRegistry();
 
-        expect(registry.advertise('e', 'global')).toBe(true);
-        expect(registry.advertise('e', 'tenantId')).toBe(true);    // stricter: replaces
+        expect(registry.advertise('e', 'global', 'a')).toBe(true);
+        expect(registry.advertise('e', 'tenantId', 'b')).toBe(true);    // stricter: decides
         expect(registry.getAdvertised('e')).toEqual({ scopedBy: 'tenantId' });
 
-        expect(registry.advertise('e', 'global')).toBe(false);     // wider: refused
+        expect(registry.advertise('e', 'global', 'c')).toBe(false);     // wider: b still decides
         expect(registry.getAdvertised('e')).toEqual({ scopedBy: 'tenantId' });
 
-        expect(registry.advertise('e', undefined)).toBe(true);     // no scope at all: strictest
+        expect(registry.advertise('e', undefined, 'd')).toBe(true);     // no scope at all: strictest
         expect(registry.getAdvertised('e')).toEqual({});
-        expect(registry.advertise('e', 'tenantId')).toBe(false);
+        expect(registry.advertise('e', 'tenantId', 'e')).toBe(false);
+    });
+
+    it('lets one peer\'s newer answer replace its older one -- a scope gained in a redeploy reaches the gateway', () => {
+        const registry = new EventContractRegistry();
+        // surf before the redeploy: volume.state_changed declared no scope.
+        registry.advertiseAll('surf', [{ name: 'volume.state_changed' }]);
+        expect(registry.getAdvertised('volume.state_changed')).toEqual({});
+        // surf after: scoped by tenantId. Before this, the old "no scope" won until the gateway restarted.
+        expect(registry.advertiseAll('surf', [{ name: 'volume.state_changed', scopedBy: 'tenantId' }])).toEqual([]);
+        expect(registry.getAdvertised('volume.state_changed')).toEqual({ scopedBy: 'tenantId' });
+    });
+
+    it('forgets what a peer no longer advertises', () => {
+        const registry = new EventContractRegistry();
+        registry.advertiseAll('surf', [{ name: 'old.event', scopedBy: 'tenantId' }]);
+        registry.advertiseAll('surf', []);
+        expect(registry.getAdvertised('old.event')).toBeUndefined();
     });
 });
