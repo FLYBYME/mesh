@@ -2,6 +2,7 @@ import { IMeshNetworkNode, NodeInfo, IMeshOrchestrator, MeshPacket } from '../in
 import type { ILogger } from '../interfaces/ILogger.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import { globalEventRegistry } from '../interfaces/IEventContract.js';
+import { advertisableEvents } from './EventScope.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 
 export interface MeshOrchestratorOptions {
@@ -207,7 +208,7 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             // With this node's event definitions, read fresh each time: a part loaded since the last
             // broadcast has defined more of them (see NodeInfo.events).
             await this.node.send(targetNodeID || '*', '$node.presence', {
-                node: { ...localNode, events: globalEventRegistry.advertisable() }
+                node: { ...localNode, events: advertisableEvents() }
             });
         } catch (err) {
             this.logger.warn(`Failed to broadcast presence to ${targetNodeID || '*'}: ${err instanceof Error ? err.message : String(err)}`);

@@ -20,21 +20,23 @@ export type EventScope =
     | 'global'
     | { readonly refusal: string };
 
-export function eventScope(name: string): EventScope | undefined {
-    // This node's own definition first; otherwise what a peer that has the definition advertised.
-    const declared = globalEventRegistry.get(name) ?? globalEventRegistry.getAdvertised(name);
-    if (declared !== undefined) {
-        if (declared.scopedBy === undefined) {
-            return {
-                refusal: 'its definition declares no scopedBy, so it can never be narrowed to anyone -- '
-                    + 'an event that cannot be scoped is delivered to nobody',
-            };
-        }
-        return declared.scopedBy === 'global' ? 'global' : { scopedBy: declared.scopedBy };
+function fromDeclared(declared: { readonly scopedBy?: string }): EventScope {
+    if (declared.scopedBy === undefined) {
+        return {
+            refusal: 'its definition declares no scopedBy, so it can never be narrowed to anyone -- '
+                + 'an event that cannot be scoped is delivered to nobody',
+        };
     }
+    return declared.scopedBy === 'global' ? 'global' : { scopedBy: declared.scopedBy };
+}
 
-    // A collection's own `created`/`updated`/`deleted`, which `CrudExecutor` emits without a
-    // `defineEvent` of their own.
+const CRUD_ACTIONS = ['created', 'updated', 'deleted'] as const;
+
+/**
+ * A collection's own `created`/`updated`/`deleted`, which `CrudExecutor` emits without a
+ * `defineEvent` of their own -- answered from this node's `defineCrud` registrations only.
+ */
+function localCrudScope(name: string): EventScope | undefined {
     const dot = name.lastIndexOf('.');
     if (dot <= 0) return undefined;
     const domain = name.slice(0, dot);
@@ -49,6 +51,44 @@ export function eventScope(name: string): EventScope | undefined {
         refusal: `collection "${domain}" declares neither scopedBy nor delivery: 'global', so its `
             + 'events can never be narrowed to anyone',
     };
+}
+
+export function eventScope(name: string): EventScope | undefined {
+    // This node's own definitions first -- a defined event, then a collection's CRUD event -- and
+    // only then what a peer that has the definition advertised: a local definition always outranks.
+    const own = globalEventRegistry.get(name);
+    if (own !== undefined) return fromDeclared(own);
+    const crud = localCrudScope(name);
+    if (crud !== undefined) return crud;
+    const advertised = globalEventRegistry.getAdvertised(name);
+    return advertised !== undefined ? fromDeclared(advertised) : undefined;
+}
+
+/**
+ * What this node tells its peers about the events it can emit: its defined events, and every
+ * collection's `created`/`updated`/`deleted` with the path its scope sits at in that payload.
+ *
+ * Without the CRUD half a node that does not load a collection -- the api gateway, for a part that
+ * runs on another node -- could never resolve who that collection's events belong to, and refused
+ * to stream them however they were declared ("no module loaded on this node defines it").
+ * An unscopable collection is still advertised, with no scopedBy: peers then refuse its events
+ * *for that reason*, rather than for not knowing them.
+ */
+export function advertisableEvents(): Array<{ name: string; scopedBy?: string }> {
+    const out = globalEventRegistry.advertisable();
+    const defined = new Set(out.map((e) => e.name));
+    for (const crud of globalCrudRegistry.values()) {
+        for (const action of CRUD_ACTIONS) {
+            const name = `${crud.domain}.${action}`;
+            if (defined.has(name)) continue;
+            const scope = localCrudScope(name);
+            if (scope === undefined) continue;
+            if (scope === 'global') out.push({ name, scopedBy: 'global' });
+            else if ('scopedBy' in scope) out.push({ name, scopedBy: scope.scopedBy });
+            else out.push({ name });
+        }
+    }
+    return out;
 }
 
 /**

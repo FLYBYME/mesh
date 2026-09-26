@@ -5,7 +5,8 @@ import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import type { IMeshNetworkNode, NodeInfo } from '../../interfaces/IMeshNetwork.js';
 import { defineEvent, EventContractRegistry } from '../../interfaces/IEventContract.js';
-import { eventScope } from '../../core/EventScope.js';
+import { advertisableEvents, eventScope, scopeOfOccurrence } from '../../core/EventScope.js';
+import { defineCrud } from '../../interfaces/ICrudContract.js';
 
 /**
  * Event definitions travel with presence, so a node can tell who an event belongs to without loading
@@ -81,6 +82,66 @@ describe('advertised event definitions', () => {
         await orchestrator.handlePresence({ node: peer([{ name: 'advtest.local', scopedBy: 'global' }]) });
 
         expect(eventScope('advtest.local')).toEqual({ scopedBy: 'tenantId' });
+    });
+});
+
+/**
+ * A collection's CRUD events travel too. Found streaming surfdns-compute's `volume.updated`: the api
+ * gateway (edge1) never loads the part that defines `volume` (surf does), so it refused the event
+ * with "no module loaded on this node defines it" however the collection was declared -- while
+ * mesh-serve's own `serve.part.updated` streamed, only because every node loads mesh-serve.
+ */
+describe('advertised CRUD events', () => {
+    const logger = new Logger(LogLevel.ERROR);
+    defineCrud('advcrud.scoped', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId', dependencies: [], filePath: 'x', permissions: [] });
+    defineCrud('advcrud.fleet', z.object({ name: z.string() }), { delivery: 'global', dependencies: [], filePath: 'x', permissions: [] });
+    defineCrud('advcrud.open', z.object({ name: z.string() }), { dependencies: [], filePath: 'x', permissions: [] });
+
+    it('advertises each collection\'s created/updated/deleted with where its scope sits', () => {
+        const events = advertisableEvents();
+        expect(events).toContainEqual({ name: 'advcrud.scoped.created', scopedBy: 'tenantId' });
+        expect(events).toContainEqual({ name: 'advcrud.scoped.updated', scopedBy: 'item.tenantId' });
+        expect(events).toContainEqual({ name: 'advcrud.scoped.deleted', scopedBy: 'tenantId' });
+        expect(events).toContainEqual({ name: 'advcrud.fleet.updated', scopedBy: 'global' });
+        // Unscopable, but known: a peer refuses it for that reason, not for never having heard of it.
+        expect(events).toContainEqual({ name: 'advcrud.open.updated' });
+    });
+
+    it('lets a node without the collection resolve its events from a peer\'s presence', async () => {
+        const registry = new PlacementRegistry(logger, { localNodeID: 'gateway' });
+        const node = { nodeID: 'gateway', namespace: 'default', logger, registry, send: async () => undefined, publish: async () => undefined } as unknown as IMeshNetworkNode;
+        const orchestrator = new MeshOrchestrator(node);
+        try {
+            expect(eventScope('advcrud.remote.updated')).toBeUndefined();
+            await orchestrator.handlePresence({
+                node: {
+                    nodeID: 'surf', type: 'node', namespace: 'default', addresses: ['ws://127.0.0.1:6597'], available: true, timestamp: Date.now(), nodeSeq: 1, services: [],
+                    events: [{ name: 'advcrud.remote.updated', scopedBy: 'item.tenantId' }, { name: 'advcrud.remote2.updated' }],
+                } as NodeInfo,
+            });
+            expect(eventScope('advcrud.remote.updated')).toEqual({ scopedBy: 'item.tenantId' });
+            expect(scopeOfOccurrence('advcrud.remote.updated', { id: '1', patch: {}, item: { tenantId: 't1' } })).toEqual({ scope: 't1' });
+            expect(eventScope('advcrud.remote2.updated')).toMatchObject({ refusal: expect.stringContaining('no scopedBy') });
+        } finally {
+            await registry.stop();
+        }
+    });
+
+    it('never lets an advertisement override this node\'s own collection', async () => {
+        const registry = new PlacementRegistry(logger, { localNodeID: 'owner' });
+        const node = { nodeID: 'owner', namespace: 'default', logger, registry, send: async () => undefined, publish: async () => undefined } as unknown as IMeshNetworkNode;
+        const orchestrator = new MeshOrchestrator(node);
+        try {
+            await orchestrator.handlePresence({
+                node: {
+                    nodeID: 'other', type: 'node', namespace: 'default', addresses: ['ws://127.0.0.1:6596'], available: true, timestamp: Date.now(), nodeSeq: 1, services: [],
+                    events: [{ name: 'advcrud.scoped.updated', scopedBy: 'global' }],
+                } as NodeInfo,
+            });
+            expect(eventScope('advcrud.scoped.updated')).toEqual({ scopedBy: 'item.tenantId' });
+        } finally {
+            await registry.stop();
+        }
     });
 });
 
