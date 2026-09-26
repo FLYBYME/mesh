@@ -12,7 +12,8 @@ import { MeshError } from '../core/MeshError.js';
 export class Database {
     private client: MongoClient;
     private dbInstance: Db | null = null;
-    private repositories: Map<string, DomainRepository<{ id: string }>> = new Map();
+    /** Per domain, one repository per schema object it is asked for -- see `repo`. */
+    private repositories: Map<string, Map<z.ZodType<unknown>, DomainRepository<{ id: string }>>> = new Map();
     private tsRepositories: Map<string, TimeSeriesRepository<{ timestamp: Date, tags: Record<string, string> }>> = new Map();
     private ensuredIndexes: Map<string, Promise<void>> = new Map();
 
@@ -158,7 +159,16 @@ export class Database {
     ): DomainRepository<T> {
         if (!this.dbInstance) throw new Error('Database not connected. Call connect() first.');
 
-        const cached = this.repositories.get(domain);
+        // Cached by domain AND schema object. Once cached by domain alone: a part reloaded from a
+        // new build brings new schema objects, the repository kept from the old one parsed every
+        // write with the old schema, and zod dropped each new field without a word
+        // (surfdns-compute's volume.tenantId, 2026-09-26: 200 OK, never stored, until a restart).
+        let bySchema = this.repositories.get(domain);
+        if (bySchema === undefined) {
+            bySchema = new Map();
+            this.repositories.set(domain, bySchema);
+        }
+        const cached = bySchema.get(schema);
         if (cached) return cached as unknown as DomainRepository<T>;
 
         const collection = this.dbInstance.collection(domain);
@@ -169,7 +179,7 @@ export class Database {
 
         const repository = new DomainRepository<T>(collection, schema, domain, readyPromise, uniqueKeys);
 
-        this.repositories.set(domain, repository as unknown as DomainRepository<{ id: string }>);
+        bySchema.set(schema, repository as unknown as DomainRepository<{ id: string }>);
         return repository;
     }
 
