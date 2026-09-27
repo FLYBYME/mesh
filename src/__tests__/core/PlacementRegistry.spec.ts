@@ -87,6 +87,36 @@ describe('PlacementRegistry', () => {
             registry.unregisterNode('removable');
             expect(registry.getNode('removable')).toBeUndefined();
         });
+
+        it('refuses relayed gossip of a dropped boot; the node itself, or a later boot, brings it back', () => {
+            registry.registerNode({ ...createNodeInfo('gone'), bootedAt: 1000 }, true);
+            registry.unregisterNode('gone');
+
+            registry.registerNode({ ...createNodeInfo('gone'), bootedAt: 1000 });
+            registry.registerNode(createNodeInfo('gone'));
+            expect(registry.getNode('gone')).toBeUndefined();
+
+            registry.registerNode({ ...createNodeInfo('gone'), bootedAt: 2000 });
+            expect(registry.getNode('gone')).toBeDefined();
+
+            registry.unregisterNode('gone');
+            registry.registerNode({ ...createNodeInfo('gone'), bootedAt: 2000 }, true);
+            expect(registry.getNode('gone')).toBeDefined();
+        });
+
+        it('refuses relayed gossip of a node pruned for missed heartbeats', async () => {
+            const short = new PlacementRegistry(new Logger(LogLevel.WARN), { localNodeID, ttl: 50, pruneInterval: 20 });
+            await short.start();
+            try {
+                short.registerNode({ ...createNodeInfo('dead'), bootedAt: 1000 }, true);
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                expect(short.getNode('dead')).toBeUndefined();
+                short.registerNode({ ...createNodeInfo('dead'), bootedAt: 1000 });
+                expect(short.getNode('dead')).toBeUndefined();
+            } finally {
+                await short.stop();
+            }
+        });
     });
 
     describe('heartbeat()', () => {

@@ -62,6 +62,15 @@ const onHostnameResolved = (callback: (hostname: string) => void): void => {
  */
 export class PlacementRegistry extends EventEmitter implements IServiceRegistry {
     private nodes = new Map<string, RegistryNodeInfo>();
+    /**
+     * Nodes this registry dropped (lease expired, or the connection closed), by the boot that was
+     * dropped. Second-hand gossip (PEX) of that same boot is refused; only the node's own presence,
+     * or a later boot, brings it back. Without this, peers pruning a dead node at slightly different
+     * moments re-taught it to each other with a fresh lease forever: a pod node gone for good kept
+     * reappearing every minute, and each reappearance stopped part reconcile from starting anything
+     * (2026-09-27).
+     */
+    private tombstones = new Map<string, { bootedAt: number | undefined; at: number }>();
     private tools = new Map<string, ToolContract>();
     private dht: KademliaRoutingTable | null = null;
     private balancer: BaseBalancer;
@@ -343,6 +352,8 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
     }
 
     public unregisterNode(nodeID: string): void {
+        const node = this.nodes.get(nodeID);
+        if (node !== undefined && nodeID !== this.localNodeID) this.tombstones.set(nodeID, { bootedAt: node.bootedAt, at: Date.now() });
         if (this.nodes.delete(nodeID)) {
             if (this.dht) this.dht.removeNode(nodeID);
             this.emit('changed', nodeID);
@@ -412,6 +423,16 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
 
     public registerNode(node: CoreNodeInfo, trusted = false): void {
         const existing = this.nodes.get(node.nodeID);
+
+        const tombstone = this.tombstones.get(node.nodeID);
+        if (tombstone !== undefined) {
+            const laterBoot = node.bootedAt !== undefined && tombstone.bootedAt !== undefined && node.bootedAt > tombstone.bootedAt;
+            if (!trusted && !laterBoot) {
+                this.logger.debug(`Ignoring relayed record of dropped node ${node.nodeID}`);
+                return;
+            }
+            this.tombstones.delete(node.nodeID);
+        }
 
         const normalizeAddr = (addr: string) => addr.replace('//localhost:', '//127.0.0.1:');
         const nodeAddresses = (node.addresses || []).map(normalizeAddr);
@@ -664,6 +685,7 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
             const age = now - (node.timestamp || 0);
 
             if (age > ttlMs * 2) {
+                this.tombstones.set(nodeID, { bootedAt: node.bootedAt, at: now });
                 this.nodes.delete(nodeID);
                 if (this.dht) this.dht.removeNode(nodeID);
                 this.logger.info(`Pruned stale node: ${nodeID}`);
@@ -674,6 +696,11 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
                 node.available = false;
                 changed = true;
             }
+        }
+
+        // By then every peer has dropped the same boot too, so nothing is left to relay it.
+        for (const [nodeID, tombstone] of this.tombstones) {
+            if (now - tombstone.at > ttlMs * 10) this.tombstones.delete(nodeID);
         }
 
         if (changed) this.emit('changed');
