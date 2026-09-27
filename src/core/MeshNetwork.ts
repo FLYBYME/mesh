@@ -202,7 +202,17 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
         const localNode = this.registry.getNode(this.nodeID);
         // An explicit advertiseHost is the whole answer -- merging the enumerated interface/loopback
         // addresses back in would reintroduce exactly the addresses every node on a shared port has
-        // in common, which is what made peers look like the local node.
+        // in common, which is what made peers look like the local node. But it must still become an
+        // address: set only in the shared-server branch above, a node given just a transport (every
+        // mesh-serve node) advertised none, so no peer could dial a node it learned of via PEX and
+        // nodes stayed linked only to their bootstrap hosts (PexDial.spec.ts).
+        if (localNode && this.options.advertiseHost !== undefined && !this.server) {
+            const advertised = this.transport.getAddresses([this.options.advertiseHost]);
+            if (advertised.length > 0) {
+                localNode.addresses = advertised;
+                this.registry.registerNode(localNode);
+            }
+        }
         if (localNode && this.options.advertiseHost === undefined) {
             const transportAddresses = this.transport.getAddresses();
             if (transportAddresses.length > 0) {

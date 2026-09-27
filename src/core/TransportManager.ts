@@ -133,13 +133,17 @@ export class TransportManager extends EventEmitter {
         return Array.from(this.transports.values()).some(t => t.isConnected());
     }
 
-    public getAddresses(): string[] {
+    /**
+     * Every address this node's listening transports can be dialed on. With `hosts`, those hosts
+     * only (an advertised address) instead of every local interface.
+     */
+    public getAddresses(hosts?: string[]): string[] {
         const addresses: string[] = [];
-        let localIPs: string[] = ['127.0.0.1'];
+        let localIPs: string[] = hosts ?? ['127.0.0.1'];
 
         // Try to get all local network interface IPs if in Node.js
         try {
-            if (typeof process !== 'undefined' && process.release?.name === 'node') {
+            if (hosts === undefined && typeof process !== 'undefined' && process.release?.name === 'node') {
                 const os = eval('require')('os');
                 const interfaces = os.networkInterfaces();
                 for (const name of Object.keys(interfaces)) {
