@@ -1,7 +1,8 @@
 import { IMiddleware } from '../interfaces/IInterceptor.js';
 import { IContext } from '../interfaces/IContext.js';
 import { IServiceBroker } from '../interfaces/IServiceBroker.js';
-import { MeshToolSchemaRegistry } from '../core/ServiceBroker.js';
+import { MeshToolSchemaRegistry, formatZodIssues } from '../core/ServiceBroker.js';
+import { ClientError } from '../core/MeshError.js';
 import { Database } from './Database.js';
 import { CrudExecutor } from './CrudExecutor.js';
 import { z } from 'zod';
@@ -59,7 +60,20 @@ export function createDatabaseMiddleware(broker: IServiceBroker, db: Database): 
             return await next(); // Pass through unknown/renamed actions, same as always.
         }
 
-        return await CrudExecutor.execute({ broker, db: effectiveDb }, { domain, action, params: ctx.params, meta: ctx.meta });
+        // A call that arrived over the network reaches here without the params check `internalCall`
+        // gives a local one, and this middleware answers before the local handler that would check
+        // them. So an api PATCH wrote `containers: [[...]]` into processGroup, which every later find
+        // then failed to read (2026-09-27). Checked here, before anything is written.
+        let params = ctx.params;
+        if (schemaReg.params !== undefined) {
+            try {
+                params = (schemaReg.params as z.ZodTypeAny).parse(ctx.params) as Record<string, unknown>;
+            } catch (error) {
+                throw new ClientError(`Invalid params for tool ${toolKey}: ${formatZodIssues(error)}`, 'INVALID_PARAMS');
+            }
+        }
+
+        return await CrudExecutor.execute({ broker, db: effectiveDb }, { domain, action, params, meta: ctx.meta });
     };
 }
 

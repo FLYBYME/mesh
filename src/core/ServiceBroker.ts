@@ -34,7 +34,7 @@ import { ClientError, MeshError, errorFromWire, isMeshError } from './MeshError.
  * `${zodError}` stringifies to a multi-line JSON dump of the whole issue array, which is unusable
  * in a log line and unusable in an API response. The caller needs to know which field was wrong.
  */
-function formatZodIssues(error: unknown): string {
+export function formatZodIssues(error: unknown): string {
     if (error instanceof z.ZodError) {
         return error.issues
             .map(issue => {
