@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
 import { ClientError, MeshError, errorFromWire, isMeshError } from './MeshError.js';
+import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /**
  * formatZodIssues: renders a params validation failure as "field: reason; field: reason".
@@ -199,6 +200,12 @@ export class ServiceBroker implements IServiceBroker {
     public resiliency = {} as Record<string, unknown>;
 
     private providers = new Map<string, unknown>();
+
+    /**
+     * Where this broker records its calls (mesh_rpc_*). The process-wide instance by default --
+     * see MeshMetrics; a test with several nodes in one process may give each its own.
+     */
+    public metrics: MeshMetrics = meshMetrics;
 
     private pendingRequests = new Map<string, {
         resolve: (val: unknown) => void,
@@ -1315,31 +1322,70 @@ export class ServiceBroker implements IServiceBroker {
             parentId,
         };
 
+        return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${toolName} locally after ${ms}ms`);
+    }
+
+    /**
+     * Runs `ctx` through the pipeline under the broker's RPC timeout and validates its result --
+     * the tail internalCall and handleIncomingRPC used to carry as two identical copies.
+     *
+     * A call that resolves to this node is also *recorded* here (mesh_rpc_calls_total,
+     * mesh_rpc_duration_seconds): one place for both a local call and one that arrived from the
+     * network, so neither is counted twice or missed. One routed elsewhere is not -- executeRemote
+     * records it as outgoing, and the node that handles it records it there.
+     *
+     * The action label is the tool name only when this node actually serves it, otherwise
+     * UNKNOWN_ACTION: a REQUEST's topic comes off the wire, and a label that any peer can set to
+     * anything is an unbounded label. Read at the end, so a call placement loaded here just now
+     * is labelled by name.
+     */
+    private async runUnderTimeout(
+        ctx: IContext<Record<string, unknown>, IMeshMeta>,
+        schema: ReturnType<typeof MeshToolSchemaRegistry.get>,
+        timeoutMessage: (timeoutMs: number) => string,
+    ): Promise<unknown> {
+        const handledHere = !ctx.targetNodeID || ctx.targetNodeID === this.nodeID;
+        const startedMs = performance.now();
+        let outcome: RpcOutcome = 'error';
+        let timedOut = false;
+
         const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
         let timer: ReturnType<typeof setTimeout> | undefined;
 
-        const resultPromise = this.handlePipeline(ctx);
-        let result: unknown;
-
-        const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => {
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} locally after ${timeoutMs}ms`));
-            }, timeoutMs);
-        });
-
         try {
-            result = await Promise.race([resultPromise, timeoutPromise]);
-        } finally {
-            if (timer) SafeTimer.clearTimeout(timer);
-        }
+            const resultPromise = this.handlePipeline(ctx);
+            let result: unknown;
 
-        if (schema?.returns) {
-            // A projected read may be missing declared fields; it may never carry undeclared ones.
-            // See `applyReturns`.
-            const isCrudProjection = Boolean(schema.isCrud && ctx.params && (ctx.params.fields !== undefined));
-            return ServiceBroker.applyReturns(schema.returns as z.ZodTypeAny, isCrudProjection, result);
+            const timeoutPromise = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    reject(new Error(timeoutMessage(timeoutMs)));
+                }, timeoutMs);
+            });
+
+            try {
+                result = await Promise.race([resultPromise, timeoutPromise]);
+            } finally {
+                if (timer) SafeTimer.clearTimeout(timer);
+            }
+
+            if (schema?.returns) {
+                // A projected read may be missing declared fields; it may never carry undeclared ones.
+                // See `applyReturns`.
+                const isCrudProjection = Boolean(schema.isCrud && ctx.params && (ctx.params.fields !== undefined));
+                result = ServiceBroker.applyReturns(schema.returns as z.ZodTypeAny, isCrudProjection, result);
+            }
+            outcome = 'ok';
+            return result;
+        } catch (err) {
+            if (timedOut) outcome = 'timeout';
+            throw err;
+        } finally {
+            if (handledHere) {
+                const action = this.localTools.has(ctx.toolName) ? ctx.toolName : UNKNOWN_ACTION;
+                this.metrics.recordHandled(action, outcome, secondsSince(startedMs));
+            }
         }
-        return result;
     }
 
     public async handleIncomingRPC(packet: IMeshPacket): Promise<unknown> {
@@ -1361,31 +1407,7 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         const schema = MeshToolSchemaRegistry.get(packet.topic);
-        const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
-        let timer: ReturnType<typeof setTimeout> | undefined;
-
-        const resultPromise = this.handlePipeline(ctx);
-        let result: unknown;
-
-        const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => {
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${timeoutMs}ms`));
-            }, timeoutMs);
-        });
-
-        try {
-            result = await Promise.race([resultPromise, timeoutPromise]);
-        } finally {
-            if (timer) SafeTimer.clearTimeout(timer);
-        }
-
-        if (schema?.returns) {
-            // A projected read may be missing declared fields; it may never carry undeclared ones.
-            // See `applyReturns`.
-            const isCrudProjection = Boolean(schema.isCrud && ctx.params && (ctx.params.fields !== undefined));
-            return ServiceBroker.applyReturns(schema.returns as z.ZodTypeAny, isCrudProjection, result);
-        }
-        return result;
+        return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${ms}ms`);
     }
 
     public async handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown> {
@@ -1524,11 +1546,23 @@ export class ServiceBroker implements IServiceBroker {
 
         const timeoutMs = this.evaluateTimeout(meta.timeout as number, schema?.timeout, remoteTimeout);
 
-        return new Promise((resolve, reject) => {
+        // mesh_rpc_outgoing_*: recorded when the call settles, whichever way. The action label is
+        // the tool name as the caller gave it -- this node chose to send it, so it is one of the
+        // contracts the mesh advertises; the registry's per-metric series cap covers the rest.
+        const startedMs = performance.now();
+        const settle = (outcome: RpcOutcome): void => {
+            this.metrics.recordOutgoing(toolName, outcome, secondsSince(startedMs));
+        };
+
+        return new Promise((resolveCall, rejectCall) => {
+            const resolve = (value: unknown): void => { settle('ok'); resolveCall(value); };
+            const reject = (err: Error): void => { settle('error'); rejectCall(err); };
+
             const timeout = setTimeout(() => {
                 this.pendingRequests.delete(requestId);
                 this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
-                reject(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
+                settle('timeout');
+                rejectCall(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
             }, timeoutMs);
 
             this.pendingRequests.set(requestId, {

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'eventemitter3';
 import { BaseSerializer } from '../serializers/BaseSerializer.js';
 import type { TransportConnectOptions, TransportType, MeshPacket, PeerLink } from '../interfaces/IMeshNetwork.js';
+import { meshMetrics, type MeshMetrics } from '../metrics/MeshMetrics.js';
 
 /**
  * BaseTransport — abstract contract for node-to-node communication.
@@ -13,6 +14,11 @@ export abstract class BaseTransport extends EventEmitter {
     protected connected = false;
     protected nodeID: string = 'unknown';
     protected subscriptions = new Map<string, ((data: unknown) => void)[]>();
+    /**
+     * Where a transport that counts its traffic records it (mesh_transport_*). WSTransport does;
+     * the process-wide instance by default, see MeshMetrics.
+     */
+    public metrics: MeshMetrics = meshMetrics;
 
     constructor(serializer: BaseSerializer) {
         super();

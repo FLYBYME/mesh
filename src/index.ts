@@ -42,6 +42,10 @@ export * from './interceptors/index.js';
 // Transports (Base)
 export * from './transports/BaseTransport.js';
 
+// Metrics (browser-safe half; the process/event-loop half is in ./node)
+export * from './metrics/MetricsRegistry.js';
+export * from './metrics/MeshMetrics.js';
+
 // Serializers
 export * from './serializers/BaseSerializer.js';
 export * from './serializers/JSONSerializer.js';

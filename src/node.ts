@@ -17,5 +17,8 @@ export * from './modules/DatabaseModule.js';
 // Loading parts from disk -- what `loadDomain`'s `resolve` option wants when nothing is bundled.
 export * from './loader/handlerResolver.js';
 
+// Process and event-loop metrics (perf_hooks, process -- never in the browser entry)
+export * from './metrics/nodeMetrics.js';
+
 // Testing Utilities (Node-specific)
 export * from './testing/index.js';

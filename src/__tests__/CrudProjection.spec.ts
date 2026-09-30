@@ -127,9 +127,9 @@ describe('a crud projection is still filtered by the output schema', () => {
         const decisions = source.match(/isCrudProjection/g) ?? [];
         const handoffs = source.match(/ServiceBroker\.applyReturns\(/g) ?? [];
 
-        // One mention per call site where the flag is computed, plus the two in the doc comment
-        // above `applyReturns` that quote the old code.
-        expect(handoffs.length).toBeGreaterThanOrEqual(2);
+        // Since v4.10.0 internalCall and handleIncomingRPC share one tail (runUnderTimeout), so
+        // there is one call site where there were two -- the "exactly one place" this guards.
+        expect(handoffs.length).toBeGreaterThanOrEqual(1);
         expect(decisions.length).toBeGreaterThan(0);
 
         // The shape that was the bug: returning the raw result because a projection was asked for.

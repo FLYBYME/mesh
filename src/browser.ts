@@ -37,6 +37,10 @@ export * from './transports/browser/BrowserWebSocketTransport.js';
 export * from './serializers/BaseSerializer.js';
 export * from './serializers/JSONSerializer.js';
 
+// Metrics -- the registry only. nodeMetrics (perf_hooks, process) is exported from ./node alone.
+export * from './metrics/MetricsRegistry.js';
+export * from './metrics/MeshMetrics.js';
+
 // Modules
 export * from './modules/BrokerModule.js';
 export * from './modules/NetworkModule.js';

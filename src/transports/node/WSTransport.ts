@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { ILogger } from '../../interfaces/ILogger.js';
+import { packetKind } from '../../metrics/MeshMetrics.js';
 
 interface PendingRPC {
     resolve: (value: unknown) => void;
@@ -506,9 +507,15 @@ export class WSTransport extends BaseTransport {
         // sendHeartbeats() reads this to avoid killing a socket that's actively exchanging
         // application data but happened to lose one ping/pong round-trip (see its own comment).
         this.infoOf(socket).lastMessageAt = Date.now();
+        // Counted as it came off the socket -- the frame's own length, not a re-serialization --
+        // and before anything below can drop it: a dropped packet still cost the bytes.
+        const bytes = WSTransport.frameLength(raw);
+        let counted = false;
         try {
             const payloadString = this.decodePayload(raw);
             const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
+            this.metrics.recordPacket('in', packetKind(envelope.type), typeof envelope.topic === 'string' ? envelope.topic : 'unparsed', bytes);
+            counted = true;
 
             if (envelope.version !== undefined && envelope.version !== WSTransport.PROTOCOL_VERSION) {
                 this.logger?.warn(`[WSTransport] Dropping packet with incompatible version: ${envelope.version}. Expected ${WSTransport.PROTOCOL_VERSION}`);
@@ -549,8 +556,23 @@ export class WSTransport extends BaseTransport {
             }
             this.emit('packet', envelope);
         } catch (err: unknown) {
+            if (!counted) this.metrics.recordPacket('in', 'event', 'unparsed', bytes);
             this.emit('error', err instanceof Error ? err : new Error(String(err)));
         }
+    }
+
+    /** A received frame's size in bytes, from what `ws` handed over -- nothing is copied or encoded. */
+    private static frameLength(raw: unknown): number {
+        if (raw instanceof Uint8Array || raw instanceof ArrayBuffer) return raw.byteLength;
+        // ws delivers a Buffer (a Uint8Array) for every text frame; a string only from a caller
+        // feeding one in directly, where its length is close enough.
+        if (typeof raw === 'string') return raw.length;
+        if (Array.isArray(raw)) {
+            let total = 0;
+            for (const part of raw) if (part instanceof Uint8Array) total += part.byteLength;
+            return total;
+        }
+        return 0;
     }
 
     private decodePayload(raw: unknown): string {
@@ -648,6 +670,8 @@ export class WSTransport extends BaseTransport {
         const correlationId = (packet.id as string) || randomUUID();
         const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
         ws.send(new TextDecoder().decode(buf));
+        // buf's length is the UTF-8 byte count ws puts on the wire (framing aside); already in hand.
+        this.metrics.recordPacket('out', packetKind(packet.type), packet.topic, buf.byteLength);
     }
 
     async call(nodeID: string, topic: string, data: Record<string, unknown>): Promise<unknown> {
@@ -698,11 +722,16 @@ export class WSTransport extends BaseTransport {
 
         const buf = this.serializer.serialize(fullPacket);
         const payload = new TextDecoder().decode(buf);
+        let sent = 0;
         for (const ws of this.peers.values()) {
             if (ws.readyState === 1) {
                 ws.send(payload);
+                sent++;
             }
         }
+        // Once per peer it went to: a broadcast to four peers costs four times its size, and that
+        // multiplication is exactly what the 2026-09-30 gossip storm was made of.
+        if (sent > 0) this.metrics.recordPacket('out', packetKind(packet.type), topic, buf.byteLength * sent, sent);
     }
 
     /**
