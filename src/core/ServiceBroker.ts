@@ -668,7 +668,7 @@ export class ServiceBroker implements IServiceBroker {
         if (this.intervalTimers.has(toolKeyStr)) return;
 
         let running = false;
-        const timer = setInterval(() => {
+        const tick = (): void => {
             if (running) return;
             if (contract.leaderScoped === true) {
                 const leader = this.registry?.leaderFor(contract.domain);
@@ -684,11 +684,24 @@ export class ServiceBroker implements IServiceBroker {
                     this.logger.error(`[ServiceBroker] interval contract "${toolKeyStr}" threw`, err);
                 })
                 .finally(() => { running = false; });
-        }, contract.intervalMs);
+        };
+        const timer = setInterval(tick, contract.intervalMs);
 
         // A pending tick must not be the reason a process refuses to exit.
         SafeTimer.unref(timer);
         this.intervalTimers.set(toolKeyStr, timer);
+
+        // The first pass right after loading, not one whole interval later: a contract whose timer
+        // is a slow safety net (serve.queue.tick, 60 s, woken by events in between) would otherwise
+        // start listening -- and pick up work already waiting -- only a minute after every start
+        // (2026-09-30). Not for a leaderScoped contract: just after boot the leader may not be known
+        // yet, and a cluster singleton's early pass could then run on every node.
+        if (contract.leaderScoped !== true) {
+            const first = setTimeout(() => {
+                if (this.intervalTimers.get(toolKeyStr) === timer) tick();
+            }, Math.min(contract.intervalMs ?? 1000, 1000));
+            SafeTimer.unref(first);
+        }
         this.logger.info(`[ServiceBroker] interval contract "${toolKeyStr}" ticking every ${contract.intervalMs}ms`);
     }
 
