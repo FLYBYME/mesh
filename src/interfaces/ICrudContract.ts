@@ -206,8 +206,31 @@ export type { IServiceCollectionRegistry };
 export class CrudRegistry {
     private readonly cruds = new Map<string, AnyCrudContracts>();
 
+    /**
+     * A domain registered again keeps every field any registration declared `hidden`.
+     *
+     * The registry is one per process, and parts loaded into one process each bundle their own
+     * copy of the contracts they call. On edge1 (2026-09-30) mail-service's copy of dnsZone, from
+     * before `hidden: ['dnssecPrivateKey']` existed, was registered after domains-service's own:
+     * the api then described the private key as a zone output, and the executor's stripping --
+     * which reads `hidden` from here -- was one load order away from returning it. Last writer
+     * still wins for everything else (the newest definition is usually the right one), but a
+     * re-registration can never un-hide a field.
+     */
     public register(crud: AnyCrudContracts): void {
-        this.cruds.set(crud.domain, crud);
+        const existing = this.cruds.get(crud.domain);
+        const kept = existing?.hidden ?? [];
+        const declared = crud.hidden ?? [];
+        const dropped = kept.filter((field) => !declared.includes(field));
+        if (existing === undefined || existing === crud || dropped.length === 0) {
+            this.cruds.set(crud.domain, crud);
+            return;
+        }
+        console.warn(
+            `[CrudRegistry] "${crud.domain}" was registered again without hidden field(s) ${dropped.join(', ')}: ` +
+            'they stay hidden. Two copies of this collection disagree -- update the stale one.',
+        );
+        this.cruds.set(crud.domain, Object.freeze({ ...crud, hidden: Object.freeze([...declared, ...dropped]) }));
     }
 
     public has(domain: string): boolean {

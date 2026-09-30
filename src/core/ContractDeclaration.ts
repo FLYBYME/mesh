@@ -1,5 +1,6 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ToolInfo } from '../types/registry.schema.js';
+import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 import { toolKey, visibilityOf, type ContractVisibility, type HttpMethod, type RestMeta, type ToolContract } from '../interfaces/IToolContract.js';
 
 /**
@@ -34,6 +35,42 @@ function jsonSchema(schema: ToolContract['inputSchema']): Record<string, unknown
     return typeof out === 'object' && out !== null && !Array.isArray(out) ? Object.fromEntries(Object.entries(out)) : {};
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A JSON Schema without `fields`: from an object's `properties` and `required`, through array
+ * `items` and `anyOf`/`oneOf` (how an optional output renders). Nothing else is walked -- a CRUD
+ * output is a record, a list of records, or an optional record.
+ */
+function withoutFields(schema: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...schema };
+    if (isObject(schema.properties)) {
+        out.properties = Object.fromEntries(Object.entries(schema.properties).filter(([key]) => !fields.includes(key)));
+        if (Array.isArray(schema.required)) out.required = schema.required.filter((key) => !fields.includes(String(key)));
+    }
+    if (isObject(schema.items)) out.items = withoutFields(schema.items, fields);
+    for (const union of ['anyOf', 'oneOf'] as const) {
+        const members = schema[union];
+        if (Array.isArray(members)) out[union] = members.map((m) => (isObject(m) ? withoutFields(m, fields) : m));
+    }
+    return out;
+}
+
+/**
+ * A contract's described output. For a CRUD contract, the collection's `hidden` fields are left
+ * out whatever schema this copy of the contract carries: parts in one process share the contract
+ * registry, and a stale copy registered last used to describe a hidden field (dnsZone's private
+ * key) as an output. The CRUD registry keeps every field any copy declared hidden.
+ */
+function outputOf(contract: ToolContract): Record<string, unknown> {
+    const output = jsonSchema(contract.outputSchema);
+    if (contract.isCrud !== true) return output;
+    const hidden = globalCrudRegistry.get(contract.domain)?.hidden ?? [];
+    return hidden.length === 0 ? output : withoutFields(output, hidden);
+}
+
 /**
  * The declaration of a contract this node has loaded. None for a contract built without a route --
  * nothing typed allows that, but a hand-built one can reach here, and it cannot be published.
@@ -50,7 +87,7 @@ export function declarationOf(contract: ToolContract): ContractDeclaration | und
         permissions: [...(contract.permissions ?? [])],
         destructive: contract.destructive === true,
         input: jsonSchema(contract.inputSchema),
-        output: jsonSchema(contract.outputSchema),
+        output: outputOf(contract),
         ...(contract.timeout !== undefined ? { timeout: contract.timeout } : {}),
     };
 }
@@ -70,7 +107,7 @@ export function toolInfoOf(contract: ToolContract): ToolInfo {
         roles: [...(contract.permissions ?? [])],
         metadata: { domain: contract.domain, action: contract.action, isCrud: contract.isCrud === true, destructive: contract.destructive === true },
         params: declaration?.input ?? jsonSchema(contract.inputSchema),
-        returns: declaration?.output ?? jsonSchema(contract.outputSchema),
+        returns: declaration?.output ?? outputOf(contract),
         ...(contract.timeout !== undefined ? { timeout: contract.timeout } : {}),
     };
 }
