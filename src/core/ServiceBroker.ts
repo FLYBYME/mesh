@@ -570,7 +570,7 @@ export class ServiceBroker implements IServiceBroker {
             handler(params as z.infer<TIn>, serviceCtx as IServiceContext));
 
         this.standaloneContracts.set(toolKeyStr, asAny);
-        globalContractRegistry.register(asAny);
+        globalContractRegistry.mount(asAny);
 
         const owner = this.currentOwner();
         if (owner !== undefined) {

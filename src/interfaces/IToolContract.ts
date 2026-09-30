@@ -346,13 +346,35 @@ export function defineContract<
  */
 export class ContractRegistry {
     private readonly contracts = new Map<string, ToolContract>();
+    /** Keys whose entry is the definition a handler was mounted with on this node. */
+    private readonly mounted = new Set<string>();
 
+    /** A definition seen at import time: kept only when nothing is known for its key yet. */
     public register<I extends z.ZodTypeAny, O extends z.ZodTypeAny>(contract: ToolContract<I, O>): void {
         const key = toolKey(contract as unknown as ToolContract);
         if (this.contracts.has(key)) {
             return;
         }
         this.contracts.set(key, contract as unknown as ToolContract);
+    }
+
+    /**
+     * The definition a handler is mounted with (ServiceBroker.registerContract): it always wins over
+     * one merely imported. First-wins alone let any part that *imports* another package's contracts
+     * -- a stale copy pinned in its lockfile -- decide what a contract looks like on the node, if it
+     * happened to load first. Found live 2026-09-30: after edge1's restart, mail-service loaded
+     * before certs, and its copy of surfdns-certs (cert.ensure still `internal`) won, so the api
+     * stopped serving cert.ensure although the certs part mounted the current, public one.
+     */
+    public mount<I extends z.ZodTypeAny, O extends z.ZodTypeAny>(contract: ToolContract<I, O>): void {
+        const key = toolKey(contract as unknown as ToolContract);
+        this.contracts.set(key, contract as unknown as ToolContract);
+        this.mounted.add(key);
+    }
+
+    /** Whether the entry for `key` came with its handler, not from an import. */
+    public isMounted(key: string): boolean {
+        return this.mounted.has(key);
     }
 
     public has(key: string): boolean {
@@ -369,11 +391,13 @@ export class ContractRegistry {
      * MeshToolSchemaRegistry.delete/localTools.delete already are, for the same reason.
      */
     public delete(key: string): boolean {
+        this.mounted.delete(key);
         return this.contracts.delete(key);
     }
 
     public clear(): void {
         this.contracts.clear();
+        this.mounted.clear();
     }
 
     public get(key: string): ToolContract | undefined {
