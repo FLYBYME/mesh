@@ -34,6 +34,11 @@ export class NetworkController {
         dispatcher.on('$node.pong', (data, packet) => this.handlePong(data as Record<string, unknown>, packet));
         dispatcher.on('$node.pex', (data, _packet) => this.handlePex(data as PexData));
         dispatcher.on('$node.presence', (data, _packet) => this.handlePresence(data as PresenceData));
+        // v4.9.0 gossip (MeshOrchestrator's BEAT_TOPIC). Older nodes have none of these handlers
+        // and drop the packets unread -- after renewing the sender's lease, as for any packet.
+        dispatcher.on('$node.beat', (data, packet) => this.node.orchestrator?.handleBeat(packet.senderNodeID, data));
+        dispatcher.on('$node.presence.request', (_data, packet) => this.node.orchestrator?.handlePresenceRequest(packet.senderNodeID));
+        dispatcher.on('$node.peers', (data, _packet) => this.node.orchestrator?.handlePeers(data));
         dispatcher.on('$node.announce', (data, packet) => this.handleAnnounce(data as AnnounceData, packet));
         dispatcher.on('$rpc.request', (data, packet) => this.handleRPCRequest(data as RPCRequestData, packet));
         dispatcher.on('$rpc.response', (data, packet) => this.handleRPCResponse(data as Record<string, unknown>, packet));

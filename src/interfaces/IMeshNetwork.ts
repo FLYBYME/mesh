@@ -226,6 +226,10 @@ export interface IMeshOrchestrator {
     handlePEX(data: { peers: Partial<NodeInfo>[] }): Promise<void>;
     handlePresence(data: { node: NodeInfo }): Promise<void>;
     handlePeerConnect(nodeID: string): Promise<void>;
+    /** v4.9.0 gossip: a peer's `$node.beat`, a request for this node's presence, a `$node.peers` list. */
+    handleBeat(senderNodeID: string, payload: unknown): Promise<void>;
+    handlePresenceRequest(senderNodeID: string): Promise<void>;
+    handlePeers(payload: unknown): Promise<void>;
     handlePeerDisconnect(nodeID: string): Promise<void>;
 }
 

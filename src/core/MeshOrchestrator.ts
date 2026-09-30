@@ -41,11 +41,80 @@ export const BOOTSTRAP_SUPERVISION_INTERVAL_MS = 15_000;
 /** How long a burst of local registry changes is gathered into one presence broadcast. */
 export const PRESENCE_COALESCE_MS = 50;
 
+/**
+ * Gossip that carries catalogs only when they change (v4.9.0).
+ *
+ * Until then, every 15 s each node broadcast its *whole* description -- every contract's input and
+ * output JSON Schema -- and every 10 s it broadcast every known node's whole description as PEX
+ * (to all peers, though the round picked one). Measured live 2026-09-30: 4-9 MB/s per node on the
+ * fleet tunnel with nothing happening, about half a CPU core per mesh node spent serializing,
+ * encrypting and parsing it, and every api call slowed to seconds behind that work. On three local
+ * bare nodes: a presence was ~230 KiB, a PEX ~680 KiB.
+ *
+ * Now:
+ * - `$node.beat` every PRESENCE_INTERVAL_MS: nodeSeq, bootedAt, load -- a few hundred bytes. Every
+ *   packet renews its sender's lease (MeshNetwork), so a beat keeps a node alive on old and new
+ *   peers alike; an old peer has no handler for the topic and ignores it.
+ * - The full `$node.presence` goes out when this node's catalog changes (schedulePresence), to a
+ *   peer that just connected, to a peer that asks (`$node.presence.request`, sent when a beat shows
+ *   a nodeSeq or boot this node has not seen), and every FULL_PRESENCE_REFRESH_MS as a backstop.
+ * - `$node.peers` every gossip round, to the one peer picked: who exists and where, no catalogs.
+ *   Only new nodes understand it; an old peer still learns peers from old nodes, and from the full
+ *   `$node.pex` sent once when a link comes up.
+ */
+export const BEAT_TOPIC = '$node.beat';
+export const PRESENCE_REQUEST_TOPIC = '$node.presence.request';
+export const PEERS_TOPIC = '$node.peers';
+export const FULL_PRESENCE_REFRESH_MS = 5 * 60_000;
+/** A peer's presence is asked for at most this often, however many beats show it out of date. */
+export const PRESENCE_REQUEST_FLOOR_MS = 10_000;
+
+/** What a beat carries. */
+export interface BeatData {
+    nodeSeq: number;
+    bootedAt?: number;
+    cpu?: number;
+    activeRequests?: number;
+}
+
+/** A beat off the wire, checked: undefined when it is not one. */
+export function beatOf(payload: unknown): BeatData | undefined {
+    if (typeof payload !== 'object' || payload === null) return undefined;
+    const num = (key: string): number | undefined => {
+        const v: unknown = Reflect.get(payload, key);
+        return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+    const nodeSeq = num('nodeSeq');
+    if (nodeSeq === undefined) return undefined;
+    const bootedAt = num('bootedAt');
+    const cpu = num('cpu');
+    const activeRequests = num('activeRequests');
+    return {
+        nodeSeq,
+        ...(bootedAt !== undefined ? { bootedAt } : {}),
+        ...(cpu !== undefined ? { cpu } : {}),
+        ...(activeRequests !== undefined ? { activeRequests } : {}),
+    };
+}
+
+/** One `$node.peers` entry: where a node is, not what it runs. */
+export interface PeerEntry {
+    nodeID: string;
+    addresses: string[];
+    namespace?: string;
+    nodeSeq?: number;
+    bootedAt?: number;
+    hostname?: string;
+}
+
 export class MeshOrchestrator implements IMeshOrchestrator {
     private logger: ILogger;
     private gossipInterval?: TimerHandle;
     private presenceInterval?: TimerHandle;
+    private fullPresenceInterval?: TimerHandle;
     private supervisionInterval?: TimerHandle;
+    /** nodeID -> when its presence was last asked for (PRESENCE_REQUEST_FLOOR_MS). */
+    private presenceRequests = new Map<string, number>();
     /** nodeID -> last dial attempt, so a PEX round cannot become a dial storm. */
     private dialAttempts = new Map<string, number>();
     /** One placeholder id per bootstrap URL, kept for the process's life so its logs line up. */
@@ -96,9 +165,11 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         this.gossipInterval = setInterval(() => this.gossipRound(), this.options.gossipIntervalMs || 10000);
         SafeTimer.unref(this.gossipInterval);
 
-        // Start Presence broadcast interval (Heartbeat)
-        this.presenceInterval = setInterval(() => this.broadcastPresence(), PRESENCE_INTERVAL_MS);
+        // Beats keep leases; the full presence goes out on change, on connect, on request, and here.
+        this.presenceInterval = setInterval(() => void this.broadcastBeat(), PRESENCE_INTERVAL_MS);
         SafeTimer.unref(this.presenceInterval);
+        this.fullPresenceInterval = setInterval(() => void this.broadcastPresence(), FULL_PRESENCE_REFRESH_MS);
+        SafeTimer.unref(this.fullPresenceInterval);
 
         // Immediate broadcast of our presence
         this.broadcastPresence();
@@ -114,6 +185,10 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         if (this.presenceInterval) {
             SafeTimer.clearInterval(this.presenceInterval);
             this.presenceInterval = undefined;
+        }
+        if (this.fullPresenceInterval) {
+            SafeTimer.clearInterval(this.fullPresenceInterval);
+            this.fullPresenceInterval = undefined;
         }
         if (this.supervisionInterval) {
             SafeTimer.clearInterval(this.supervisionInterval);
@@ -175,34 +250,85 @@ export class MeshOrchestrator implements IMeshOrchestrator {
 
         //this.logger.debug(`Gossip: Exchanging peer list with ${target.nodeID}`, { internal: true });
 
-        // Send a random subset of our known nodes (max 50)
+        // A random subset of our known nodes (max 50): where they are, not what they run. The
+        // catalogs used to travel here too, to every peer, every 10 s (see BEAT_TOPIC's comment);
+        // a node learns a peer's catalog from that peer's own presence once it dials it.
         const allKnown = this.node.registry.getNodes();
         const subset = allKnown.sort(() => 0.5 - Math.random()).slice(0, 50);
-
-        // hostname and metadata travel with PEX too. Both are carried by $node.presence (which
-        // sends the whole node record), but this projection used to drop them one at a time -- first
-        // hostname (a node learned about second-hand showed up as "unknown" forever), now metadata
-        // (an operator-declared --labels set learned about second-hand showed up as {} forever): the
-        // registry's equal-nodeSeq fast path in registerNode only refreshes available/cpu/
-        // activeRequests, so once a peer is first registered via PEX with no metadata, a later
-        // $node.presence for that same nodeSeq can never backfill it.
-        const peers = subset.map(n => ({
+        const peers: PeerEntry[] = subset.map((n) => ({
             nodeID: n.nodeID,
             addresses: n.addresses,
             namespace: n.namespace,
-            type: n.type,
-            services: n.services,
-            available: n.available,
-            timestamp: n.timestamp,
-            bootedAt: n.bootedAt,
             nodeSeq: n.nodeSeq,
-            nodeType: n.nodeType,
-            parentID: n.parentID,
+            bootedAt: n.bootedAt,
             hostname: n.hostname,
-            metadata: n.metadata
         }));
 
-        this.node.publish('$node.pex', { peers }).catch(() => { });
+        this.node.send(target.nodeID, PEERS_TOPIC, { peers }).catch(() => { });
+    }
+
+    /** Proof of life and the catalog's version, to every peer: a few hundred bytes. */
+    public async broadcastBeat(): Promise<void> {
+        const localNode = this.node.registry.getNode(this.node.nodeID);
+        if (!localNode) return;
+        const beat: BeatData = {
+            nodeSeq: localNode.nodeSeq ?? 0,
+            ...(localNode.bootedAt !== undefined ? { bootedAt: localNode.bootedAt } : {}),
+            ...(localNode.cpu !== undefined ? { cpu: localNode.cpu } : {}),
+            ...(localNode.activeRequests !== undefined ? { activeRequests: localNode.activeRequests } : {}),
+        };
+        try {
+            await this.node.send('*', BEAT_TOPIC, beat);
+        } catch (err) {
+            this.logger.warn(`Failed to broadcast beat: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    /**
+     * A peer's beat. Its lease is already renewed (every packet does that); this takes its load and
+     * asks for its presence when the beat shows a catalog or a boot this node has not seen.
+     */
+    async handleBeat(senderNodeID: string, payload: unknown): Promise<void> {
+        const data = beatOf(payload);
+        if (senderNodeID === this.node.nodeID || data === undefined) return;
+        this.node.registry.heartbeat(senderNodeID, {
+            ...(typeof data.cpu === 'number' ? { cpu: data.cpu } : {}),
+            ...(typeof data.activeRequests === 'number' ? { activeRequests: data.activeRequests } : {}),
+        });
+        const known = this.node.registry.getNode(senderNodeID);
+        const behind = known === undefined
+            || (known.nodeSeq ?? 0) < data.nodeSeq
+            || (typeof data.bootedAt === 'number' && known.bootedAt !== undefined && known.bootedAt !== data.bootedAt);
+        if (!behind) return;
+        const now = Date.now();
+        if (now - (this.presenceRequests.get(senderNodeID) ?? 0) < PRESENCE_REQUEST_FLOOR_MS) return;
+        this.presenceRequests.set(senderNodeID, now);
+        this.logger.debug(`Beat from ${senderNodeID} shows nodeSeq ${data.nodeSeq}; asking for its presence`, { internal: true });
+        await this.node.send(senderNodeID, PRESENCE_REQUEST_TOPIC, {}).catch(() => { });
+    }
+
+    /** A peer asked for this node's full presence. */
+    async handlePresenceRequest(senderNodeID: string): Promise<void> {
+        if (senderNodeID === this.node.nodeID) return;
+        await this.broadcastPresence(senderNodeID);
+    }
+
+    /**
+     * A `$node.peers` list: dials the ones this node is not linked to. Nothing is registered from
+     * it -- a node's record, catalog included, comes from its own presence once linked.
+     */
+    async handlePeers(payload: unknown): Promise<void> {
+        const peers: unknown = typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'peers') : undefined;
+        if (!Array.isArray(peers)) return;
+        for (const entry of peers) {
+            if (typeof entry !== 'object' || entry === null) continue;
+            const nodeID: unknown = Reflect.get(entry, 'nodeID');
+            const addresses: unknown = Reflect.get(entry, 'addresses');
+            const namespace: unknown = Reflect.get(entry, 'namespace');
+            if (typeof nodeID !== 'string' || nodeID === this.node.nodeID) continue;
+            if (!Array.isArray(addresses) || !addresses.every((a) => typeof a === 'string')) continue;
+            this.dialLearned(nodeID, addresses, typeof namespace === 'string' ? namespace : undefined);
+        }
     }
 
     /**
@@ -319,28 +445,30 @@ export class MeshOrchestrator implements IMeshOrchestrator {
      * actually reach.
      */
     private dialLearnedPeer(peer: NodeInfo): void {
-        if (!this.node.isPeerConnected || this.node.isPeerConnected(peer.nodeID)) return;
-        if ((peer.namespace || 'default') !== (this.node.namespace || 'default')) return;
+        this.dialLearned(peer.nodeID, peer.addresses || [], peer.namespace);
+    }
 
-        const addresses = peer.addresses || [];
-        if (addresses.length === 0) return;
+    private dialLearned(nodeID: string, addresses: readonly string[], namespace: string | undefined): void {
+        if (!this.node.isPeerConnected || this.node.isPeerConnected(nodeID)) return;
+        if ((namespace || 'default') !== (this.node.namespace || 'default')) return;
+        const address = addresses[0];
+        if (address === undefined) return;
 
         // One attempt in flight per peer, and a floor between retries: a PEX
         // round arrives every 10s from every peer, so an unreachable node would
         // otherwise be dialed continuously by everyone that has heard of it.
         const now = Date.now();
-        const lastAttempt = this.dialAttempts.get(peer.nodeID) ?? 0;
+        const lastAttempt = this.dialAttempts.get(nodeID) ?? 0;
         if (now - lastAttempt < DIAL_RETRY_FLOOR_MS) return;
-        this.dialAttempts.set(peer.nodeID, now);
+        this.dialAttempts.set(nodeID, now);
 
-        const address = addresses[0];
-        this.logger.debug(`Dialing peer learned via PEX: ${peer.nodeID} at ${address}`, { internal: true });
-        this.node.connectToPeer(peer.nodeID, address).catch((err) => {
+        this.logger.debug(`Dialing peer learned via PEX: ${nodeID} at ${address}`, { internal: true });
+        this.node.connectToPeer(nodeID, address).catch((err) => {
             // Not an error: a peer can be legitimately unreachable from here
             // (NAT, a private overlay address, a node already shutting down).
             // The floor above keeps this from becoming a retry storm.
             this.logger.debug(
-                `Could not dial ${peer.nodeID} at ${address}: ${err instanceof Error ? err.message : String(err)}`,
+                `Could not dial ${nodeID} at ${address}: ${err instanceof Error ? err.message : String(err)}`,
                 { internal: true }
             );
         });

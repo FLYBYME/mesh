@@ -529,7 +529,9 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
             trustLevel: node.trustLevel || 'public',
             namespace: node.namespace || 'default',
             addresses: node.addresses,
-            services: (node.services as unknown as RegistryServiceInfo[]),
+            // A record that carries no catalog (a peer list, v4.9.0) says nothing about it: keep
+            // the one on record rather than leaving the node with nothing routable.
+            services: node.services !== undefined ? (node.services as unknown as RegistryServiceInfo[]) : (existing?.services ?? []),
             capabilities: (node.capabilities as Record<string, unknown>) || {},
             resources: (node.resources as Record<string, unknown>),
             metadata: node.metadata || {},
