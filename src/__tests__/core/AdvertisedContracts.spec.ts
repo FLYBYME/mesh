@@ -160,6 +160,26 @@ describe('ServiceBroker.contractDeclaration', () => {
         expect(broker.contractDeclaration('advc.remote_list')).toMatchObject({ visibility: 'public', rest: { method: 'GET', path: '/advc/remote_list' }, permissions: ['operator'] });
     });
 
+    it('prefers what the running peer advertises over a copy this node only imported', () => {
+        // advc.secret is defined here by import (the top of this file), never mounted: a stale copy,
+        // as mail-service's surfdns-mta was on edge1 (2026-09-30).
+        registry.registerNode(peer('surf', {
+            'advc.secret': advertisedTool('advc.secret', { rest: { method: 'POST', path: '/advc/secret' } }),
+        }));
+        expect(broker.contractDeclaration('advc.secret')?.visibility).toBe('public');
+    });
+
+    it('keeps its own definition over any peer\'s once it runs the contract itself', () => {
+        const mounted = defineContract({
+            domain: 'advc', action: 'mine', description: 'Mounted here.', inputSchema: z.object({}), outputSchema: z.object({}),
+            rest: { method: 'POST', path: '/advc/mine' }, visibility: 'internal', filePath: 'src/advc.ts',
+            concurrency: 'on-demand', permissions: [], print: defaultPrint,
+        });
+        broker.registerContract(mounted, async () => ({}));
+        registry.registerNode(peer('surf', { 'advc.mine': advertisedTool('advc.mine', { rest: { method: 'POST', path: '/advc/mine' } }) }));
+        expect(broker.contractDeclaration('advc.mine')?.visibility).toBe('internal');
+    });
+
     it('merges two peers stricter-wins, and ignores one that is unavailable', () => {
         registry.registerNode(peer('surf', { 'advc.remote_two': advertisedTool('advc.remote_two') }));
         registry.registerNode(peer('edge2', { 'advc.remote_two': advertisedTool('advc.remote_two', { visibility: 'internal' }) }));

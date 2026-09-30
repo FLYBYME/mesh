@@ -772,8 +772,15 @@ export class ServiceBroker implements IServiceBroker {
      */
     public contractDeclaration(key: string): ContractDeclaration | undefined {
         const local = globalContractRegistry.get(key);
-        if (local !== undefined) return declarationOf(local);
-        return this.advertisedDeclaration(key);
+        // A definition this node runs is the truth about it. One it only imported -- another
+        // package's contracts, pinned in some part's lockfile -- is not: the nodes that run the
+        // contract say what it is now. Live 2026-09-30: mail-service on edge1 imports a stale
+        // surfdns-mta in which mta.status is internal, and the api refused to expose mta.status
+        // although surf, which runs it, advertised it public.
+        if (local !== undefined && globalContractRegistry.isMounted(key)) return declarationOf(local);
+        const advertised = this.advertisedDeclaration(key);
+        if (advertised !== undefined) return advertised;
+        return local === undefined ? undefined : declarationOf(local);
     }
 
     private advertisedDeclaration(key: string): ContractDeclaration | undefined {
