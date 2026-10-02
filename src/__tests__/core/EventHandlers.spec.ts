@@ -185,6 +185,22 @@ describe('declared event handlers on one node', () => {
         await expect(broker.call('evleader.where', {})).rejects.toThrow();
     });
 
+    it('unregisterOwner removes listeners added with on and subscribe inside the scope too; outside one they stay', async () => {
+        const heard: string[] = [];
+        await broker.withOwner('part:listeners@v1', async () => {
+            await settle(10);
+            broker.on('evtest.ping', () => { heard.push('on'); });
+            broker.subscribe('evtest.ping', () => { heard.push('subscribe'); });
+        });
+        const offOutside = broker.subscribe('evtest.ping', () => { heard.push('outside'); });
+
+        broker.unregisterOwner('part:listeners@v1');
+        broker.emit('evtest.ping', { n: 1 }, { skipNetwork: true });
+        await settle();
+        expect(heard).toEqual(['outside']);
+        offOutside();
+    });
+
     it('does not let an owner remove a contract someone else has since replaced', async () => {
         broker.withOwner('part:old', () => {
             broker.registerContract(whereContract, async () => ({ nodeID: 'old' }));

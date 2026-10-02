@@ -373,13 +373,33 @@ export class ServiceBroker implements IServiceBroker {
             this.localEvents.on(topic, handler);
         }
 
-        return () => this.off(event, handler);
+        return this.ownedListener(() => this.off(event, handler));
     }
 
     public subscribe(event: string, handler: (payload: unknown) => void): () => void {
         const listener = (payload: unknown): void => handler(payload);
         this.localEvents.on(event, listener);
-        return () => { this.localEvents.off(event, listener); };
+        return this.ownedListener(() => { this.localEvents.off(event, listener); });
+    }
+
+    /**
+     * A listener added inside an owner scope (`withOwner` -- a part's `register`, and the async work
+     * it starts) is that owner's, like a registerEventHandler handler: `unregisterOwner` removes it.
+     * Until v4.10.3 `on` and `subscribe` were not recorded, so a part's listener outlived every
+     * unload and kept running the old code beside the new (surfdns-agents, 2026-10-02: one message,
+     * seven runs). Returns the unsubscribe, safe to call more than once.
+     */
+    private ownedListener(off: () => void): () => void {
+        const owner = this.currentOwner();
+        if (owner === undefined) return off;
+        const id = randomUUID();
+        const unregister = (): void => {
+            if (!this.eventHandlers.delete(id)) return;
+            off();
+        };
+        this.eventHandlers.set(id, { unregister });
+        this.recordOwned(owner, { kind: 'eventHandler', id });
+        return unregister;
     }
 
     public off<K extends keyof EventRegistry>(event: K, handler: (payload: EventRegistry[K], packet?: IMeshPacket<EventRegistry[K]>) => void): void {
