@@ -1,4 +1,4 @@
-import { Collection, ObjectId, Document, Filter, OptionalId, WithId, Sort } from 'mongodb';
+import { Collection, ObjectId, Document, Filter, OptionalId, WithId } from 'mongodb';
 import { z } from 'zod';
 import { FindOptions, ListResult, StrictFilterQuery } from './types.js';
 import { MeshError } from '../core/MeshError.js';
@@ -151,10 +151,11 @@ export class DomainRepository<T extends { id: string }> {
 
         if (options.offset) cursor.skip(options.offset);
         if (options.limit) cursor.limit(options.limit);
-        
-        if (options.sort) {
-            cursor.sort(this.parseSort(options.sort));
-        }
+
+        // Always a total order: the asked-for sort, then _id. Without the tiebreaker, rows that tie on
+        // the sort come back in any order, differently per page, and paging loses some and repeats
+        // others (serve.expose.find by role: 70 of 276 missing).
+        cursor.sort(this.parseSort(options.sort));
 
         const docs = await cursor.toArray();
         const hasFields = Object.keys(projection).length > 0;
@@ -171,7 +172,7 @@ export class DomainRepository<T extends { id: string }> {
         const pageSize = Math.max(1, options.pageSize || 50);
         const skip = (page - 1) * pageSize;
 
-        const sort = this.parseSort(options.sort || { createdAt: -1 } as any);
+        const sort = this.parseSort(options.sort ?? '-createdAt');
 
         const [total, docs] = await Promise.all([
             this.collection.countDocuments(query),
@@ -222,7 +223,7 @@ export class DomainRepository<T extends { id: string }> {
             : this.collection.find(mapped);
 
         if (options.offset) cursor.skip(options.offset);
-        if (options.sort) {
+        if (options.sort !== undefined || options.offset) {
             cursor.sort(this.parseSort(options.sort));
         }
         cursor.limit(1);
@@ -231,24 +232,36 @@ export class DomainRepository<T extends { id: string }> {
         return docs[0] ? this.mapOutbound(docs[0], hasFields) : undefined;
     }
 
-    private parseSort(sort: string | string[] | Partial<Record<string, 1 | -1>>): Sort {
+    /**
+     * The asked-for sort ("-createdAt", a list of them, or { field: 1 | -1 }), then `_id` ascending
+     * unless it is already there: a total order, so `offset` pages never overlap or skip. `id` is
+     * the document's `_id`.
+     */
+    private parseSort(sort?: string | string[] | Partial<Record<string, 1 | -1>>): Record<string, 1 | -1> {
+        const result: Record<string, 1 | -1> = {};
+
+        const add = (spec: string): void => {
+            const direction = spec.startsWith('-') ? -1 : 1;
+            const field = spec.startsWith('-') ? spec.substring(1) : spec;
+
+            result[field === 'id' ? '_id' : field] = direction;
+        };
+
         if (typeof sort === 'string') {
-            const direction = sort.startsWith('-') ? -1 : 1;
-            const field = sort.startsWith('-') ? sort.substring(1) : sort;
-            return { [field]: direction } as Sort;
+            add(sort);
+        } else if (Array.isArray(sort)) {
+            sort.forEach(add);
+        } else if (sort !== undefined) {
+            for (const [field, direction] of Object.entries(sort)) {
+                if (direction === 1 || direction === -1)
+                    result[field === 'id' ? '_id' : field] = direction;
+            }
         }
 
-        if (Array.isArray(sort)) {
-            const result: Record<string, 1 | -1> = {};
-            sort.forEach(s => {
-                const direction = s.startsWith('-') ? -1 : 1;
-                const field = s.startsWith('-') ? s.substring(1) : s;
-                result[field] = direction;
-            });
-            return result as Sort;
-        }
+        if (result['_id'] === undefined)
+            result['_id'] = 1;
 
-        return sort as Sort;
+        return result;
     }
 
     /**

@@ -106,6 +106,41 @@ describe('DomainRepository', () => {
         });
     });
 
+    // ─── paging over a sort that ties ────────────────────────────────────────
+
+    describe('find() pages', () => {
+        // Many rows share each sort value: MongoDB orders ties as it likes, differently per query, so
+        // without a unique tiebreaker pages overlap -- rows repeat and others never come back
+        // (serve.expose.find sorted by role: 70 of 276 missing, 2026-10-04).
+        beforeEach(async () => {
+            const rows = Array.from({ length: 300 }, (_, i) => ({ name: `Row ${i}`, value: i, category: ['a', 'b', 'c'][i % 3] }));
+            await collection.insertMany(rows.map((r) => ({ ...r, createdAt: new Date(), updatedAt: new Date() })));
+        });
+
+        it('every row comes back exactly once when paging a sort on a field many rows share', async () => {
+            const seen: string[] = [];
+
+            for (let offset = 0; offset < 300; offset += 25) {
+                const page = await repo.find({ sort: 'category', limit: 25, offset });
+                seen.push(...page.map((r) => r.id));
+            }
+
+            expect(seen).toHaveLength(300);
+            expect(new Set(seen).size).toBe(300);
+        });
+
+        it('every row comes back exactly once when paging with no sort at all', async () => {
+            const seen: string[] = [];
+
+            for (let offset = 0; offset < 300; offset += 40) {
+                const page = await repo.find({ limit: 40, offset });
+                seen.push(...page.map((r) => r.id));
+            }
+
+            expect(new Set(seen).size).toBe(300);
+        });
+    });
+
     // ─── findOne ─────────────────────────────────────────────────────────────
 
     describe('findOne()', () => {
