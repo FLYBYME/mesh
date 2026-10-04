@@ -30,6 +30,13 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env'), quiet: true } as any)
 // The database name used by the current worker process
 const TEST_DB_NAME = generateTestDbName();
 
+// The file's database goes when its tests are done, whether or not the file remembers to: 13 of
+// them never dropped theirs, and 1,021 mesh_test_* databases piled up until mongod ran out of file
+// descriptors (2026-10-04). Several apps in one file share it, so this waits for all of them.
+afterAll(async () => {
+    await genericDropTestDatabase(TEST_DB_NAME);
+});
+
 /**
  * Creates a fully wired MeshApp with real Registry, Broker, Database, and the demo part.
  * Uses the real MongoDB connection from .env against an isolated test database.

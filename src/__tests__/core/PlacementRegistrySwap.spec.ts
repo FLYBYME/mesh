@@ -7,7 +7,7 @@ import { DatabaseModule } from '../../modules/DatabaseModule.js';
 import { PlacementRegistry } from '../../core/PlacementRegistry.js';
 import { register as registerDemo } from '../../examples/demo/demo.service.js';
 import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
-import { generateTestDbName, withTestDatabase } from '../../testing/index.js';
+import { dropTestDatabase, generateTestDbName, withTestDatabase } from '../../testing/index.js';
 
 /**
  * Proves `RegistryModule({ implementation: PlacementRegistry })` is a real, working swap -- not
@@ -23,6 +23,11 @@ describe('RegistryModule swapped to PlacementRegistry', () => {
 
     afterEach(async () => {
         await app.stop();
+    });
+
+    // Its own database, dropped: it was left behind on every run (2026-10-04).
+    afterAll(async () => {
+        await dropTestDatabase(dbName, process.env.MONGODB_URI || 'mongodb://localhost:27017');
     });
 
     it('boots, registers a module, and dispatches a real call end to end', async () => {
