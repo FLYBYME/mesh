@@ -86,16 +86,33 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<{ app
         await options.register(app.getProvider<IServiceBroker>('broker'));
     }
 
+    createdDatabases.set(app, { dbName, mongoUri });
+
     return { app, dbName };
 }
 
+/** The database each createTestApp made, so destroyTestApp drops it: the app's own, never another. */
+const createdDatabases = new WeakMap<MeshApp, { dbName: string; mongoUri: string }>();
+
 /**
- * Cleans up a test app by stopping it.
+ * Cleans up a test app: stops it, then drops the database createTestApp made for it.
+ *
+ * It used to only stop the app. Every createTestApp leaves a new `mesh_test_xxxxxx` database, and
+ * most callers never dropped theirs: 1,021 of them piled up locally until mongod ran out of file
+ * descriptors and crashed (2026-10-04).
  */
 export async function destroyTestApp(app: MeshApp): Promise<void> {
-    if (app) {
-        await app.stop();
-    }
+    if (!app)
+        return;
+
+    await app.stop();
+
+    const made = createdDatabases.get(app);
+    if (made === undefined)
+        return;
+
+    createdDatabases.delete(app);
+    await dropTestDatabase(made.dbName, made.mongoUri);
 }
 
 /**
