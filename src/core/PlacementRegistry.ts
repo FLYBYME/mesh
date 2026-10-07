@@ -268,6 +268,15 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
      * presence, and a relay still holding the old ones (same boot, lower nodeSeq) is refused by
      * `registerNode` rather than reverting them.
      */
+    public setLocalSoftware(software: Record<string, string>): void {
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode) return;
+        localNode.software = { ...software };
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
     public setLocalMetadata(metadata: Record<string, string>): void {
         const localNode = this.nodes.get(this.localNodeID);
         if (!localNode) return;
@@ -283,7 +292,7 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
      * `Registry.ts` (several standalone contracts sharing a domain is now the *normal* case, not an
      * edge case) -- never replaces a domain's existing entry outright.
      */
-    public registerContract(contract: ToolContract): void {
+    public registerContract(contract: ToolContract, hash?: string): void {
         this.registerTool(contract);
 
         const localNode = this.nodes.get(this.localNodeID);
@@ -292,7 +301,7 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
         const key = toolKey(contract);
         // What peers learn about this contract: its real visibility, route and permissions, so a node
         // that does not run it (the api gateway's) can still publish it correctly.
-        const toolInfo: RegistryToolInfo = toolInfoOf(contract);
+        const toolInfo: RegistryToolInfo = toolInfoOf(contract, hash);
 
         localNode.services = localNode.services || [];
         const idx = localNode.services.findIndex(s => s.name === contract.domain);
@@ -516,6 +525,8 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
                 // to touch metadata at all. Found live, after the PEX metadata fix (v4.2.2): two
                 // nodes that reconnected to a third at the same moment still raced into this path.
                 if (node.metadata && Object.keys(node.metadata).length > 0) existing.metadata = node.metadata;
+                // The same for what software it runs: set with a nodeSeq bump, safe to take at the same one.
+                if (node.software !== undefined && Object.keys(node.software).length > 0) existing.software = node.software;
 
                 this.emit('changed', node.nodeID);
                 return;
@@ -535,6 +546,8 @@ export class PlacementRegistry extends EventEmitter implements IServiceRegistry 
             capabilities: (node.capabilities as Record<string, unknown>) || {},
             resources: (node.resources as Record<string, unknown>),
             metadata: node.metadata || {},
+            // A record that does not say (a relay from an older node) keeps what is on record.
+            ...(node.software !== undefined ? { software: node.software } : existing?.software !== undefined ? { software: existing.software } : {}),
             nodeSeq: node.nodeSeq || 1,
             hostname: node.hostname || 'unknown',
             pid: node.pid || 0,

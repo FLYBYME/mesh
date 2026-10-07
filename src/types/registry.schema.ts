@@ -16,6 +16,8 @@ export const ToolInfoSchema = z.object({
     highSecurity: z.boolean().optional(),
     metadata: z.record(z.unknown()).optional(),
     timeout: z.number().optional(),
+    /** contractHash: changes when the contract or its handler does -- two nodes serving one name differently. */
+    hash: z.string().optional(),
 });
 
 export type ToolInfo = z.infer<typeof ToolInfoSchema>;
@@ -74,6 +76,8 @@ export const NodeInfoSchema = z.object({
     parentID: z.string().optional(),
     hidden: z.boolean().optional(),
     bootedAt: z.number().optional(),
+    /** What software the node runs, by package: `{ 'mesh-serve': 'v0.10.34', mesh: '4.10.12' }`. */
+    software: z.record(z.string()).optional(),
 
     // Telemetry / Health
     cpu: z.number().optional(),

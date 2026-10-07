@@ -273,7 +273,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
      * The two implementations are now the same in this respect. What still separates them is how
      * they *route*, not what they can advertise.
      */
-    public registerContract(contract: ToolContract): void {
+    public registerContract(contract: ToolContract, hash?: string): void {
         this.registerTool(contract);
 
         const localNode = this.nodes.get(this.localNodeID);
@@ -281,7 +281,7 @@ export class Registry extends EventEmitter implements IServiceRegistry {
 
         const key = `${contract.domain}.${contract.action}`;
         // The same truthful advertisement as PlacementRegistry's (see toolInfoOf).
-        const toolInfo: RegistryToolInfo = toolInfoOf(contract);
+        const toolInfo: RegistryToolInfo = toolInfoOf(contract, hash);
 
         localNode.services = localNode.services || [];
         const existing = localNode.services.findIndex((s) => s.name === contract.domain);
@@ -412,6 +412,15 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     }
 
     /** This node's own labels, replaced while it runs -- see PlacementRegistry.setLocalMetadata. */
+    public setLocalSoftware(software: Record<string, string>): void {
+        const localNode = this.nodes.get(this.localNodeID);
+        if (!localNode) return;
+        localNode.software = { ...software };
+        localNode.nodeSeq = (localNode.nodeSeq || 0) + 1;
+        this.registerNode(localNode as unknown as CoreNodeInfo);
+        this.emit('local:changed');
+    }
+
     public setLocalMetadata(metadata: Record<string, string>): void {
         const localNode = this.nodes.get(this.localNodeID);
         if (!localNode) return;
@@ -507,6 +516,8 @@ export class Registry extends EventEmitter implements IServiceRegistry {
                 // to touch metadata at all. Found live, after the PEX metadata fix (v4.2.2): two
                 // nodes that reconnected to a third at the same moment still raced into this path.
                 if (node.metadata && Object.keys(node.metadata).length > 0) existing.metadata = node.metadata;
+                // The same for what software it runs: set with a nodeSeq bump, safe to take at the same one.
+                if (node.software !== undefined && Object.keys(node.software).length > 0) existing.software = node.software;
 
                 this.emit('changed', node.nodeID);
                 return;
@@ -526,6 +537,8 @@ export class Registry extends EventEmitter implements IServiceRegistry {
             capabilities: (node.capabilities as Record<string, unknown>) || {},
             resources: (node.resources as Record<string, unknown>),
             metadata: node.metadata || {},
+            // A record that does not say (a relay from an older node) keeps what is on record.
+            ...(node.software !== undefined ? { software: node.software } : existing?.software !== undefined ? { software: existing.software } : {}),
             nodeSeq: node.nodeSeq || 1,
             hostname: node.hostname || 'unknown',
             pid: node.pid || 0,

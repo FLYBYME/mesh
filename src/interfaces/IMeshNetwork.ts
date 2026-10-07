@@ -195,6 +195,8 @@ export interface NodeInfo {
     lastHeartbeatTime?: number;
     publicKey?: string;
     bootedAt?: number;
+    /** What software the node runs, by package (`IServiceRegistry.setLocalSoftware`). Apart from labels. */
+    software?: Record<string, string>;
     /**
      * The events this node has definitions for, and how each is scoped -- carried by presence so a
      * node can resolve who an event belongs to without loading the code that defines it (an api

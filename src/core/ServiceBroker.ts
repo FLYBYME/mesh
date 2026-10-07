@@ -14,7 +14,7 @@ import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/ISer
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry, type ContractConcurrency, type ToolContract } from '../interfaces/IToolContract.js';
-import { declarationFromToolInfo, declarationOf, mergeDeclarations, type ContractDeclaration } from './ContractDeclaration.js';
+import { contractHash, declarationFromToolInfo, declarationOf, mergeDeclarations, type ContractDeclaration } from './ContractDeclaration.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
@@ -617,7 +617,7 @@ export class ServiceBroker implements IServiceBroker {
             this.registerCrudHook(asAny.domain, asAny.action, asAny.hooks as { before?: CrudHook; after?: CrudHook });
         }
 
-        this.registry?.registerContract(asAny as ToolContract);
+        this.registry?.registerContract(asAny as ToolContract, contractHash(asAny as ToolContract, handler));
 
         // An interval contract's timer starts as soon as it is mounted on a running broker --
         // mounting it *is* scheduling it. On a broker that hasn't started yet it waits for start(),

@@ -26,6 +26,11 @@ export interface IServiceRegistry {
      * api), bumping nodeSeq so peers take the change and a stale relay cannot revert it.
      */
     setLocalMetadata(metadata: Record<string, string>): void;
+    /**
+     * Says what software this node runs, by package (`{ 'mesh-serve': 'v0.10.34' }`), with its
+     * presence. Kept apart from labels, which `setLocalMetadata` replaces whole.
+     */
+    setLocalSoftware(software: Record<string, string>): void;
     unregisterNode(nodeID: string): void;
     heartbeat(nodeID: string, data?: { cpu?: number; activeRequests?: number }): void;
     findNodesForTool(toolName: string): NodeInfo[];
@@ -72,7 +77,8 @@ export interface IServiceRegistry {
      * assembled contract by contract; `unregisterContract` takes one back out, and
      * `unregisterDomain` removes the whole entry at once (part eviction).
      */
-    registerContract(contract: ToolContract): void;
+    /** `hash`: the contract's contractHash, advertised with it. */
+    registerContract(contract: ToolContract, hash?: string): void;
     unregisterContract(toolKey: string): void;
     unregisterDomain(domain: string): void;
 

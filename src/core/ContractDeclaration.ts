@@ -96,7 +96,7 @@ export function declarationOf(contract: ToolContract): ContractDeclaration | und
  * What a node advertises for one of its contracts, with its presence. It used to say `public` for
  * every contract and nothing about route or permissions -- harmless only while nothing read it.
  */
-export function toolInfoOf(contract: ToolContract): ToolInfo {
+export function toolInfoOf(contract: ToolContract, hash?: string): ToolInfo {
     const declaration = declarationOf(contract);
     return {
         name: toolKey(contract),
@@ -109,7 +109,32 @@ export function toolInfoOf(contract: ToolContract): ToolInfo {
         params: declaration?.input ?? jsonSchema(contract.inputSchema),
         returns: declaration?.output ?? outputOf(contract),
         ...(contract.timeout !== undefined ? { timeout: contract.timeout } : {}),
+        ...(hash !== undefined ? { hash } : {}),
     };
+}
+
+/**
+ * A short fingerprint of what serves a contract: its advertised declaration and its handler's
+ * source. Two nodes serving one name with different code show different hashes -- what nothing
+ * showed on 2026-10-06, when two versions of identity answered the same call differently.
+ *
+ * Not a security hash, and not the whole truth: a change in a module the handler imports leaves
+ * the handler's own text alone. That is what the node's software versions are for
+ * (`setLocalSoftware`); the two together say what a node runs. cyrb53, so it needs no crypto module
+ * and works in the browser bundle too.
+ */
+export function contractHash(contract: ToolContract, handler: (...args: never[]) => unknown): string {
+    const text = `${JSON.stringify(toolInfoOf(contract))}\n${handler.toString()}`;
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 2654435761);
+        h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
 const METHODS: readonly HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
