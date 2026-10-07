@@ -1372,6 +1372,7 @@ export class ServiceBroker implements IServiceBroker {
             parentId,
         };
 
+        this.metrics.recordCallEdge(activeCtx?.toolName, toolName);
         options?.onRouted?.(targetNodeID ?? this.nodeID);
 
         return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${toolName} locally after ${ms}ms`);
@@ -1604,6 +1605,7 @@ export class ServiceBroker implements IServiceBroker {
         const startedMs = performance.now();
         const settle = (outcome: RpcOutcome): void => {
             this.metrics.recordOutgoing(toolName, outcome, secondsSince(startedMs));
+            this.metrics.recordOutgoingPeer(toolName, nodeID, outcome);
         };
 
         return new Promise((resolveCall, rejectCall) => {

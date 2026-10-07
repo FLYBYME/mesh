@@ -18,6 +18,7 @@ declare global {
         'metrics.echo': { params: { text: string }; returns: { text: string } };
         'metrics.fail': { params: Record<string, never>; returns: { ok: boolean } };
         'metrics.slow': { params: Record<string, never>; returns: { ok: boolean } };
+        'metrics.relay': { params: { text: string }; returns: { text: string } };
     }
 }
 
@@ -38,6 +39,12 @@ const slow = defineContract({
     inputSchema: z.object({}), outputSchema: z.object({ ok: z.boolean() }),
     filePath: FILE, concurrency: 'on-demand', permissions: [], print: defaultPrint, rest: { method: 'POST', path: '/metrics' },
     timeout: 100,
+});
+
+const relay = defineContract({
+    domain: 'metrics', action: 'relay', description: 'metrics.relay: calls metrics.echo',
+    inputSchema: z.object({ text: z.string() }), outputSchema: z.object({ text: z.string() }),
+    filePath: FILE, concurrency: 'on-demand', permissions: [], print: defaultPrint, rest: { method: 'POST', path: '/metrics' },
 });
 
 /**
@@ -162,6 +169,19 @@ describe('mesh self-metrics', () => {
         const text = metricsB.registry.render();
         expect(text).toMatch(/mesh_transport_bytes_total\{direction="in",kind="event",topic="\$node\.presence"\} \d+/);
         expect(text).toMatch(/mesh_transport_packets_total\{direction="out",kind="event",topic="\$node\.[a-z.]+"\} \d+/);
+    });
+    it('counts who called whom, and which node each remote call went to', async () => {
+        brokerA.registerContract(relay, async (args, ctx) => ctx.call('metrics.echo', { text: args.text }));
+        const toB = metricsA.outgoingPeer.get(['metrics.echo', 'metrics-b', 'ok']);
+
+        await brokerA.call('metrics.relay', { text: 'via a' });
+
+        // On A: nothing called relay (root); relay called echo; echo went to B and answered.
+        expect(metricsA.callEdges.get(['root', 'metrics.relay'])).toBe(1);
+        expect(metricsA.callEdges.get(['metrics.relay', 'metrics.echo'])).toBe(1);
+        expect(metricsA.outgoingPeer.get(['metrics.echo', 'metrics-b', 'ok'])).toBe(toB + 1);
+        // B made no call of its own.
+        expect(metricsB.callEdges.get(['metrics.relay', 'metrics.echo'])).toBe(0);
     });
 });
 

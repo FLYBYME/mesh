@@ -37,6 +37,9 @@ export function packetKind(type: string | undefined): PacketKind {
  */
 export const RPC_DURATION_BUCKETS: readonly number[] = [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
 
+/** The caller label for a call made outside any other call: a timer's tick, a node starting up. */
+export const ROOT_CALLER = 'root';
+
 /** The action label for a call to something this node does not know -- see ServiceBroker.recordHandled. */
 export const UNKNOWN_ACTION = 'unknown';
 
@@ -49,6 +52,8 @@ export class MeshMetrics {
     public readonly transportPackets: Counter;
     public readonly linkChanges: Counter;
     public readonly pingFailures: Counter;
+    public readonly callEdges: Counter;
+    public readonly outgoingPeer: Counter;
 
     constructor(public readonly registry: MetricsRegistry = new MetricsRegistry()) {
         this.rpcCalls = registry.counter(
@@ -95,6 +100,40 @@ export class MeshMetrics {
             'Links this node closed because the peer did not answer a ping in time, by peer.',
             ['peer'],
         );
+        // Who calls whom, every call counted: the call graph contract placement needs (a contract
+        // runs best beside the ones it calls most), and the first thing to read when one is slow.
+        this.callEdges = registry.counter(
+            'mesh_call_edges_total',
+            `Calls made on this node, by the contract that made them (caller; "${ROOT_CALLER}" for none: a timer, a node's own start) and the contract called (callee).`,
+            ['caller', 'callee'],
+        );
+        // Which node took each remote call: two versions of identity answered the same call
+        // differently on 2026-10-06 and nothing said which node had answered.
+        this.outgoingPeer = registry.counter(
+            'mesh_rpc_outgoing_peer_total',
+            'Calls this node sent to another node, by action, the node it went to (peer) and outcome.',
+            ['action', 'peer', 'outcome'],
+        );
+    }
+
+    recordCallEdge(caller: string | undefined, callee: string): void {
+        const from = caller ?? ROOT_CALLER;
+        let byCallee = this.edges.get(from);
+        if (byCallee === undefined) {
+            byCallee = new Map();
+            if (this.edges.size < MAX_BINDINGS) this.edges.set(from, byCallee);
+        }
+
+        let bound = byCallee.get(callee);
+        if (bound === undefined) {
+            bound = this.callEdges.bind([from, callee]);
+            if (byCallee.size < MAX_BINDINGS) byCallee.set(callee, bound);
+        }
+        bound.inc();
+    }
+
+    recordOutgoingPeer(action: string, peer: string, outcome: RpcOutcome): void {
+        this.outgoingPeer.inc([action, peerLabel(peer), outcome]);
     }
 
     recordLinkChange(peer: string, state: 'up' | 'down'): void {
@@ -144,6 +183,7 @@ export class MeshMetrics {
         out: { request: new Map(), response: new Map(), event: new Map() },
     };
     private readonly handled = new Map<string, CallBinding>();
+    private readonly edges = new Map<string, Map<string, BoundCounter>>();
     private readonly outgoing = new Map<string, CallBinding>();
 
     private callBinding(cache: Map<string, CallBinding>, calls: Counter, duration: Histogram, action: string): CallBinding {
