@@ -1518,7 +1518,9 @@ export class ServiceBroker implements IServiceBroker {
                 if (this.spanSink !== undefined && ctx.traceId !== undefined && ctx.spanId !== undefined) {
                     this.recordSpan({
                         traceId: ctx.traceId, spanId: ctx.spanId, ...(ctx.parentId !== undefined ? { parentId: ctx.parentId } : {}),
-                        kind: 'call', name: action, nodeID: this.nodeID, ...organizationOf(ctx.meta),
+                        // The name asked for, even one nothing here serves: a span is not a metric
+                        // label, and "unknown" says nothing about what was wanted.
+                        kind: 'call', name: ctx.toolName, nodeID: this.nodeID, ...organizationOf(ctx.meta),
                         startedAt, durationMs: performance.now() - startedMs, outcome,
                         ...(failure !== undefined ? { error: failure } : {}),
                     });
