@@ -372,6 +372,10 @@ export class CrudExecutor {
                 case 'delete': {
                     const id = typeof params.id === 'string' ? params.id : '';
                     const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
+                    // The row as it was, read first: once it is gone nobody can say what it was, and
+                    // a service cleaning up after it (a domain's certificates, its zone, its mail
+                    // domain) needs more than its id. Hidden fields stay hidden, as in every event.
+                    const before = await repo.get(id, scopeQuery);
                     const success = await repo.delete(id, scopeQuery);
                     result = { success };
                     if (success) {
@@ -383,6 +387,7 @@ export class CrudExecutor {
                         emitNamed(broker, domain, 'deleted', {
                             id,
                             ...(scopedBy && callerScope ? { [scopedBy]: callerScope } : {}),
+                            ...(before ? { item: stripHidden(domain, before) } : {}),
                         });
                     }
                     break;

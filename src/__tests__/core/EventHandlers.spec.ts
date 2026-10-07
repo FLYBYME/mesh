@@ -172,7 +172,7 @@ describe('declared event handlers on one node', () => {
         expect(plain).toEqual([{ traceId: 'the-emitters-trace' }]);
     });
 
-    it('carries the owning tenant on a scoped delete', async () => {
+    it('carries the owning tenant, and the row as it was, on a scoped delete -- what a cleanup needs', async () => {
         const deletes: Array<{ payload: unknown; tenant: unknown }> = [];
         const unsubscribe = broker.registerEventHandler(
             defineEventHandler({ event: 'evgadget.deleted', domain: 'evgadget', delivery: 'each', description: 'test' }),
@@ -184,7 +184,10 @@ describe('declared event handlers on one node', () => {
         await settle();
         unsubscribe();
 
-        expect(deletes).toEqual([{ payload: { id: created.id, tenantId: 'acme' }, tenant: 'acme' }]);
+        expect(deletes).toEqual([{
+            payload: { id: created.id, tenantId: 'acme', item: expect.objectContaining({ id: created.id, label: 'doomed', tenantId: 'acme' }) },
+            tenant: 'acme',
+        }]);
     });
 
     it('stops delivering once unsubscribed, and aborts the handler\'s signal', async () => {
