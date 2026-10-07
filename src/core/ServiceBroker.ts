@@ -6,6 +6,7 @@ import type { IMeshNetwork } from '../interfaces/IMeshNetwork.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import type { IContext } from '../interfaces/IContext.js';
 import type { EventTrace, IMeshPacket } from '../interfaces/IMeshNetwork.js';
+import type { Span, SpanSink } from '../interfaces/ISpan.js';
 import type { IBrokerPlugin } from '../interfaces/IBrokerPlugin.js';
 import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
@@ -216,6 +217,25 @@ export class ServiceBroker implements IServiceBroker {
      * see MeshMetrics; a test with several nodes in one process may give each its own.
      */
     public metrics: MeshMetrics = meshMetrics;
+    private spanSink: SpanSink | undefined;
+
+    public setSpanSink(sink: SpanSink | undefined): void {
+        this.spanSink = sink;
+    }
+
+    /** A sink that throws never fails the work it describes: said once, then spans go on. */
+    public recordSpan(span: Span): void {
+        if (this.spanSink === undefined) return;
+
+        try {
+            this.spanSink(span);
+        } catch (err) {
+            if (!this.spanSinkFailed) this.logger.warn(`[ServiceBroker] span sink failed: ${err instanceof Error ? err.message : String(err)}`);
+            this.spanSinkFailed = true;
+        }
+    }
+
+    private spanSinkFailed = false;
 
     private pendingRequests = new Map<string, {
         resolve: (val: unknown) => void,
@@ -1140,9 +1160,19 @@ export class ServiceBroker implements IServiceBroker {
             };
             // The payload arrives untyped off the emitter (and possibly off the network); its type is
             // the generated EventRegistry entry for this name, which is what the handler declares.
+            const startedMs = performance.now();
+            const startedAt = Date.now();
+            const span = (outcome: 'ok' | 'error', error?: string): void => {
+                this.recordSpan({
+                    traceId, spanId, ...(parentId !== undefined ? { parentId } : {}), kind: 'event', name, nodeID: this.nodeID,
+                    ...organizationOf(ctx.meta), startedAt, durationMs: performance.now() - startedMs, outcome, ...(error !== undefined ? { error } : {}),
+                });
+            };
             void ContextStack.run(root, () => Promise.resolve()
                 .then(() => handler(data as EventRegistry[K], ctx)))
+                .then(() => span('ok'))
                 .catch((err: unknown) => {
+                    span('error', err instanceof Error ? err.message : String(err));
                     this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
                 });
         };
@@ -1443,7 +1473,9 @@ export class ServiceBroker implements IServiceBroker {
     ): Promise<unknown> {
         const handledHere = !ctx.targetNodeID || ctx.targetNodeID === this.nodeID;
         const startedMs = performance.now();
+        const startedAt = Date.now();
         let outcome: RpcOutcome = 'error';
+        let failure: string | undefined;
         let timedOut = false;
 
         const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
@@ -1476,11 +1508,21 @@ export class ServiceBroker implements IServiceBroker {
             return result;
         } catch (err) {
             if (timedOut) outcome = 'timeout';
+            failure = err instanceof Error ? err.message : String(err);
             throw err;
         } finally {
             if (handledHere) {
                 const action = this.localTools.has(ctx.toolName) ? ctx.toolName : UNKNOWN_ACTION;
                 this.metrics.recordHandled(action, outcome, secondsSince(startedMs));
+                // The span of the work done here; a call sent on is recorded where it is handled.
+                if (this.spanSink !== undefined && ctx.traceId !== undefined && ctx.spanId !== undefined) {
+                    this.recordSpan({
+                        traceId: ctx.traceId, spanId: ctx.spanId, ...(ctx.parentId !== undefined ? { parentId: ctx.parentId } : {}),
+                        kind: 'call', name: action, nodeID: this.nodeID, ...organizationOf(ctx.meta),
+                        startedAt, durationMs: performance.now() - startedMs, outcome,
+                        ...(failure !== undefined ? { error: failure } : {}),
+                    });
+                }
             }
         }
     }

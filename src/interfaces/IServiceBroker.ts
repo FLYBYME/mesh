@@ -15,6 +15,7 @@ import type { IPlacement } from './IPlacement.js';
 import type { EventHandlerDefinition } from './IEventHandler.js';
 import type { z } from 'zod';
 import type { MeshMetrics } from '../metrics/MeshMetrics.js';
+import type { Span, SpanSink } from './ISpan.js';
 /**
  * IServiceBroker — Interface for the central communication kernel.
  */
@@ -28,6 +29,10 @@ export interface IServiceBroker {
 
     pipe(plugin: IBrokerPlugin): this;
     use(mw: IMiddleware): void;
+    /** Where spans go (`ISpan.ts`); undefined stops recording them. Nothing is recorded until one is set. */
+    setSpanSink?(sink: SpanSink | undefined): void;
+    /** Records one span, when a sink is set -- for work done outside a call, like a database operation. */
+    recordSpan?(span: Span): void;
     useLocal(mw: IMiddleware): void;
     /** Resolves the Database override (if any) registered via `registerContract`'s
      *  `options.database` for `toolKey`. Undefined when the tool isn't mounted, or was mounted

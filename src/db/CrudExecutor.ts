@@ -6,6 +6,8 @@ import { MeshError } from '../core/MeshError.js';
 import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 import type { CrudRepo, IServiceContext } from '../interfaces/IServiceContext.js';
 import { meshMetrics, secondsSince, type RpcOutcome } from '../metrics/MeshMetrics.js';
+import { ContextStack } from '../core/ContextStack.js';
+import { randomUUID } from 'node:crypto';
 
 /** Mirrors ServiceBroker's own `CrudHook` -- declared here rather than imported to keep this module
  *  free of a circular dependency back on ServiceBroker. */
@@ -103,14 +105,30 @@ export class CrudExecutor {
     ): Promise<unknown> {
         // Timed here, the one place every database operation passes -- a CRUD call or ctx.db.
         const startedMs = performance.now();
+        const startedAt = Date.now();
         let outcome: RpcOutcome = 'error';
+        let failure: string | undefined;
 
         try {
             const result = await CrudExecutor.run(deps, args);
             outcome = 'ok';
             return result;
+        } catch (err) {
+            failure = err instanceof Error ? err.message : String(err);
+            throw err;
         } finally {
             (deps.broker.metrics ?? meshMetrics).recordDb(args.domain, args.action, outcome, secondsSince(startedMs));
+
+            // A span under the call or handler it ran in -- the only one that gives it a trace.
+            const within = ContextStack.getContext();
+            if (deps.broker.recordSpan !== undefined && within?.traceId !== undefined) {
+                deps.broker.recordSpan({
+                    traceId: within.traceId, spanId: randomUUID(), ...(within.spanId !== undefined ? { parentId: within.spanId } : {}),
+                    kind: 'db', name: `${args.domain}.${args.action}`, nodeID: deps.broker.nodeID,
+                    startedAt, durationMs: performance.now() - startedMs, outcome,
+                    ...(failure !== undefined ? { error: failure } : {}),
+                });
+            }
         }
     }
 

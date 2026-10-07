@@ -12,6 +12,7 @@ export * from './IMeshStream.js';
 export * from './IProviderToken.js';
 export * from './IServiceBroker.js';
 export * from './IServiceContext.js';
+export * from './ISpan.js';
 export * from './IServiceRegistry.js';
 export * from './ITimer.js';
 export * from './ITimeSeriesContract.js';
