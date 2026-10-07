@@ -13,7 +13,7 @@ import type { TimerHandle } from '../interfaces/ITimer.js';
 import type { IServiceContext, ICallOptions, CrudRepo } from '../interfaces/IServiceContext.js';
 import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
-import { globalContractRegistry, type ToolContract } from '../interfaces/IToolContract.js';
+import { globalContractRegistry, type ContractConcurrency, type ToolContract } from '../interfaces/IToolContract.js';
 import { declarationFromToolInfo, declarationOf, mergeDeclarations, type ContractDeclaration } from './ContractDeclaration.js';
 import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
@@ -60,7 +60,8 @@ export const MeshToolSchemaRegistry: Map<string, {
     isCrud?: boolean,
     isTimeSeries?: boolean,
     domain?: string,
-    scopedBy?: string
+    scopedBy?: string,
+    concurrency?: ContractConcurrency
 }> = new Map();
 
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
@@ -490,7 +491,8 @@ export class ServiceBroker implements IServiceBroker {
             isTimeSeries: contract.isTimeSeries,
             domain: contract.domain,
             timeout: contract.timeout,
-            scopedBy: contract.scopedBy
+            scopedBy: contract.scopedBy,
+            concurrency: contract.concurrency
         });
 
         // A long-running/interval contract's signal outlives any single invocation -- one
@@ -1341,7 +1343,14 @@ export class ServiceBroker implements IServiceBroker {
             }
         }
 
-        const activeCtx = parentCtx || this.getContext();
+        // A long-running or interval contract is started, never asked on anyone's behalf, so it
+        // begins its own context. Inheriting would be an identity leak: a part is often loaded
+        // inside someone's call (placement loads it for the first caller that needs it), and
+        // AsyncLocalStorage then hands that caller's context to every timer tick and every request
+        // the listener ever serves -- each later call taking that caller's meta as its base.
+        // ContextIsolation.spec.ts.
+        const startsOwnContext = schema?.concurrency === 'long-running' || schema?.concurrency === 'interval';
+        const activeCtx = startsOwnContext ? undefined : (parentCtx || this.getContext());
         const traceId = activeCtx?.traceId || randomUUID();
         const parentId = activeCtx?.spanId;
         const spanId = randomUUID();
