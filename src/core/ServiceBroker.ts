@@ -66,6 +66,15 @@ export const MeshToolSchemaRegistry: Map<string, {
 
 const MAX_RPC_TIMEOUT = 3600000; // 1 hour
 
+/** The organization a call runs for, as a log field: the user's, else a bare tenant; none for nobody. */
+function organizationOf(meta: Record<string, unknown> | undefined): { organization?: string } {
+    const user = meta?.['user'];
+    const fromUser = typeof user === 'object' && user !== null ? Reflect.get(user, 'tenant_id') : undefined;
+    const organization = typeof fromUser === 'string' && fromUser !== '' ? fromUser : meta?.['tenant_id'];
+
+    return typeof organization === 'string' && organization !== '' ? { organization } : {};
+}
+
 /** One side of a CRUD hook -- the shape `registerCrudHook` and `defineCrud`'s `hooks` both take. */
 export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
@@ -557,7 +566,9 @@ export class ServiceBroker implements IServiceBroker {
                     // `ctx.call(tool, params, { meta })` already does for the same override.
                     db: <D extends keyof IServiceCollectionRegistry & string>(dbDomain: D, meta?: Record<string, unknown>): CrudRepo<D> =>
                         this.makeCrudRepo(dbDomain, meta ? { ...ctx.meta, ...meta } : ctx.meta),
-                    logger: this.logger
+                    // Every line a handler writes names its contract and the organization it ran
+                    // for; it used to be the broker's own logger, and no line said which call wrote it.
+                    logger: this.logger.child({ contract: toolKeyStr, ...organizationOf(ctx.meta) })
                 };
                 // Resolved and forwarded here, once, rather than inside every handler that needs
                 // it. Runs again, harmlessly, once this same call actually reaches the leader
