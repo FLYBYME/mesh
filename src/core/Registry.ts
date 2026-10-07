@@ -69,7 +69,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
     private localNodeID: string;
     private dhtEnabled: boolean;
     private pruningTimer?: NodeJS.Timeout;
-    private metricsTimer?: NodeJS.Timeout;
     private ttl: number;
     private pruneInterval: number;
 
@@ -208,9 +207,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         this.pruningTimer = setInterval(() => this.pruneStaleNodes(this.ttl), this.pruneInterval);
         if (this.pruningTimer.unref) this.pruningTimer.unref();
 
-        this.metricsTimer = setInterval(() => this.updateLocalMetrics(), 10000);
-        if (this.metricsTimer.unref) this.metricsTimer.unref();
-
         this.logger.info(`Registry started for node ${this.localNodeID}`);
     }
 
@@ -218,45 +214,6 @@ export class Registry extends EventEmitter implements IServiceRegistry {
         if (this.pruningTimer) {
             clearInterval(this.pruningTimer);
             this.pruningTimer = undefined;
-        }
-        if (this.metricsTimer) {
-            clearInterval(this.metricsTimer);
-            this.metricsTimer = undefined;
-        }
-    }
-
-    private updateLocalMetrics(): void {
-        const localNode = this.nodes.get(this.localNodeID);
-        if (!localNode) return;
-
-        try {
-            if (typeof process !== 'undefined' && process.release?.name === 'node') {
-                const os = require('os');
-
-                // CPU load approximation
-                const cpus = os.cpus();
-                if (cpus && cpus.length > 0) {
-                    const loadAvg = os.loadavg();
-                    const cpuUsage = (loadAvg[0] / cpus.length) * 100;
-                    localNode.cpu = Math.round(Math.min(Math.max(cpuUsage, 0), 100));
-                }
-
-                // RAM usage approximation
-                const totalMem = os.totalmem();
-                if (totalMem > 0) {
-                    const ramUsage = (process.memoryUsage().rss / totalMem) * 100;
-                    localNode.activeRequests = Math.round(ramUsage * 100);
-                }
-            } else {
-                // Browser or lightweight environment: Mock baseline metrics
-                localNode.cpu = Math.round(Math.random() * 20);
-                localNode.activeRequests = Math.round(Math.random() * 40 * 100);
-            }
-
-            localNode.timestamp = Date.now();
-            this.emit('local:changed'); // Triggers MeshOrchestrator to broadcast updated presence
-        } catch {
-            // Ignore if 'os' is not resolvable
         }
     }
 
