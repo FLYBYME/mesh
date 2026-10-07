@@ -39,9 +39,28 @@ import type { IContext } from '../interfaces/IContext.js';
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+/**
+ * One store per process, however many copies of this package it holds -- kept on globalThis, as the
+ * contract registry is. A part is often bundled with its own copy of mesh: the api gateway runs
+ * from a precompiled part, so a context it set with its copy was invisible to the broker's, and the
+ * broker's invisible to it. `node:async_hooks` is one module per process, so its class is shared and
+ * `instanceof` holds across copies.
+ */
+const STORAGE_KEY = Symbol.for('@flybyme/mesh.ContextStack.storage');
+
+function sharedStorage(): AsyncLocalStorage<IContext> | undefined {
+    if (typeof AsyncLocalStorage !== 'function') return undefined;
+
+    const existing: unknown = Reflect.get(globalThis, STORAGE_KEY);
+    if (existing instanceof AsyncLocalStorage) return existing;
+
+    const created = new AsyncLocalStorage<IContext>();
+    Reflect.set(globalThis, STORAGE_KEY, created);
+    return created;
+}
+
 export class ContextStack {
-    private static storage: AsyncLocalStorage<IContext> | undefined =
-        typeof AsyncLocalStorage === 'function' ? new AsyncLocalStorage<IContext>() : undefined;
+    private static storage: AsyncLocalStorage<IContext> | undefined = sharedStorage();
 
     /**
      * Executes a function within a context.
