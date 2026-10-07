@@ -387,14 +387,17 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             // 1. Send our presence to the new peer
             await this.broadcastPresence(nodeID);
 
-            // 2. Send our known peers to the new peer (targeted PEX)
+            // 2. Send our known peers to the new peer (targeted PEX): where they are, not what they
+            // run -- the same as the periodic exchange. Every node's whole catalog used to travel
+            // here, on every reconnect, and each one was re-registered on arrival: a link dropping
+            // and rejoining in a loop moved the mesh's catalog each time (edge1, 2026-10-06). A node
+            // learns a peer's catalog from that peer's own presence once it dials it.
             const allKnown = this.node.registry.getNodes();
             const peers = allKnown.map(n => ({
                 nodeID: n.nodeID,
                 addresses: n.addresses,
                 namespace: n.namespace,
                 type: n.type,
-                services: n.services,
                 available: n.available,
                 timestamp: n.timestamp,
                 bootedAt: n.bootedAt,

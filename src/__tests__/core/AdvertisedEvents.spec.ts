@@ -86,6 +86,19 @@ describe('advertised event definitions', () => {
         expect(warned.filter((w) => w.includes('advtest.disputed'))).toHaveLength(1);
     });
 
+    it('on a reconnect, sends its own presence and where its peers are -- never their catalogs (edge1, 2026-10-06)', async () => {
+        await orchestrator.handlePresence({ node: peer([{ name: 'advtest.remoteonly', scopedBy: 'tenantId' }]) });
+        sent.length = 0;
+
+        await orchestrator.handlePeerConnect('peer-with-code');
+
+        expect(sent.map((s) => s.topic)).toEqual(['$node.presence', '$node.pex']);
+        const pex = sent.find((s) => s.topic === '$node.pex')?.data;
+        const peers: unknown = typeof pex === 'object' && pex !== null ? Reflect.get(pex, 'peers') : undefined;
+        expect(Array.isArray(peers) && peers.length > 0).toBe(true);
+        expect(Array.isArray(peers) && peers.every((p) => typeof p === 'object' && p !== null && !('services' in p))).toBe(true);
+    });
+
     it('ignores malformed entries off the wire', async () => {
         await orchestrator.handlePresence({ node: peer([{ name: 7 }, 'nope', null, { scopedBy: 'x' }, { name: 'advtest.ok', scopedBy: 'global' }]) });
 
