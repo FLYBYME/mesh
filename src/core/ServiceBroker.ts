@@ -1351,8 +1351,8 @@ export class ServiceBroker implements IServiceBroker {
         // ContextIsolation.spec.ts.
         const startsOwnContext = schema?.concurrency === 'long-running' || schema?.concurrency === 'interval';
         const activeCtx = startsOwnContext ? undefined : (parentCtx || this.getContext());
-        const traceId = activeCtx?.traceId || randomUUID();
-        const parentId = activeCtx?.spanId;
+        const traceId = options?.traceId ?? (activeCtx?.traceId || randomUUID());
+        const parentId = options?.traceId !== undefined ? options.parentSpanId : activeCtx?.spanId;
         const spanId = randomUUID();
 
         const timeout = options?.timeout !== undefined ? options.timeout : schema?.timeout;
@@ -1370,6 +1370,8 @@ export class ServiceBroker implements IServiceBroker {
             spanId,
             parentId,
         };
+
+        options?.onRouted?.(targetNodeID ?? this.nodeID);
 
         return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${toolName} locally after ${ms}ms`);
     }

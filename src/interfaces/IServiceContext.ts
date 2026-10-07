@@ -6,6 +6,15 @@ export interface ICallOptions<TMeta = IMeshMeta> {
     nodeID?: string;
     timeout?: number;
     meta?: TMeta;
+    /**
+     * Run this call in this trace, whatever the active context's: where a request enters the mesh
+     * with a trace of its own (an api request's `traceparent`). `parentSpanId` is the caller's span
+     * outside the mesh, when it said.
+     */
+    traceId?: string;
+    parentSpanId?: string;
+    /** Told which node the call was sent to -- this node's own id when it runs here. */
+    onRouted?: (nodeID: string) => void;
 }
 
 /**
