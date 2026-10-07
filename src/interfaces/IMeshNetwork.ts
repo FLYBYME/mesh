@@ -152,6 +152,8 @@ export interface ToolInfo {
     matchAny?: boolean;
     metadata?: Record<string, unknown>;
     timeout?: number;
+    /** contractHash: the contract and its handler, fingerprinted. */
+    hash?: string;
 }
 
 export interface EventInfo {
