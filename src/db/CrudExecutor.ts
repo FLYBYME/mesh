@@ -5,6 +5,7 @@ import { FindOptions, StrictFilterQuery } from './types.js';
 import { MeshError } from '../core/MeshError.js';
 import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 import type { CrudRepo, IServiceContext } from '../interfaces/IServiceContext.js';
+import { meshMetrics, secondsSince, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /** Mirrors ServiceBroker's own `CrudHook` -- declared here rather than imported to keep this module
  *  free of a circular dependency back on ServiceBroker. */
@@ -97,6 +98,23 @@ function emitNamed(broker: IServiceBroker, domain: string, suffix: string, paylo
  */
 export class CrudExecutor {
     public static async execute(
+        deps: { broker: IServiceBroker; db: Database },
+        args: { domain: string; action: string; params: Record<string, unknown>; meta: Record<string, unknown> | undefined }
+    ): Promise<unknown> {
+        // Timed here, the one place every database operation passes -- a CRUD call or ctx.db.
+        const startedMs = performance.now();
+        let outcome: RpcOutcome = 'error';
+
+        try {
+            const result = await CrudExecutor.run(deps, args);
+            outcome = 'ok';
+            return result;
+        } finally {
+            (deps.broker.metrics ?? meshMetrics).recordDb(args.domain, args.action, outcome, secondsSince(startedMs));
+        }
+    }
+
+    private static async run(
         deps: { broker: IServiceBroker; db: Database },
         args: { domain: string; action: string; params: Record<string, unknown>; meta: Record<string, unknown> | undefined }
     ): Promise<unknown> {

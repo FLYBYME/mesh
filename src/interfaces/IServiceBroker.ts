@@ -14,6 +14,7 @@ import type { AnyTimeSeriesContracts } from './ITimeSeriesContract.js';
 import type { IPlacement } from './IPlacement.js';
 import type { EventHandlerDefinition } from './IEventHandler.js';
 import type { z } from 'zod';
+import type { MeshMetrics } from '../metrics/MeshMetrics.js';
 /**
  * IServiceBroker — Interface for the central communication kernel.
  */
@@ -22,6 +23,8 @@ export interface IServiceBroker {
     readonly logger: ILogger;
     readonly registry: IServiceRegistry;
     readonly network: IMeshNetwork;
+    /** What this broker records into (calls, packets, database operations); the process-wide one when unset. */
+    readonly metrics?: MeshMetrics;
 
     pipe(plugin: IBrokerPlugin): this;
     use(mw: IMiddleware): void;

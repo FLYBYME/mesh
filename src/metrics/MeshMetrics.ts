@@ -54,6 +54,8 @@ export class MeshMetrics {
     public readonly pingFailures: Counter;
     public readonly callEdges: Counter;
     public readonly outgoingPeer: Counter;
+    public readonly dbOperations: Counter;
+    public readonly dbDuration: Histogram;
 
     constructor(public readonly registry: MetricsRegistry = new MetricsRegistry()) {
         this.rpcCalls = registry.counter(
@@ -114,6 +116,22 @@ export class MeshMetrics {
             'Calls this node sent to another node, by action, the node it went to (peer) and outcome.',
             ['action', 'peer', 'outcome'],
         );
+        // ctx.db goes straight to the database, past the broker, so its time was in no call metric.
+        this.dbOperations = registry.counter(
+            'mesh_db_operations_total',
+            'Database operations on this node, through a CRUD call or ctx.db, by collection.action (operation) and outcome. Hooks included.',
+            ['operation', 'outcome'],
+        );
+        this.dbDuration = registry.histogram(
+            'mesh_db_duration_seconds',
+            'Time of a database operation on this node, by collection.action, its hooks included.',
+            ['operation'],
+            RPC_DURATION_BUCKETS,
+        );
+    }
+
+    recordDb(collection: string, action: string, outcome: RpcOutcome, seconds: number): void {
+        this.callBinding(this.dbOps, this.dbOperations, this.dbDuration, `${collection}.${action}`).record(outcome, seconds);
     }
 
     recordCallEdge(caller: string | undefined, callee: string): void {
@@ -183,6 +201,7 @@ export class MeshMetrics {
         out: { request: new Map(), response: new Map(), event: new Map() },
     };
     private readonly handled = new Map<string, CallBinding>();
+    private readonly dbOps = new Map<string, CallBinding>();
     private readonly edges = new Map<string, Map<string, BoundCounter>>();
     private readonly outgoing = new Map<string, CallBinding>();
 
