@@ -15,7 +15,9 @@ import { defineCrud } from '../../interfaces/ICrudContract.js';
  * loaded on this node defines it" for every one of gitserver's events.
  */
 describe('advertised event definitions', () => {
-    const logger = new Logger(LogLevel.ERROR);
+    // Warnings kept, not printed -- through the handler, which the orchestrator's child logger shares.
+    const warned: string[] = [];
+    const logger = new Logger(LogLevel.WARN, {}, (level, _formatted, msg) => { if (level === LogLevel.WARN) warned.push(msg); });
     defineEvent('advtest.local', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId' });
 
     let registry: PlacementRegistry;
@@ -70,6 +72,18 @@ describe('advertised event definitions', () => {
         await orchestrator.handlePresence({ node: peer([{ name: 'advtest.remoteonly', scopedBy: 'tenantId' }]) });
 
         expect(eventScope('advtest.remoteonly')).toEqual({ scopedBy: 'tenantId' });
+    });
+
+    it('says a disagreement once, not on every presence -- a reconnecting peer repeated it ~50 times per 400 lines (2026-10-06)', async () => {
+        await orchestrator.handlePresence({ node: { ...peer([{ name: 'advtest.disputed', scopedBy: 'tenantId' }]), nodeID: 'peer-one' } });
+        warned.length = 0;
+
+        for (let i = 0; i < 5; i++) {
+            // As edge1 said of edgeNode.updated: global, against a stricter definition elsewhere.
+            await orchestrator.handlePresence({ node: { ...peer([{ name: 'advtest.disputed', scopedBy: 'global' }]), nodeSeq: i + 2 } });
+        }
+
+        expect(warned.filter((w) => w.includes('advtest.disputed'))).toHaveLength(1);
     });
 
     it('ignores malformed entries off the wire', async () => {

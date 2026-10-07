@@ -113,6 +113,8 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     private presenceInterval?: TimerHandle;
     private fullPresenceInterval?: TimerHandle;
     private supervisionInterval?: TimerHandle;
+    /** Event-scope disagreements already logged (recordAdvertisedEvents): each is said once. */
+    private readonly warnedDisagreements = new Set<string>();
     /** nodeID -> when its presence was last asked for (PRESENCE_REQUEST_FLOOR_MS). */
     private presenceRequests = new Map<string, number>();
     /** nodeID -> last dial attempt, so a PEX round cannot become a dial storm. */
@@ -349,6 +351,11 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         }
         for (const name of globalEventRegistry.advertiseAll(node.nodeID, entries)) {
             const mine = entries.find((e) => e.name === name)?.scopedBy;
+            // Once per node, event and scope: every full presence repeats the list, and a peer
+            // reconnecting in a loop sent this ~50 times per 400 lines on every node (2026-10-06).
+            const key = `${node.nodeID}|${name}|${mine ?? ''}`;
+            if (this.warnedDisagreements.has(key)) continue;
+            this.warnedDisagreements.add(key);
             this.logger.warn(`Node ${node.nodeID} defines event "${name}" scoped by ${mine ?? 'nothing'}, which disagrees with another node's definition -- keeping the stricter one`);
         }
     }
