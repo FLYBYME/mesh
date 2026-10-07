@@ -56,6 +56,13 @@ const NODE_HEADER = 'x-mesh-node';
 /** Ceiling for per-peer reconnect backoff, and the delay after a duplicate-nodeID refusal. */
 const RECONNECT_BACKOFF_CAP_MS = 30_000;
 
+/**
+ * Pings in a row a peer may leave unanswered before its link is dropped. One slow pong is a busy
+ * peer, or a busy us; dropping it costs both a reconnect and a full presence exchange, which makes
+ * them busier still. A dead peer is still found within two pings (and at once if its socket closes).
+ */
+export const MAX_MISSED_PONGS = 2;
+
 /** Consecutive failed reconnects to one URL before it is worth a warning (logged once). */
 const RECONNECT_WARN_AFTER = 5;
 
@@ -73,6 +80,10 @@ interface SocketInfo {
     superseded?: boolean;
     /** A ping is out and its pong has not come back. */
     awaitingPong: boolean;
+    /** The current ping's miss has been counted (by its timeout or the next ping): counted once. */
+    pongJudged?: boolean;
+    /** Pings in a row that went unanswered; the link is dropped at MAX_MISSED_PONGS, not at one. */
+    missedPongs?: number;
     /** When a real frame last arrived -- stronger proof of life than a pong; see hasRecentTraffic. */
     lastMessageAt: number;
     /** When the socket was accepted or dialed. */
@@ -928,6 +939,7 @@ export class WSTransport extends BaseTransport {
 
         ws.on('pong', () => {
             info.awaitingPong = false;
+            info.missedPongs = 0;
             if (info.pingTimeoutTimer) {
                 clearTimeout(info.pingTimeoutTimer);
                 info.pingTimeoutTimer = undefined;
@@ -993,44 +1005,61 @@ export class WSTransport extends BaseTransport {
      * Every open socket, not only the ones in `peers`: a standby or a socket that never identified is
      * still a connection, and one that has died must be found and closed like any other.
      */
+    /**
+     * One unanswered ping, judged once -- by its timeout or by the next ping, whichever comes first.
+     * Real inbound traffic since is proof of life: a pong is one control frame on the same
+     * connection real traffic flows over, and can lose a race to it under load. Otherwise it is a
+     * miss, and the link is dropped only at MAX_MISSED_PONGS in a row: one slow pong is a busy
+     * peer, or a busy us. True when the socket was dropped.
+     */
+    private judgeMissedPong(ws: IWS, socket: SocketInfo, peerId: string): boolean {
+        if (socket.pongJudged === true) return false;
+        socket.pongJudged = true;
+
+        if (this.hasRecentTraffic(ws)) {
+            socket.awaitingPong = false;
+            return false;
+        }
+
+        socket.missedPongs = (socket.missedPongs ?? 0) + 1;
+        if (socket.missedPongs >= MAX_MISSED_PONGS) {
+            this.terminatePeerForPingFailure(peerId, ws, `${socket.missedPongs} pings in a row unanswered (${this.pingTimeoutMs}ms each), terminating socket`);
+            return true;
+        }
+
+        this.logger?.debug(`[WSTransport] Peer ${peerId} missed a pong (${socket.missedPongs} of ${MAX_MISSED_PONGS}); kept`);
+        return false;
+    }
+
     private sendHeartbeats(): void {
         for (const ws of this.liveSockets) {
             if (ws.readyState !== 1) continue;
 
             const socket = this.infoOf(ws);
             const peerId = socket.peerId ?? 'unidentified';
-            if (socket.awaitingPong) {
-                // A pong is one control-frame round-trip on the same connection real request/
-                // response traffic flows over -- under sustained load it can lose a single race
-                // against that traffic without the connection actually being dead. Real inbound
-                // data more recent than a full ping interval is stronger proof of life than one
-                // missed pong, so don't kill a socket that's demonstrably still exchanging
-                // messages; just fall through and send it a fresh ping this tick instead.
-                if (!this.hasRecentTraffic(ws)) {
-                    this.terminatePeerForPingFailure(peerId, ws, 'missed pong, terminating socket');
-                    continue;
-                }
-                socket.awaitingPong = false;
+            // The last ping is still unanswered: judged now, if its timeout has not already.
+            if (socket.awaitingPong && this.judgeMissedPong(ws, socket, peerId)) {
+                continue;
             }
 
             socket.awaitingPong = true;
+            socket.pongJudged = false;
 
             if (socket.pingTimeoutTimer) {
                 clearTimeout(socket.pingTimeoutTimer);
             }
 
             socket.pingTimeoutTimer = setTimeout(() => {
-                if (!socket.awaitingPong) return;
                 socket.pingTimeoutTimer = undefined;
-                // Same escape hatch as the missed-pong branch above -- this timer fires
-                // independently of sendHeartbeats()'s own tick, and previously had no such check
-                // at all: a socket that was demonstrably still exchanging real traffic got killed
-                // anyway the moment this specific ping/pong round-trip alone was slow.
-                if (this.hasRecentTraffic(ws)) {
-                    socket.awaitingPong = false;
-                    return;
-                }
-                this.terminatePeerForPingFailure(peerId, ws, `ping timeout (${this.pingTimeoutMs}ms), terminating socket`);
+                // Judged after this turn's I/O, not before it. When this process's own event loop
+                // was blocked, the timer and an already-arrived pong become due together, and Node
+                // runs timers before reading sockets: the pong was here, unread, and the link was
+                // dropped anyway -- a busy node dropping healthy peers, which reconnect with a full
+                // presence exchange and make it busier (edge1, 2026-10-06). setImmediate runs after
+                // the poll phase, so a waiting pong is read first.
+                setImmediate(() => {
+                    if (socket.awaitingPong) this.judgeMissedPong(ws, socket, peerId);
+                });
             }, this.pingTimeoutMs);
 
             socket.pingTimeoutTimer.unref();

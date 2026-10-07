@@ -166,7 +166,7 @@ describe('Node Loss Detection Timing', () => {
     });
 
     describe('Transport-level fast detection via WebSocket ping/pong', () => {
-        it('detects an uncleanly killed socket within 2 seconds using ping/pong timeout', async () => {
+        it('detects an uncleanly killed socket after two missed pongs (3 seconds here), not one', async () => {
             jest.useFakeTimers();
             const serializer = new JSONSerializer();
             // Configure fast detection: 1s ping interval, 1s ping timeout
@@ -199,7 +199,14 @@ describe('Node Loss Detection Timing', () => {
             expect(peerDisconnected).toBe(false);
 
             // The peer is dead (unclean loss: no close frame sent, no pong returned).
-            // At 2000ms (1000ms timeout expired): transport terminates socket
+            // At 2000ms the first pong is missed: one slow pong is not a dead peer (MAX_MISSED_PONGS),
+            // so the link stays and a second ping goes out.
+            jest.advanceTimersByTime(1000);
+            expect(mockWS.terminate).not.toHaveBeenCalled();
+            expect(peerDisconnected).toBe(false);
+            expect(mockWS.ping).toHaveBeenCalledTimes(2);
+
+            // At 3000ms the second is missed too: dropped.
             jest.advanceTimersByTime(1000);
             expect(mockWS.terminate).toHaveBeenCalled();
             expect(peerDisconnected).toBe(true);
@@ -252,7 +259,7 @@ describe('Node Loss Detection Timing', () => {
             await transport.disconnect();
         });
 
-        it('full chain: unclean socket loss unregisters dead node from registry within 2 seconds', async () => {
+        it('full chain: unclean socket loss unregisters the dead node after two missed pongs (3 seconds here)', async () => {
             jest.useFakeTimers();
             const registry = new Registry(logger, { localNodeID: 'local-node' });
             await registry.start();
@@ -289,9 +296,12 @@ describe('Node Loss Detection Timing', () => {
             jest.advanceTimersByTime(1000);
             expect(registry.getNode('peer-dead')).toBeDefined();
 
-            // At 2000ms (timeout expires without pong):
-            // Transport terminates socket, emits peer:disconnect,
-            // MeshOrchestrator unregisters node from Registry immediately!
+            // At 2000ms one pong is missed: kept (MAX_MISSED_PONGS).
+            jest.advanceTimersByTime(1000);
+            expect(registry.getNode('peer-dead')).toBeDefined();
+
+            // At 3000ms the second is missed: the transport terminates the socket, emits
+            // peer:disconnect, and MeshOrchestrator unregisters the node from the Registry at once.
             jest.advanceTimersByTime(1000);
             expect(registry.getNode('peer-dead')).toBeUndefined();
 
