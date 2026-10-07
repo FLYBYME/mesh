@@ -23,6 +23,7 @@ export * from './interfaces/ICrudContract.js';
 export * from './interfaces/IEventContract.js';
 export * from './interfaces/IEventHandler.js';
 export * from './interfaces/IServiceContext.js';
+export * from './interfaces/ISpan.js';
 export * from './interfaces/IServiceBroker.js';
 export * from './interfaces/IMeshApp.js';
 
