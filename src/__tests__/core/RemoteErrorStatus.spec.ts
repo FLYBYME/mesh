@@ -7,7 +7,7 @@ import { WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
 import { PlacementRegistry } from '../../core/PlacementRegistry.js';
 import { ServiceBroker } from '../../core/ServiceBroker.js';
-import { MeshError } from '../../core/MeshError.js';
+import { MeshError, isMeshError } from '../../core/MeshError.js';
 import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -53,8 +53,22 @@ const plainContract = defineContract({
     print: defaultPrint,
 });
 
+const detailContract = defineContract({
+    domain: 'remoteerr',
+    action: 'detail',
+    description: 'Throws a MeshError carrying data and a correlation id.',
+    inputSchema: z.object({}),
+    outputSchema: z.object({ never: z.boolean() }),
+    dependencies: [],
+    filePath: 'src/__tests__/core/RemoteErrorStatus.spec.ts',
+    permissions: [],
+    concurrency: 'on-demand',
+    print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
+        'remoteerr.detail': { params: Record<string, never>; returns: { never: boolean } };
         'remoteerr.fail': { params: { status: number; code: string }; returns: { never: boolean } };
         'remoteerr.plain': { params: Record<string, never>; returns: { never: boolean } };
     }
@@ -84,6 +98,9 @@ describe('a MeshError keeps its status across the mesh', () => {
         });
         serverBroker.registerContract(plainContract, async () => {
             throw new Error('something came loose');
+        });
+        serverBroker.registerContract(detailContract, async () => {
+            throw new MeshError({ message: 'Quota reached.', code: 'QUOTA', status: 409, data: { used: 5, limit: 5 }, correlationId: 'order-17' });
         });
 
         clientApp = new MeshApp({ nodeID: 'err-client-node', logger });
@@ -142,8 +159,23 @@ describe('a MeshError keeps its status across the mesh', () => {
         expect((err as Error).message).toBe('something came loose');
     });
 
-    it('keeps the far side\'s stack behind the remote boundary marker', async () => {
+    it('keeps the far side\'s stack behind the remote boundary marker, naming where it threw', async () => {
         const err = await clientBroker.call('remoteerr.fail', { status: 404, code: 'NOT_FOUND' }).catch((e: unknown) => e);
-        expect((err as Error).stack).toContain('--- Remote Boundary ---');
+        expect(err instanceof Error ? err.stack : '').toContain('--- Remote Boundary (thrown on err-server-node) ---');
+    });
+
+    it('keeps its data, its correlation id and the node that threw it', async () => {
+        const err: unknown = await clientBroker.call('remoteerr.detail', {}).catch((e: unknown) => e);
+        const mesh = isMeshError(err) ? err : undefined;
+
+        expect(mesh?.status).toBe(409);
+        expect(mesh?.data).toEqual({ used: 5, limit: 5 });
+        expect(mesh?.correlationId).toBe('order-17');
+        expect(mesh?.nodeID).toBe('err-server-node');
+    });
+
+    it('names the node for an ordinary Error too, in its stack', async () => {
+        const err = await clientBroker.call('remoteerr.plain', {}).catch((e: unknown) => e);
+        expect(err instanceof Error ? err.stack : '').toContain('(thrown on err-server-node)');
     });
 });

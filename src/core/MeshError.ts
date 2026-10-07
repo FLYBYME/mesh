@@ -7,6 +7,8 @@ export const MeshErrorPayloadSchema = z.object({
     data: z.unknown().optional(),
     stack: z.string().optional(),
     correlationId: z.string().optional(),
+    /** The node whose handler threw it, kept across every hop back to the caller. */
+    nodeID: z.string().optional(),
 });
 
 export type MeshErrorPayload = z.infer<typeof MeshErrorPayloadSchema>;
@@ -38,6 +40,7 @@ export class MeshError extends Error {
     public readonly status: number;
     public readonly data?: unknown;
     public readonly correlationId?: string;
+    public readonly nodeID?: string;
 
     constructor(payload: MeshErrorPayload | string) {
         const data = typeof payload === 'string' 
@@ -50,6 +53,7 @@ export class MeshError extends Error {
         this.status = data.status;
         this.data = data.data;
         this.correlationId = data.correlationId;
+        this.nodeID = data.nodeID;
         if (data.stack) this.stack = data.stack;
     }
 
@@ -60,7 +64,8 @@ export class MeshError extends Error {
             status: this.status,
             data: this.data,
             stack: this.stack,
-            correlationId: this.correlationId
+            correlationId: this.correlationId,
+            nodeID: this.nodeID
         };
     }
 }
@@ -73,6 +78,17 @@ export class ResiliencyError extends MeshError {
     constructor(message: string, code = 'SERVICE_UNAVAILABLE', status = 503) {
         super({ message, code, status });
         this.name = 'ResiliencyError';
+    }
+}
+
+/**
+ * A call that ran out of time: 504, its own code, so a caller (the api gateway) can tell it from a
+ * handler that failed. It used to be a plain Error, which reached an api caller as a bare 500.
+ */
+export class TimeoutError extends MeshError {
+    constructor(message: string) {
+        super({ message, code: 'TIMEOUT', status: 504 });
+        this.name = 'TimeoutError';
     }
 }
 
@@ -116,26 +132,38 @@ export function isMeshError(err: unknown): err is MeshError {
  * neither is meaningful alone. Anything else stays a plain `Error`; it had no status to lose.
  */
 export function errorFromWire(payload: unknown, fallbackMessage = 'Remote RPC Error'): Error {
-    const wire = (typeof payload === 'object' && payload !== null ? payload : {}) as {
-        message?: unknown; code?: unknown; status?: unknown; stack?: unknown;
-        data?: { stack?: unknown };
+    const field = (key: string): unknown => (typeof payload === 'object' && payload !== null ? Reflect.get(payload, key) : undefined);
+    const text = (key: string): string | undefined => {
+        const value = field(key);
+        return typeof value === 'string' && value.length > 0 ? value : undefined;
     };
 
-    const message = typeof wire.message === 'string' && wire.message.length > 0
-        ? wire.message
-        : fallbackMessage;
+    const message = text('message') ?? fallbackMessage;
+    const code = text('code');
+    const status = field('status');
+    const nodeID = text('nodeID');
+    const correlationId = text('correlationId');
+    const data = field('data');
+    // A plain error's stack travels as `data: { stack }`; that is not data the handler meant to send.
+    const stackOnly = typeof data === 'object' && data !== null && Object.keys(data).every((k) => k === 'stack');
+    const dataStack: unknown = typeof data === 'object' && data !== null ? Reflect.get(data, 'stack') : undefined;
 
-    const error = typeof wire.code === 'string' && typeof wire.status === 'number'
-        ? new MeshError({ message, code: wire.code, status: wire.status })
+    // Its data, correlation id and the node that threw survive the hop too (observability-review E):
+    // only code and status used to, and nothing said where it was thrown.
+    const error = code !== undefined && typeof status === 'number'
+        ? new MeshError({
+            message, code, status,
+            ...(data !== undefined && !stackOnly ? { data } : {}),
+            ...(correlationId !== undefined ? { correlationId } : {}),
+            ...(nodeID !== undefined ? { nodeID } : {}),
+        })
         : new Error(message, { cause: payload });
 
-    // The far side's stack, then a marker, then ours -- so a reader sees where it actually threw
-    // before seeing how the call got there.
-    const remoteStack = typeof wire.stack === 'string'
-        ? wire.stack
-        : (typeof wire.data?.stack === 'string' ? wire.data.stack : undefined);
+    // The far side's stack, then a marker naming where it threw, then ours -- so a reader sees where
+    // it actually threw before seeing how the call got there.
+    const remoteStack = text('stack') ?? (typeof dataStack === 'string' ? dataStack : undefined);
     if (remoteStack !== undefined) {
-        error.stack = `${remoteStack}\n--- Remote Boundary ---\n${error.stack ?? ''}`;
+        error.stack = `${remoteStack}\n--- Remote Boundary${nodeID !== undefined ? ` (thrown on ${nodeID})` : ''} ---\n${error.stack ?? ''}`;
     }
 
     return error;

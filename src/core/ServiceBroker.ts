@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
-import { ClientError, MeshError, errorFromWire, isMeshError } from './MeshError.js';
+import { ClientError, MeshError, TimeoutError, errorFromWire, isMeshError } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /**
@@ -322,9 +322,10 @@ export class ServiceBroker implements IServiceBroker {
                     // of this module and therefore a different MeshError class. See
                     // MESH_ERROR_BRAND -- that mismatch is exactly what kept turning a remote 404
                     // into a 500 while every test passed.
+                    // The node that threw it, unless it came from further away and already says so.
                     const wire = isMeshError(err)
-                        ? err.toJSON()
-                        : { message, data: { stack: err instanceof Error ? err.stack : undefined } };
+                        ? { ...err.toJSON(), nodeID: err.nodeID ?? this.nodeID }
+                        : { message, nodeID: this.nodeID, data: { stack: err instanceof Error ? err.stack : undefined } };
 
                     // The same object as both payload and envelope error: a transport settles its
                     // own pending RPC and reads one of them, and which one depends on the
@@ -1410,7 +1411,7 @@ export class ServiceBroker implements IServiceBroker {
             const timeoutPromise = new Promise((_, reject) => {
                 timer = setTimeout(() => {
                     timedOut = true;
-                    reject(new Error(timeoutMessage(timeoutMs)));
+                    reject(new TimeoutError(timeoutMessage(timeoutMs)));
                 }, timeoutMs);
             });
 
@@ -1613,7 +1614,7 @@ export class ServiceBroker implements IServiceBroker {
                 this.pendingRequests.delete(requestId);
                 this.logger.info('Nodes available at timeout:', this.registry.getNodes().map(n => n.nodeID));
                 settle('timeout');
-                rejectCall(new Error(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
+                rejectCall(new TimeoutError(`[ServiceBroker] RPC Timeout calling ${toolName} on ${nodeID} after ${timeoutMs}ms`));
             }, timeoutMs);
 
             this.pendingRequests.set(requestId, {

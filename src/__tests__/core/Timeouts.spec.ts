@@ -98,6 +98,12 @@ describe('RPC Timeouts and Multi-Hop Timeouts', () => {
         ).rejects.toThrow(/Timeout/);
     });
 
+    it('a timeout is a 504 with its own code, not a bare error an api answers 500 for', async () => {
+        const broker3 = app3.getProvider<IServiceBroker>('broker');
+
+        await expect(broker3.call('timeout.slow', { delay: 100 }, { timeout: 50 })).rejects.toMatchObject({ code: 'TIMEOUT', status: 504 });
+    });
+
     it('should timeout when a multi-hop RPC call takes too long', async () => {
         // App1 calls App3 through App2
         const broker1 = app1.getProvider<IServiceBroker>('broker');

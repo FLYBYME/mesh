@@ -1,6 +1,6 @@
 import { BaseTransport } from '../BaseTransport.js';
 import { BaseSerializer } from '../../serializers/BaseSerializer.js';
-import { errorFromWire } from '../../core/MeshError.js';
+import { TimeoutError, errorFromWire } from '../../core/MeshError.js';
 import type { TransportConnectOptions, IWS, IWSServer, MeshPacket, PeerLink } from '../../interfaces/IMeshNetwork.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -680,7 +680,7 @@ export class WSTransport extends BaseTransport {
             const timeout = setTimeout(() => {
                 if (this.pendingRPCs.has(id)) {
                     this.pendingRPCs.delete(id);
-                    reject(new Error(`RPC timeout after ${WSTransport.RPC_TIMEOUT_MS}ms`));
+                    reject(new TimeoutError(`RPC timeout after ${WSTransport.RPC_TIMEOUT_MS}ms`));
                 }
             }, WSTransport.RPC_TIMEOUT_MS);
 
