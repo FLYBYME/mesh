@@ -10,6 +10,7 @@ import type { IMeshNetwork } from '../../interfaces/IMeshNetwork.js';
 import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import type { MeshLinkChanged } from '../../core/MeshEvents.js';
 import { eventScope } from '../../core/EventScope.js';
+import { MeshMetrics } from '../../metrics/MeshMetrics.js';
 
 /**
  * A node's links, from the platform rather than from `ss` on the box: what each node is directly
@@ -23,13 +24,17 @@ describe('mesh link status', () => {
     let appA: MeshApp;
     let appB: MeshApp;
     const seenOnA: MeshLinkChanged[] = [];
+    // A's own counters, apart from the process-wide ones every other node here records into.
+    const metricsA = new MeshMetrics();
 
-    const start = async (nodeID: string, port: number, bootstrap?: string): Promise<MeshApp> => {
+    const start = async (nodeID: string, port: number, bootstrap?: string, metrics?: MeshMetrics): Promise<MeshApp> => {
         const app = new MeshApp({ nodeID, logger });
+        const transport = new WSTransport(serializer, port, '127.0.0.1');
+        if (metrics !== undefined) transport.metrics = metrics;
         app.use(new RegistryModule());
         app.use(new NetworkModule({
             port,
-            transports: [new WSTransport(serializer, port, '127.0.0.1')],
+            transports: [transport],
             ...(bootstrap !== undefined ? { bootstrapNodes: [bootstrap] } : {}),
         }));
         app.use(new BrokerModule());
@@ -41,7 +46,7 @@ describe('mesh link status', () => {
 
     beforeAll(async () => {
         // 657x: every lower 65x1/65x2 pair is taken by another spec, and jest runs suites in parallel.
-        appA = await start('links-node-a', 6571);
+        appA = await start('links-node-a', 6571, undefined, metricsA);
         appA.getProvider<IServiceBroker>('broker').on('mesh.link.changed', (change) => { seenOnA.push(change); });
         appB = await start('links-node-b', 6572, 'ws://127.0.0.1:6571');
         await settle(800);
@@ -69,6 +74,9 @@ describe('mesh link status', () => {
 
         expect(seenOnA).toContainEqual(expect.objectContaining({ nodeID: 'links-node-a', peer: 'links-node-b', state: 'down' }));
         expect(appA.getProvider<IMeshNetwork>('network').peerLinks?.()).toEqual([]);
+        // And counts it: a link that keeps going down and up is a reconnect loop (edge1, 2026-10-06).
+        expect(metricsA.linkChanges.get(['links-node-b', 'up'])).toBe(1);
+        expect(metricsA.linkChanges.get(['links-node-b', 'down'])).toBe(1);
     });
 
     it('is delivered to everyone who may see it -- the fleet belongs to no tenant', () => {

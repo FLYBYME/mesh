@@ -47,6 +47,8 @@ export class MeshMetrics {
     public readonly rpcOutgoingDuration: Histogram;
     public readonly transportBytes: Counter;
     public readonly transportPackets: Counter;
+    public readonly linkChanges: Counter;
+    public readonly pingFailures: Counter;
 
     constructor(public readonly registry: MetricsRegistry = new MetricsRegistry()) {
         this.rpcCalls = registry.counter(
@@ -81,6 +83,26 @@ export class MeshMetrics {
             'Mesh packets over the WebSocket transport, by direction, packet kind and topic. A broadcast counts once per peer it went to.',
             ['direction', 'kind', 'topic'],
         );
+        // edge1 sat at 100 % CPU while two of its nodes dropped and rejoined each other, each time
+        // with a full presence exchange, and nothing counted it (2026-10-06).
+        this.linkChanges = registry.counter(
+            'mesh_link_changes_total',
+            'Direct links to another node that came up or went down, by peer and state. One link going down and up again and again is a reconnect loop.',
+            ['peer', 'state'],
+        );
+        this.pingFailures = registry.counter(
+            'mesh_ping_failures_total',
+            'Links this node closed because the peer did not answer a ping in time, by peer.',
+            ['peer'],
+        );
+    }
+
+    recordLinkChange(peer: string, state: 'up' | 'down'): void {
+        this.linkChanges.inc([peerLabel(peer), state]);
+    }
+
+    recordPingFailure(peer: string): void {
+        this.pingFailures.inc([peerLabel(peer)]);
     }
 
     recordHandled(action: string, outcome: RpcOutcome, seconds: number): void {
@@ -131,6 +153,11 @@ export class MeshMetrics {
         if (cache.size < MAX_BINDINGS) cache.set(action, binding);
         return binding;
     }
+}
+
+/** A peer as a label: a socket not yet identified (`bootstrap_<random>`) is one series, not one per dial. */
+function peerLabel(peer: string): string {
+    return peer.startsWith('bootstrap_') ? 'unidentified' : peer;
 }
 
 /** Label sets cached per cache map before new ones go through the unbound path. */

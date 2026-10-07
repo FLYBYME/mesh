@@ -982,6 +982,7 @@ export class WSTransport extends BaseTransport {
      */
     private terminatePeerForPingFailure(peerId: string, ws: IWS, reason: string): void {
         this.logger?.warn(`[WSTransport] Peer ${peerId} ${reason}`);
+        this.metrics.recordPingFailure(peerId);
         this.cleanupSocketKeepalive(ws);
         this.releasePeer(peerId, ws);
         if (ws.terminate) ws.terminate();

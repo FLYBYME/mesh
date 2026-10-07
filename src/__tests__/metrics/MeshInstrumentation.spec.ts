@@ -191,3 +191,18 @@ describe('installNodeMetrics', () => {
         expect(text).toContain('mesh_registry_nodes{available="false"} 1\n');
     });
 });
+
+describe('link and ping counters', () => {
+    it('counts ping failures by peer, an unidentified socket as one series however many dials', () => {
+        const metrics = new MeshMetrics();
+
+        metrics.recordPingFailure('edge1');
+        metrics.recordPingFailure('edge1');
+        metrics.recordPingFailure('bootstrap_k3j2');
+        metrics.recordPingFailure('bootstrap_9fz1');
+
+        expect(metrics.pingFailures.get(['edge1'])).toBe(2);
+        expect(metrics.pingFailures.get(['unidentified'])).toBe(2);
+        expect(metrics.registry.render()).toContain('mesh_ping_failures_total{peer="edge1"} 2');
+    });
+});

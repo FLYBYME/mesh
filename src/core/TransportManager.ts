@@ -31,6 +31,7 @@ export class TransportManager extends EventEmitter {
                 if (this.node.orchestrator) {
                     this.node.orchestrator.handlePeerConnect(peerNodeID);
                 }
+                transport.metrics.recordLinkChange(peerNodeID, 'up');
                 this.emitLinkChange(peerNodeID, 'up');
             });
             transport.on('peer:disconnect', (peerNodeID: string) => {
@@ -41,6 +42,7 @@ export class TransportManager extends EventEmitter {
                 if (this.node.orchestrator) {
                     this.node.orchestrator.handlePeerDisconnect(peerNodeID);
                 }
+                transport.metrics.recordLinkChange(peerNodeID, 'down');
                 this.emitLinkChange(peerNodeID, 'down');
             });
             this.transports.set(transport.protocol, transport);
