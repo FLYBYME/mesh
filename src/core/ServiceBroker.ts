@@ -5,7 +5,7 @@ import type { ILogger } from '../interfaces/ILogger.js';
 import type { IMeshNetwork } from '../interfaces/IMeshNetwork.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import type { IContext } from '../interfaces/IContext.js';
-import type { IMeshPacket } from '../interfaces/IMeshNetwork.js';
+import type { EventTrace, IMeshPacket } from '../interfaces/IMeshNetwork.js';
 import type { IBrokerPlugin } from '../interfaces/IBrokerPlugin.js';
 import type { IMiddleware } from '../interfaces/IInterceptor.js';
 import type { IMeshMeta } from '../interfaces/IMeshMeta.js';
@@ -415,8 +415,22 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     public _triggerLocal(topic: string, data: unknown, packet: IMeshPacket): void {
-        this.localEvents.emit(topic, data, packet);
-        this.localEvents.emit('__pattern_event', data, packet);
+        // Listeners run in a context of their own, not the raiser's: a local event is delivered
+        // synchronously inside the call that raised it, and a listener's calls (broker.on, as
+        // compute's wakeups and the api's event streams use) would otherwise take that caller's
+        // meta -- its user -- as their base. The trace goes on; nobody's identity does.
+        const traceId = typeof packet.meta?.traceId === 'string' ? packet.meta.traceId : randomUUID();
+        const parentId = typeof packet.meta?.parentId === 'string' ? packet.meta.parentId : undefined;
+        const spanId = randomUUID();
+        const root: IContext<Record<string, unknown>, IMeshMeta> = {
+            id: spanId, correlationID: packet.id, toolName: topic, params: {}, meta: {},
+            callerID: null, nodeID: this.nodeID, traceId, spanId, ...(parentId !== undefined ? { parentId } : {}),
+        };
+
+        ContextStack.run(root, () => {
+            this.localEvents.emit(topic, data, packet);
+            this.localEvents.emit('__pattern_event', data, packet);
+        });
     }
 
     /**
@@ -1101,10 +1115,22 @@ export class ServiceBroker implements IServiceBroker {
                 if (leader !== undefined && leader.nodeID !== this.nodeID) return;
             }
             const ctx = this.makeEventContext(name, data, packet, lifetime.signal);
+            // Its own context: the event's tenant, nobody's user, the raiser's trace. A local event
+            // is delivered inside the context of the call that raised it, and without this every
+            // ctx.call the handler made took that caller's meta as its base -- alice of acme
+            // raising beta's event, and the handler acting as alice, in acme
+            // (EventHandlers.spec.ts). ctx.db never did: it is given the event's meta outright.
+            const traceId = typeof packet?.meta?.traceId === 'string' ? packet.meta.traceId : randomUUID();
+            const parentId = typeof packet?.meta?.parentId === 'string' ? packet.meta.parentId : undefined;
+            const spanId = randomUUID();
+            const root: IContext<Record<string, unknown>, IMeshMeta> = {
+                id: spanId, correlationID: packet?.id ?? spanId, toolName: name, params: {}, meta: ctx.meta ?? {},
+                callerID: null, nodeID: this.nodeID, traceId, spanId, ...(parentId !== undefined ? { parentId } : {}),
+            };
             // The payload arrives untyped off the emitter (and possibly off the network); its type is
             // the generated EventRegistry entry for this name, which is what the handler declares.
-            void Promise.resolve()
-                .then(() => handler(data as EventRegistry[K], ctx))
+            void ContextStack.run(root, () => Promise.resolve()
+                .then(() => handler(data as EventRegistry[K], ctx)))
                 .catch((err: unknown) => {
                     this.logger.error(`[ServiceBroker] Error in event handler for ${name}:`, err);
                 });
@@ -1271,6 +1297,13 @@ export class ServiceBroker implements IServiceBroker {
     }
 
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
+        // The trace it was raised in, never who raised it: handlers run as the event's tenant
+        // (registerEventHandler), and are part of the same trace.
+        const raisedIn = this.getContext();
+        const trace: EventTrace | undefined = raisedIn?.traceId !== undefined
+            ? { traceId: raisedIn.traceId, ...(raisedIn.spanId !== undefined ? { parentId: raisedIn.spanId } : {}) }
+            : undefined;
+
         const packet: IMeshPacket = {
             id: randomUUID(),
             topic: event as string,
@@ -1280,13 +1313,13 @@ export class ServiceBroker implements IServiceBroker {
             timestamp: Date.now(),
             version: 1,
             priority: 1,
-            meta: { local: true }
+            meta: { local: true, ...(trace !== undefined ? { traceId: trace.traceId, ...(trace.parentId !== undefined ? { parentId: trace.parentId } : {}) } : {}) }
         };
 
         this._triggerLocal(event as string, payload, packet);
 
         if (this.network && !options?.skipNetwork) {
-            this.network.publish(event as string, payload);
+            this.network.publish(event as string, payload, trace);
         }
     }
 

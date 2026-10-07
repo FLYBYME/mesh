@@ -16,6 +16,7 @@ import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js'
 import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import type { IServiceContext } from '../../interfaces/IServiceContext.js';
 import { eventScope, scopeOfOccurrence } from '../../core/EventScope.js';
+import { ContextStack } from '../../core/ContextStack.js';
 
 /**
  * Event handlers after `ServiceModule`: declared (`defineEventHandler`), delivered `'each'` or
@@ -50,8 +51,21 @@ const whereContract = defineContract({
     print: defaultPrint,
 });
 
+const emitForBeta = defineContract({
+    domain: 'evrelay', action: 'emit', description: 'Emits an event that belongs to beta, whoever calls it.',
+    inputSchema: z.object({}), outputSchema: z.object({}),
+    filePath: 'src/__tests__/core/EventHandlers.spec.ts', concurrency: 'on-demand', permissions: [], print: defaultPrint,
+});
+const whoProbe = defineContract({
+    domain: 'evrelay', action: 'who', description: 'Says who it was called as.',
+    inputSchema: z.object({}), outputSchema: z.object({ user: z.string().optional(), tenant: z.string().optional(), traceId: z.string().optional() }),
+    filePath: 'src/__tests__/core/EventHandlers.spec.ts', concurrency: 'on-demand', permissions: [], print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
+        'evrelay.emit': { params: Record<string, never>; returns: Record<string, never> };
+        'evrelay.who': { params: Record<string, never>; returns: { user?: string; tenant?: string; traceId?: string } };
         'evgadget.create': { params: { label: string; tenantId?: string }; returns: { id: string; label: string; tenantId: string } };
         'evgadget.delete': { params: { id: string }; returns: { success: boolean } };
         'evleader.where': { params: Record<string, never>; returns: { nodeID: string } };
@@ -126,6 +140,36 @@ describe('declared event handlers on one node', () => {
         unsubscribe();
 
         expect(seen).toEqual([{ tenant: 'acme', visible: 1 }]);
+    });
+
+    it('a handler\'s calls act for the event\'s tenant, never as whoever emitted it -- and keep the emitter\'s trace', async () => {
+        broker.registerContract(emitForBeta, async (_params, ctx) => {
+            ctx.emit('evgadget.created', { id: 'g1', label: 'for beta', tenantId: 'beta' });
+            return {};
+        });
+        broker.registerContract(whoProbe, async (_params, ctx) => {
+            const user = ctx.meta?.user?.id;
+            const tenant = ctx.meta?.user?.tenant_id ?? ctx.meta?.tenant_id;
+            const traceId = ContextStack.getContext()?.traceId;
+            return { ...(user !== undefined ? { user } : {}), ...(typeof tenant === 'string' ? { tenant } : {}), ...(traceId !== undefined ? { traceId } : {}) };
+        });
+        const heard: Array<{ user?: string; tenant?: string; traceId?: string }> = [];
+        const unsubscribe = broker.registerEventHandler(
+            defineEventHandler({ event: 'evgadget.created', domain: 'evgadget', delivery: 'each', description: 'test' }),
+            async (_payload, ctx) => { heard.push(await ctx.call('evrelay.who', {})); },
+        );
+        // A plain listener too: no ctx of its own, so whatever it calls must not run as alice either.
+        const plain: Array<{ user?: string; tenant?: string; traceId?: string }> = [];
+        const off = broker.on('evgadget.created', () => { void broker.call('evrelay.who', {}).then((who) => plain.push(who)); });
+
+        // Alice, of acme, causes an event that is beta's.
+        await broker.call('evrelay.emit', {}, { meta: { user: { id: 'alice', tenant_id: 'acme' } }, traceId: 'the-emitters-trace' });
+        await settle();
+        unsubscribe();
+        off();
+
+        expect(heard).toEqual([{ tenant: 'beta', traceId: 'the-emitters-trace' }]);
+        expect(plain).toEqual([{ traceId: 'the-emitters-trace' }]);
     });
 
     it('carries the owning tenant on a scoped delete', async () => {

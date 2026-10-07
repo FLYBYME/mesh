@@ -84,7 +84,8 @@ export interface IMeshNetwork {
     readonly registry: IServiceRegistry;
 
     send<T = unknown>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void>;
-    publish<T = unknown>(topic: string, data: T): Promise<void>;
+    /** `trace`: the trace the event was raised in, carried to every node's handlers. */
+    publish<T = unknown>(topic: string, data: T, trace?: EventTrace): Promise<void>;
 
     onMessage<T = unknown>(topic: string, handler: IMeshNetworkSubscriptionHandler<T>): void;
 
@@ -207,6 +208,13 @@ export interface NodeInfo {
     events?: readonly AdvertisedEvent[];
 }
 
+/** The trace an event was raised in: its handlers, on any node, run in it. Never who raised it. */
+export interface EventTrace {
+    readonly traceId: string;
+    /** The span that raised it. */
+    readonly parentId?: string;
+}
+
 /** One event definition as advertised to peers: its name and the payload field that scopes it. */
 export interface AdvertisedEvent {
     readonly name: string;
@@ -242,7 +250,7 @@ export interface IMeshNetworkNode extends IMeshBaseNode {
     registry: IServiceRegistry;
     orchestrator?: IMeshOrchestrator;
     send<T = unknown>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void>;
-    publish<T = unknown>(topic: string, data: T): Promise<void>;
+    publish<T = unknown>(topic: string, data: T, trace?: EventTrace): Promise<void>;
     connectToPeer(nodeID: string, url: string): Promise<void>;
     /** Whether a direct connection to this peer is currently open. */
     isPeerConnected?(nodeID: string): boolean;

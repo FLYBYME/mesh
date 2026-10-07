@@ -1,5 +1,5 @@
 import { EventEmitter } from 'eventemitter3';
-import { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode, LinkChange, PeerLink } from '../interfaces/IMeshNetwork.js';
+import { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode, LinkChange, PeerLink, type EventTrace } from '../interfaces/IMeshNetwork.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
 import { Env } from '../utils/Env.js';
@@ -318,7 +318,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
     }
 
 
-    async publish<T>(topic: string, data: T): Promise<void> {
+    async publish<T>(topic: string, data: T, trace?: EventTrace): Promise<void> {
         try {
             let priority = 1;
             if (topic.startsWith('raft.') || topic.startsWith('kademlia.')) {
@@ -339,7 +339,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
                 priority,
                 meta: {
                     ttl: 5,
-                    path: [this.nodeID]
+                    path: [this.nodeID],
+                    ...(trace !== undefined ? { traceId: trace.traceId, ...(trace.parentId !== undefined ? { parentId: trace.parentId } : {}) } : {}),
                 }
             } as MeshPacket;
 
