@@ -62,4 +62,36 @@ describe('a stale copy of a CRUD collection in the same process', () => {
             expect(described('stalelastzone.get').output).not.toContain('secretKey');
         });
     });
+
+    /**
+     * edge1, 2026-10-08: another part's older copy of certProvider, from before `default` existed,
+     * was imported after certs mounted its own. Every read parsed rows with the old schema and
+     * dropped `default`, so no route ever got its certificate by itself.
+     */
+    describe('a stale copy imported after the owner mounted its collection', () => {
+        const Provider = z.object({ name: z.string(), default: z.boolean().optional() });
+        const OldProvider = z.object({ name: z.string() });
+        const owner = defineCrud('mountedprovider', Provider, { ...common, visibility });
+
+        it('leaves the owner\'s schema in place: the field is still read back', () => {
+            globalCrudRegistry.mount(owner);
+            defineCrud('mountedprovider', OldProvider, { ...common, visibility });
+
+            expect(globalCrudRegistry.get('mountedprovider')).toBe(owner);
+            expect(globalCrudRegistry.get('mountedprovider')?.outputSchema.parse({ name: 'le', default: true, id: 'x', createdAt: new Date(), updatedAt: new Date() }))
+                .toMatchObject({ default: true });
+        });
+
+        it('lets a new version of the owner replace it, as on a reload', () => {
+            const next = defineCrud('mountedprovider', Provider.extend({ shared: z.boolean().optional() }), { ...common, visibility });
+            globalCrudRegistry.mount(next);
+            expect(globalCrudRegistry.get('mountedprovider')).toBe(next);
+        });
+
+        it('still never un-hides a field', () => {
+            defineCrud('mountedzone', ZoneSchema, { ...common, visibility, hidden: ['secretKey'] });
+            globalCrudRegistry.mount(defineCrud('mountedzone', ZoneSchema, { ...common, visibility }));
+            expect(globalCrudRegistry.get('mountedzone')?.hidden).toEqual(['secretKey']);
+        });
+    });
 });

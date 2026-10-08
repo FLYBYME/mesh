@@ -16,7 +16,7 @@ import type { Database } from '../db/Database.js';
 import { CrudExecutor } from '../db/CrudExecutor.js';
 import { globalContractRegistry, type ContractConcurrency, type ToolContract } from '../interfaces/IToolContract.js';
 import { contractHash, declarationFromToolInfo, declarationOf, mergeDeclarations, type ContractDeclaration } from './ContractDeclaration.js';
-import type { AnyCrudContracts } from '../interfaces/ICrudContract.js';
+import { globalCrudRegistry, type AnyCrudContracts } from '../interfaces/ICrudContract.js';
 import type { AnyTimeSeriesContracts } from '../interfaces/ITimeSeriesContract.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
 import type { EventHandlerDefinition } from '../interfaces/IEventHandler.js';
@@ -895,6 +895,10 @@ export class ServiceBroker implements IServiceBroker {
             database?: Database;
         },
     ): void {
+        // The mounting service owns this collection's definition on this node: a copy another part
+        // bundles and imports no longer replaces it (CrudRegistry.mount, as ContractRegistry.mount).
+        globalCrudRegistry.mount(crud);
+
         const keys = ['create', 'find', 'findOne', 'get', 'update', 'delete', 'count', 'replace', 'resolve', 'createMany'] as const;
         for (const key of keys) {
             const contract = crud[key];

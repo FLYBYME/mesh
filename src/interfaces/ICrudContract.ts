@@ -213,24 +213,45 @@ export class CrudRegistry {
      * copy of the contracts they call. On edge1 (2026-09-30) mail-service's copy of dnsZone, from
      * before `hidden: ['dnssecPrivateKey']` existed, was registered after domains-service's own:
      * the api then described the private key as a zone output, and the executor's stripping --
-     * which reads `hidden` from here -- was one load order away from returning it. Last writer
-     * still wins for everything else (the newest definition is usually the right one), but a
-     * re-registration can never un-hide a field.
+     * which reads `hidden` from here -- was one load order away from returning it. So a
+     * re-registration can never un-hide a field; and once the owner has mounted its collection
+     * (`mount`, from broker.registerCrud), an imported copy does not replace it at all -- the rule
+     * ContractRegistry.mount already keeps for contracts. Before a mount, the last registration wins.
      */
     public register(crud: AnyCrudContracts): void {
-        const existing = this.cruds.get(crud.domain);
-        const kept = existing?.hidden ?? [];
-        const declared = crud.hidden ?? [];
-        const dropped = kept.filter((field) => !declared.includes(field));
-        if (existing === undefined || existing === crud || dropped.length === 0) {
-            this.cruds.set(crud.domain, crud);
+        // A collection its owner has mounted (broker.registerCrud) is not replaced by a copy that was
+        // only imported: on edge1 (2026-10-08) another part's older copy of certProvider, from before
+        // `default` existed, replaced certs' own, and every read parsed the row with the old schema
+        // and dropped the field -- automatic certificates never worked. Only hidden fields still merge.
+        if (this.mounted.has(crud.domain)) {
+            const owned = this.cruds.get(crud.domain);
+            if (owned !== undefined && owned !== crud) this.cruds.set(crud.domain, withHidden(owned, crud));
             return;
         }
-        console.warn(
-            `[CrudRegistry] "${crud.domain}" was registered again without hidden field(s) ${dropped.join(', ')}: ` +
-            'they stay hidden. Two copies of this collection disagree -- update the stale one.',
-        );
-        this.cruds.set(crud.domain, Object.freeze({ ...crud, hidden: Object.freeze([...declared, ...dropped]) }));
+
+        this.set(crud);
+    }
+
+    /**
+     * The owner's registration: the service that mounts this collection (broker.registerCrud). It
+     * replaces whatever was there (a new version of the owner, on reload) and from then on wins over
+     * copies other parts bundle and merely import.
+     */
+    public mount(crud: AnyCrudContracts): void {
+        this.set(crud);
+        this.mounted.add(crud.domain);
+    }
+
+    /** Whether the entry for `domain` came from its owner's mount, not from an import. */
+    public isMounted(domain: string): boolean {
+        return this.mounted.has(domain);
+    }
+
+    private readonly mounted = new Set<string>();
+
+    private set(crud: AnyCrudContracts): void {
+        const existing = this.cruds.get(crud.domain);
+        this.cruds.set(crud.domain, existing === undefined || existing === crud ? crud : withHidden(crud, existing));
     }
 
     public has(domain: string): boolean {
@@ -256,6 +277,22 @@ export class CrudRegistry {
     public get size(): number {
         return this.cruds.size;
     }
+}
+
+/**
+ * `kept`, carrying every field `other` declared hidden too: a re-registration can never un-hide one
+ * (mail-service's old dnsZone nearly exposed dnssecPrivateKey this way, 2026-09-30).
+ */
+function withHidden(kept: AnyCrudContracts, other: AnyCrudContracts): AnyCrudContracts {
+    const declared = kept.hidden ?? [];
+    const dropped = (other.hidden ?? []).filter((field) => !declared.includes(field));
+    if (dropped.length === 0) return kept;
+
+    console.warn(
+        `[CrudRegistry] "${kept.domain}" registered without hidden field(s) ${dropped.join(', ')}: ` +
+        'they stay hidden. Two copies of this collection disagree -- update the stale one.',
+    );
+    return Object.freeze({ ...kept, hidden: Object.freeze([...declared, ...dropped]) });
 }
 
 const globalCrudKey = 'mesh.globalCrudRegistry';
