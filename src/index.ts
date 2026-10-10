@@ -35,6 +35,8 @@ export * from './core/ContractDeclaration.js';
 export * from './core/MeshEvents.js';
 export * from './core/ContextStack.js';
 export * from './core/MeshError.js';
+export * from './core/Tenancy.js';
+export * from './utils/isRecord.js';
 export * from './core/BootOrchestrator.js';
 
 // Interceptors

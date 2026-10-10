@@ -8,6 +8,7 @@ import type { CrudRepo, IServiceContext } from '../interfaces/IServiceContext.js
 import { meshMetrics, secondsSince, type RpcOutcome } from '../metrics/MeshMetrics.js';
 import { ContextStack } from '../core/ContextStack.js';
 import { randomUUID } from 'node:crypto';
+import { isRecord } from '../utils/isRecord.js';
 
 /** Mirrors ServiceBroker's own `CrudHook` -- declared here rather than imported to keep this module
  *  free of a circular dependency back on ServiceBroker. */
@@ -18,10 +19,6 @@ interface BaseDoc {
     createdAt?: Date;
     updatedAt?: Date;
     [key: string]: unknown;
-}
-
-function isRecord(obj: unknown): obj is Record<string, unknown> {
-    return typeof obj === 'object' && obj !== null && !Array.isArray(obj);
 }
 
 /**
@@ -48,7 +45,7 @@ function toSnakeCase(str: string): string {
     return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 }
 
-function resolveCallerScope(meta: Record<string, unknown> | undefined, scopeField: string): string | undefined {
+export function resolveCallerScope(meta: Record<string, unknown> | undefined, scopeField: string): string | undefined {
     if (!meta || typeof meta !== 'object') return undefined;
 
     const snakeField = toSnakeCase(scopeField);

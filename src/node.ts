@@ -14,6 +14,9 @@ export * from './db/TimeSeriesRepository.js';
 // Modules (Node-specific)
 export * from './modules/DatabaseModule.js';
 
+// Password hashing (node:crypto scrypt)
+export * from './utils/password.js';
+
 // Loading parts from disk -- what `loadDomain`'s `resolve` option wants when nothing is bundled.
 export * from './loader/handlerResolver.js';
 
@@ -22,3 +25,4 @@ export * from './metrics/nodeMetrics.js';
 
 // Testing Utilities (Node-specific)
 export * from './testing/index.js';
+export * from './testing/TestNode.js';

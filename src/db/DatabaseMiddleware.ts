@@ -13,9 +13,6 @@ interface TSPoint {
     [key: string]: unknown;
 }
 
-function isRecord(obj: unknown): obj is Record<string, unknown> {
-    return typeof obj === 'object' && obj !== null && !Array.isArray(obj);
-}
 
 // The exact set `defineCrud` generates by default (ICrudContract.ts's `actionNames`) -- gated on
 // here, before ever calling CrudExecutor, so an unrecognized action (a domain that renamed one via
