@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
+import { errorMessage } from '../utils/isRecord.js';
 import { ClientError, MeshError, TimeoutError, errorFromWire, isMeshError } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
@@ -457,9 +458,29 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         ContextStack.run(root, () => {
-            this.localEvents.emit(topic, data, packet);
-            this.localEvents.emit('__pattern_event', data, packet);
+            this.deliverLocal(topic, data, packet);
+            this.deliverLocal('__pattern_event', data, packet);
         });
+    }
+
+    /**
+     * Each listener of `topic`, called on its own: one that throws, or returns a promise that
+     * rejects, is logged and the rest still run. Node's own `emit` stops at the first listener that
+     * throws and throws it into whoever emitted -- so every service wrapped its `emit` in a
+     * try/catch, "in case" (10-10). Now `emit` never throws, and nothing needs to guard it.
+     * (eventemitter3; the broker adds no `once` listeners to it.)
+     */
+    private deliverLocal(topic: string, data: unknown, packet: IMeshPacket): void {
+        for (const listener of this.localEvents.listeners(topic)) {
+            try {
+                const result: unknown = listener(data, packet);
+                if (result instanceof Promise) {
+                    result.catch((err: unknown) => this.logger.error(`[ServiceBroker] a listener of "${packet.topic}" failed: ${errorMessage(err)}`));
+                }
+            } catch (err: unknown) {
+                this.logger.error(`[ServiceBroker] a listener of "${packet.topic}" threw: ${errorMessage(err)}`);
+            }
+        }
     }
 
     /**
