@@ -4,7 +4,7 @@ import { MeshApp } from '../../core/MeshApp.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 import { defineContract, defaultPrint } from '../../interfaces/IToolContract.js';
 import { IServiceBroker } from '../../interfaces/IServiceBroker.js';
-import { asTenant, callerName, callerTenant, everyTenant, resolveCallerTenant, resolveCallerUserId } from '../../core/Tenancy.js';
+import { asTenant, callerName, callerTenant, everyTenant, inOrganization, resolveCallerTenant, resolveCallerUserId } from '../../core/Tenancy.js';
 import { errorMessage, isRecord } from '../../utils/isRecord.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
 
@@ -58,6 +58,12 @@ describe('who is calling', () => {
         expect(() => resolveCallerTenant({ meta: {} })).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED', status: 401 }));
         expect(() => resolveCallerUserId({ meta: { tenant_id: 'org' } })).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED', status: 401 }));
         expect(resolveCallerUserId({ meta: { user: { id: 'u7', tenant_id: 'org' } } })).toBe('u7');
+    });
+
+    it('inOrganization: call options for one organization, by the platform or the account named', () => {
+        expect(inOrganization('org-1')).toEqual({ meta: { user: { id: 'platform', tenant_id: 'org-1', organizationId: 'org-1' } } });
+        expect(inOrganization('org-1', 'u9').meta.user.id).toBe('u9');
+        expect(callerTenant(inOrganization('org-1'))).toBe('org-1');
     });
 
     it('names who did it: the account, else the organization', () => {

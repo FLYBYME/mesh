@@ -64,7 +64,16 @@ export function callerName(ctx: Pick<IServiceContext, 'meta'>, tenantId: string)
  * are set, `tenant_id` and `organizationId`, so a collection scoped by either reads the same one.
  */
 export function asTenant<D extends Domain>(ctx: Pick<IServiceContext, 'db'>, domain: D, tenantId: string): CrudRepo<D> {
-    return ctx.db(domain, { user: { id: 'platform', tenant_id: tenantId, organizationId: tenantId } });
+    return ctx.db(domain, inOrganization(tenantId).meta);
+}
+
+/**
+ * Call options that run a `ctx.call` in one organization: by the platform, or by the account named
+ * (a person who placed an order, an agent). asTenant's twin, for another service's tools and
+ * collections, which are reached through the broker, never `ctx.db`.
+ */
+export function inOrganization(tenantId: string, userId = 'platform'): { meta: { user: { id: string; tenant_id: string; organizationId: string } } } {
+    return { meta: { user: { id: userId, tenant_id: tenantId, organizationId: tenantId } } };
 }
 
 /**
