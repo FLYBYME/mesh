@@ -1,4 +1,4 @@
-import { globalEventRegistry } from '../interfaces/IEventContract.js';
+import { globalEventRegistry, type AdvertisedEventEntry } from '../interfaces/IEventContract.js';
 import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 
 /**
@@ -53,6 +53,35 @@ function localCrudScope(name: string): EventScope | undefined {
     };
 }
 
+/** A collection's CRUD event: the collection, when this node registered it. */
+function localCrudOf(name: string): ReturnType<typeof globalCrudRegistry.get> {
+    const dot = name.lastIndexOf('.');
+    if (dot <= 0) return undefined;
+    const action = name.slice(dot + 1);
+    if (action !== 'created' && action !== 'updated' && action !== 'deleted') return undefined;
+
+    return globalCrudRegistry.get(name.slice(0, dot));
+}
+
+/**
+ * The roles a subscriber must hold to receive this event over an api that streams what its
+ * definitions declare: a defined event's own `permissions`, or a collection's CRUD event's -- who may
+ * read the collection (its `find` gate) may watch it change. Then what peers advertise. Undefined:
+ * nothing declares one, and only an api row streams it.
+ */
+export function eventPermissions(name: string): readonly string[] | undefined {
+    const own = globalEventRegistry.get(name);
+    if (own !== undefined) return own.permissions;
+    const crud = localCrudOf(name);
+    if (crud !== undefined) return crud.find.permissions.length > 0 ? crud.find.permissions : undefined;
+    return globalEventRegistry.getAdvertisedPermissions(name);
+}
+
+/** Every event this node knows: its own definitions, its collections' CRUD events, and its peers'. */
+export function knownEvents(): string[] {
+    return [...new Set([...advertisableEvents().map((e) => e.name), ...globalEventRegistry.advertisedNames()])];
+}
+
 export function eventScope(name: string): EventScope | undefined {
     // This node's own definitions first -- a defined event, then a collection's CRUD event -- and
     // only then what a peer that has the definition advertised: a local definition always outranks.
@@ -74,18 +103,19 @@ export function eventScope(name: string): EventScope | undefined {
  * An unscopable collection is still advertised, with no scopedBy: peers then refuse its events
  * *for that reason*, rather than for not knowing them.
  */
-export function advertisableEvents(): Array<{ name: string; scopedBy?: string }> {
+export function advertisableEvents(): AdvertisedEventEntry[] {
     const out = globalEventRegistry.advertisable();
     const defined = new Set(out.map((e) => e.name));
     for (const crud of globalCrudRegistry.values()) {
+        const permissions = crud.find.permissions.length > 0 ? { permissions: crud.find.permissions } : {};
         for (const action of CRUD_ACTIONS) {
             const name = `${crud.domain}.${action}`;
             if (defined.has(name)) continue;
             const scope = localCrudScope(name);
             if (scope === undefined) continue;
-            if (scope === 'global') out.push({ name, scopedBy: 'global' });
-            else if ('scopedBy' in scope) out.push({ name, scopedBy: scope.scopedBy });
-            else out.push({ name });
+            if (scope === 'global') out.push({ name, scopedBy: 'global', ...permissions });
+            else if ('scopedBy' in scope) out.push({ name, scopedBy: scope.scopedBy, ...permissions });
+            else out.push({ name, ...permissions });
         }
     }
     return out;

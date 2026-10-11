@@ -5,7 +5,7 @@ import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import type { IMeshNetworkNode, NodeInfo } from '../../interfaces/IMeshNetwork.js';
 import { defineEvent, EventContractRegistry } from '../../interfaces/IEventContract.js';
-import { advertisableEvents, eventScope, scopeOfOccurrence } from '../../core/EventScope.js';
+import { advertisableEvents, eventPermissions, eventScope, knownEvents, scopeOfOccurrence } from '../../core/EventScope.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 
 /**
@@ -203,5 +203,51 @@ describe('EventContractRegistry.advertise', () => {
         registry.advertiseAll('surf', [{ name: 'old.event', scopedBy: 'tenantId' }]);
         registry.advertiseAll('surf', []);
         expect(registry.getAdvertised('old.event')).toBeUndefined();
+    });
+});
+
+/**
+ * Who may watch an event over an api, declared with it -- so an api that exposes what its
+ * definitions declare streams it with no row (owner, 10-11: 132 event rows by hand).
+ */
+describe('event permissions', () => {
+    defineEvent('permtest.asked', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId', permissions: ['operator'] });
+    defineEvent('permtest.open', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId' });
+    defineCrud('permtest.zone', z.object({ tenantId: z.string() }), {
+        scopedBy: 'tenantId', dependencies: [], filePath: 'x', permissions: ['member'], actionPermissions: { delete: ['operator'] },
+    });
+    defineCrud('permtest.note', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId', dependencies: [], filePath: 'x', permissions: [] });
+
+    it('reads a defined event\'s own, and none from one that declares none', () => {
+        expect(eventPermissions('permtest.asked')).toEqual(['operator']);
+        expect(eventPermissions('permtest.open')).toBeUndefined();
+    });
+
+    it('gives a collection\'s events the gate on reading it', () => {
+        expect(eventPermissions('permtest.zone.created')).toEqual(['member']);
+        expect(eventPermissions('permtest.zone.deleted')).toEqual(['member']);
+        expect(eventPermissions('permtest.note.updated')).toBeUndefined();
+    });
+
+    it('advertises them with presence', () => {
+        const events = advertisableEvents();
+        expect(events).toContainEqual({ name: 'permtest.asked', scopedBy: 'tenantId', permissions: ['operator'] });
+        expect(events).toContainEqual({ name: 'permtest.zone.updated', scopedBy: 'item.tenantId', permissions: ['member'] });
+        expect(events).toContainEqual({ name: 'permtest.note.updated', scopedBy: 'item.tenantId' });
+    });
+
+    it('takes every role any peer names: a peer can add a gate, never remove one', () => {
+        const registry = new EventContractRegistry();
+        registry.advertiseAll('surf', [{ name: 'remote.changed', scopedBy: 'tenantId', permissions: ['member'] }]);
+        registry.advertiseAll('edge1', [{ name: 'remote.changed', scopedBy: 'tenantId', permissions: ['operator'] }]);
+        registry.advertiseAll('ns1', [{ name: 'remote.changed', scopedBy: 'tenantId' }]);
+
+        expect(registry.getAdvertisedPermissions('remote.changed')).toEqual(['member', 'operator']);
+        expect(registry.getAdvertisedPermissions('never.heard')).toBeUndefined();
+        expect(registry.advertisedNames()).toEqual(['remote.changed']);
+    });
+
+    it('knows its own events and its collections\'', () => {
+        expect(knownEvents()).toEqual(expect.arrayContaining(['permtest.asked', 'permtest.zone.created', 'permtest.note.deleted']));
     });
 });

@@ -220,6 +220,8 @@ export interface AdvertisedEvent {
     readonly name: string;
     /** A payload path, `'global'`, or absent -- the definition declares no scope. */
     readonly scopedBy?: string;
+    /** The roles a subscriber needs over an api (`eventPermissions`); absent -- none declared. */
+    readonly permissions?: readonly string[];
 }
 
 export interface IServiceNode {

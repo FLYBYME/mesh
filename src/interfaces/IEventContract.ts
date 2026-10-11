@@ -10,10 +10,24 @@ export interface EventDefinition<T extends z.ZodTypeAny> {
     readonly name: string;
     readonly schema: T;
     readonly scopedBy?: string;
+    readonly permissions?: readonly string[];
 }
 
 export interface EventOptions {
     readonly scopedBy?: string;
+    /**
+     * The roles a subscriber must hold to receive it over an api, as a contract's `permissions`
+     * (e.g. `['member']`): an api that exposes what its contracts declare streams it with no row.
+     * Absent: only an api row streams it.
+     */
+    readonly permissions?: readonly string[];
+}
+
+/** One event as a node advertises it to its peers. */
+export interface AdvertisedEventEntry {
+    readonly name: string;
+    readonly scopedBy?: string;
+    readonly permissions?: readonly string[];
 }
 
 function unwrapZodType(type: z.ZodTypeAny): z.ZodTypeAny {
@@ -107,7 +121,12 @@ export function defineEvent<T extends z.ZodTypeAny>(
             validateEventScope(name, schema, scopedBy);
         }
     }
-    const def: EventDefinition<T> = scopedBy !== undefined ? { name, schema, scopedBy } : { name, schema };
+    const permissions = options?.permissions;
+    const def: EventDefinition<T> = {
+        name, schema,
+        ...(scopedBy !== undefined ? { scopedBy } : {}),
+        ...(permissions !== undefined ? { permissions: [...permissions] } : {}),
+    };
     globalEventRegistry.register(def);
     return def;
 }
@@ -126,7 +145,7 @@ export class EventContractRegistry {
      * Definitions peers advertised (presence), for events no module on this node defines -- kept
      * per advertising node, so a node's latest presence replaces what it said before.
      */
-    private readonly advertised = new Map<string, Map<string, { readonly scopedBy?: string }>>();
+    private readonly advertised = new Map<string, Map<string, { readonly scopedBy?: string; readonly permissions?: readonly string[] }>>();
 
     /**
      * Records one peer's definition of an event, for resolving its scope here without its code.
@@ -139,21 +158,24 @@ export class EventContractRegistry {
      * gateway until the gateway restarted (surfdns-compute's volume events, 2026-09-26).
      * Returns false when another peer's stricter answer still decides.
      */
-    public advertise(name: string, scopedBy: string | undefined, from = 'unknown'): boolean {
+    public advertise(name: string, scopedBy: string | undefined, from = 'unknown', permissions?: readonly string[]): boolean {
         let byNode = this.advertised.get(name);
         if (byNode === undefined) {
             byNode = new Map();
             this.advertised.set(name, byNode);
         }
-        byNode.set(from, scopedBy === undefined ? {} : { scopedBy });
+        byNode.set(from, {
+            ...(scopedBy !== undefined ? { scopedBy } : {}),
+            ...(permissions !== undefined ? { permissions: [...permissions] } : {}),
+        });
         return this.getAdvertised(name)?.scopedBy === scopedBy;
     }
 
     /** Replaces everything `from` advertised with `entries` -- one peer's presence, in full. */
-    public advertiseAll(from: string, entries: ReadonlyArray<{ name: string; scopedBy?: string }>): string[] {
+    public advertiseAll(from: string, entries: ReadonlyArray<AdvertisedEventEntry>): string[] {
         for (const byNode of this.advertised.values()) byNode.delete(from);
         const disagreements: string[] = [];
-        for (const e of entries) if (!this.advertise(e.name, e.scopedBy, from)) disagreements.push(e.name);
+        for (const e of entries) if (!this.advertise(e.name, e.scopedBy, from, e.permissions)) disagreements.push(e.name);
         for (const [name, byNode] of this.advertised) if (byNode.size === 0) this.advertised.delete(name);
         return disagreements;
     }
@@ -169,10 +191,35 @@ export class EventContractRegistry {
         return strictest;
     }
 
+    /**
+     * The roles peers say a subscriber needs: every role any peer named, so a peer can add a gate
+     * but never take one away. Undefined when no peer declares any.
+     */
+    public getAdvertisedPermissions(name: string): readonly string[] | undefined {
+        const byNode = this.advertised.get(name);
+        if (byNode === undefined) return undefined;
+        const roles = new Set<string>();
+        let declared = false;
+        for (const answer of byNode.values()) {
+            if (answer.permissions === undefined) continue;
+            declared = true;
+            for (const role of answer.permissions) roles.add(role);
+        }
+        return declared ? [...roles] : undefined;
+    }
+
+    /** Every event name some peer advertises. */
+    public advertisedNames(): string[] {
+        return [...this.advertised.keys()];
+    }
+
     /** This node's own definitions, as it advertises them to peers. */
-    public advertisable(): Array<{ name: string; scopedBy?: string }> {
-        return [...this.events.values()].map((event) =>
-            event.scopedBy === undefined ? { name: event.name } : { name: event.name, scopedBy: event.scopedBy });
+    public advertisable(): AdvertisedEventEntry[] {
+        return [...this.events.values()].map((event) => ({
+            name: event.name,
+            ...(event.scopedBy !== undefined ? { scopedBy: event.scopedBy } : {}),
+            ...(event.permissions !== undefined ? { permissions: event.permissions } : {}),
+        }));
     }
 
     public register<T extends z.ZodTypeAny>(event: EventDefinition<T>): void {

@@ -1,7 +1,7 @@
 import { IMeshNetworkNode, NodeInfo, IMeshOrchestrator, MeshPacket } from '../interfaces/IMeshNetwork.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import { SafeTimer } from '../utils/SafeTimer.js';
-import { globalEventRegistry } from '../interfaces/IEventContract.js';
+import { globalEventRegistry, type AdvertisedEventEntry } from '../interfaces/IEventContract.js';
 import { advertisableEvents } from './EventScope.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
 
@@ -343,11 +343,17 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     private recordAdvertisedEvents(node: NodeInfo): void {
         const events: unknown = node.events;
         if (!Array.isArray(events)) return;
-        const entries: Array<{ name: string; scopedBy?: string }> = [];
+        const entries: AdvertisedEventEntry[] = [];
         for (const entry of events) {
             if (typeof entry !== 'object' || entry === null || !('name' in entry) || typeof entry.name !== 'string') continue;
             const scopedBy = 'scopedBy' in entry && typeof entry.scopedBy === 'string' ? entry.scopedBy : undefined;
-            entries.push(scopedBy === undefined ? { name: entry.name } : { name: entry.name, scopedBy });
+            const roles: unknown = 'permissions' in entry ? entry.permissions : undefined;
+            const permissions = Array.isArray(roles) && roles.every((r) => typeof r === 'string') ? roles.filter((r): r is string => typeof r === 'string') : undefined;
+            entries.push({
+                name: entry.name,
+                ...(scopedBy !== undefined ? { scopedBy } : {}),
+                ...(permissions !== undefined ? { permissions } : {}),
+            });
         }
         for (const name of globalEventRegistry.advertiseAll(node.nodeID, entries)) {
             const mine = entries.find((e) => e.name === name)?.scopedBy;
