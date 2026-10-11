@@ -94,6 +94,12 @@ export interface IServiceContext<TMeta = IMeshMeta> {
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
     /**
+     * A contract named in data, not code (a queued job, a held call, a workflow step): see
+     * IServiceBroker.callNamed. Carries this context's meta as `call` does.
+     */
+    callNamed(tool: string, params: Record<string, unknown>, options?: ICallOptions<TMeta>): Promise<unknown>;
+
+    /**
      * Forces `tool` to run on whichever node Registry.leaderFor(domain) currently names, instead
      * of wherever the load balancer would otherwise pick. This is what makes a conditional claim
      * (a hold, a queue lease, a concurrency-limited acquire) safe under real multi-node

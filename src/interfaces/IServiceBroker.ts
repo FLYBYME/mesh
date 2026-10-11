@@ -50,6 +50,11 @@ export interface IServiceBroker {
         options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']>;
 
+    /** A contract named in data, not code (a queued job, a held call, an exposure row, a workflow
+     *  step): 404 when no node runs or advertises it; its input checked against the contract's own
+     *  schema. No caller needs a cast for such a call. */
+    callNamed(tool: string, params: Record<string, unknown>, options?: ICallOptions<IMeshMeta>): Promise<unknown>;
+
     /** Forces `tool` onto whichever node `registry.leaderFor(domain)` currently names. See
      *  IServiceContext.callOnLeader for the full reasoning; this is the same thing at the broker
      *  level, for callers that hold a broker directly rather than a tool handler's ctx. */

@@ -513,6 +513,8 @@ export class ServiceBroker implements IServiceBroker {
             ): Promise<IServiceToolRegistry[K]['returns']> =>
                 // On behalf of the event's tenant unless the handler says otherwise.
                 this.call(tool, params, { ...options, meta: { ...meta, ...options?.meta } }),
+            callNamed: (tool: string, params: Record<string, unknown>, options?: ICallOptions<IMeshMeta>): Promise<unknown> =>
+                this.callNamed(tool, params, { ...options, meta: { ...meta, ...options?.meta } }),
             callOnLeader: async <K extends keyof IServiceToolRegistry>(
                 leaderDomain: string,
                 tool: K,
@@ -587,6 +589,8 @@ export class ServiceBroker implements IServiceBroker {
                         const result = await this.call(tool, params, options);
                         return result as IServiceToolRegistry[K]['returns'];
                     },
+                    callNamed: (tool: string, params: Record<string, unknown>, options?: { nodeID?: string; timeout?: number }): Promise<unknown> =>
+                        this.callNamed(tool, params, options),
                     callOnLeader: async <K extends keyof IServiceToolRegistry>(
                         otherDomain: string,
                         tool: K,
@@ -1224,6 +1228,21 @@ export class ServiceBroker implements IServiceBroker {
         options?: ICallOptions<IMeshMeta>
     ): Promise<IServiceToolRegistry[K]['returns']> {
         return this.internalCall(tool as string, params as Record<string, unknown>, options) as Promise<IServiceToolRegistry[K]['returns']>;
+    }
+
+    /**
+     * A contract named in data, not in code -- a queued job, a held call, an api's exposure row, a
+     * workflow step: its key and its input are only known at run time, so neither can be typed. The
+     * name is checked here (404 NOT_FOUND when no node runs or advertises it); the input is checked
+     * by the call itself, against that contract's own input schema. The one place such a call is
+     * made, so no caller casts a string to a tool key or its input to `never` (owner, 10-10).
+     */
+    public async callNamed(tool: string, params: Record<string, unknown>, options?: ICallOptions<IMeshMeta>): Promise<unknown> {
+        if (this.contractDeclaration(tool) === undefined) {
+            throw new MeshError({ message: `No contract "${tool}" on this mesh.`, code: 'NOT_FOUND', status: 404 });
+        }
+
+        return this.internalCall(tool, params, options);
     }
 
     /**
