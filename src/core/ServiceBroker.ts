@@ -575,7 +575,8 @@ export class ServiceBroker implements IServiceBroker {
                 const abort = lifetimeAbort ?? new AbortController();
                 if (lifetimeAbort === undefined) this.inFlightAborts.add(abort);
 
-                const serviceCtx = {
+                // Typed as the interface: a method added there and missing here fails the build.
+                const serviceCtx: IServiceContext = {
                     broker: this,
                     signal: abort.signal,
                     meta: ctx.meta,

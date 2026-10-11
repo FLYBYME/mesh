@@ -176,7 +176,9 @@ export class CrudExecutor {
         // Same shape DatabaseMiddleware has always built for beforeCrud/afterCrud -- `meta` has to be
         // the real caller's meta (see the comment history in DatabaseMiddleware.ts: omitting it here
         // once meant a module's own scoping hook silently saw no caller and returned every row).
-        const serviceCtx = {
+        // Typed as the interface, so a method added there and missing here fails the build (10-10:
+        // callNamed was added to two context builders and missed in this one).
+        const serviceCtx: IServiceContext = {
             broker,
             meta,
             // A CRUD hook is always an on-demand, call-scoped thing, so its signal is too. It is
@@ -191,6 +193,7 @@ export class CrudExecutor {
                 p: IServiceToolRegistry[K]['params'],
                 o?: { nodeID?: string; timeout?: number }
             ) => broker.call(a, p, o),
+            callNamed: (tool: string, params: Record<string, unknown>, o?: { nodeID?: string; timeout?: number }) => broker.callNamed(tool, params, o),
             callOnLeader: <K extends keyof IServiceToolRegistry>(
                 leaderDomain: string,
                 a: K,
