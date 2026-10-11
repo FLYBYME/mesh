@@ -77,6 +77,26 @@ function organizationOf(meta: Record<string, unknown> | undefined): { organizati
     return typeof organization === 'string' && organization !== '' ? { organization } : {};
 }
 
+/**
+ * What kind of zod schema this is, by its own `typeName` -- true of a schema from any copy of zod,
+ * where `instanceof` is true only of this copy's (see `ServiceBroker.partialised`).
+ */
+function isZodArray(schema: z.ZodTypeAny): schema is z.ZodArray<z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodArray;
+}
+
+function isZodNullable(schema: z.ZodTypeAny): schema is z.ZodNullable<z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodNullable;
+}
+
+function isZodOptional(schema: z.ZodTypeAny): schema is z.ZodOptional<z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional;
+}
+
+function isZodObject(schema: z.ZodTypeAny): schema is z.AnyZodObject {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodObject;
+}
+
 /** One side of a CRUD hook -- the shape `registerCrudHook` and `defineCrud`'s `hooks` both take. */
 export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
@@ -132,18 +152,24 @@ export class ServiceBroker implements IServiceBroker {
      * actually uses: `z.array(...)` for `find`, `.nullable()` for `find_one` and `get`, and a bare
      * object for the rest. Anything else — `count`'s number, a literal — is returned unchanged,
      * because there is nothing in it a projection could have omitted.
+     *
+     * Recognised by `typeName`, not `instanceof`, and rebuilt with the schema's own methods, not this
+     * file's `z`: a service part bundles its own zod (only @flybyme/mesh is external), so its schemas
+     * are no instance of mesh's classes. `instanceof` said no to every one, the full schema parsed a
+     * projected row, and every `find` with `fields` on a part's collection was a 500
+     * (`route.find`, found 10-11).
      */
     private static partialised(schema: z.ZodTypeAny): z.ZodTypeAny {
-        if (schema instanceof z.ZodArray) {
-            return z.array(ServiceBroker.partialised(schema.element as z.ZodTypeAny));
+        if (isZodArray(schema)) {
+            return ServiceBroker.partialised(schema.element).array();
         }
-        if (schema instanceof z.ZodNullable) {
-            return ServiceBroker.partialised(schema.unwrap() as z.ZodTypeAny).nullable();
+        if (isZodNullable(schema)) {
+            return ServiceBroker.partialised(schema.unwrap()).nullable();
         }
-        if (schema instanceof z.ZodOptional) {
-            return ServiceBroker.partialised(schema.unwrap() as z.ZodTypeAny).optional();
+        if (isZodOptional(schema)) {
+            return ServiceBroker.partialised(schema.unwrap()).optional();
         }
-        if (schema instanceof z.ZodObject) {
+        if (isZodObject(schema)) {
             return schema.deepPartial();
         }
         return schema;

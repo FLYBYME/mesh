@@ -110,6 +110,23 @@ describe('a crud projection is still filtered by the output schema', () => {
         expect(applyReturns(z.number(), true, 7)).toBe(7);
     });
 
+    it('allows a projection of a schema made by another copy of zod, as a service part bundles its own', () => {
+        // A second copy of zod, as a part's bundle carries: its classes are not these. Every `find`
+        // with `fields` on a part's collection was a 500 (route.find, 10-11).
+        let other: typeof import('zod') | undefined;
+        jest.isolateModules(() => {
+            other = require('zod');
+        });
+        if (other === undefined) throw new Error('no second zod');
+
+        const theirs = other.z.array(other.z.object({ id: other.z.string(), email: other.z.string(), displayName: other.z.string() }));
+        expect(theirs instanceof z.ZodArray).toBe(false);
+
+        const out = applyReturns(theirs, true, [{ email: 'operator@node.invalid', passwordHash: 'secret' }]);
+        expect(out).toEqual([{ email: 'operator@node.invalid' }]);
+        expect(applyReturns(theirs.element.nullable(), true, { email: 'a@b.c' })).toEqual({ email: 'a@b.c' });
+    });
+
     /**
      * The tests above exercise `applyReturns` directly, which proves the helper is right and proves
      * nothing about whether the broker uses it. The original defect was two inline copies of this
