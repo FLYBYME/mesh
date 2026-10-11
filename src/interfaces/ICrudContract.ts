@@ -500,12 +500,16 @@ export function defineCrud<
          * REQUIRED. Intrinsic required-role baseline -- see `defineContract`'s `permissions`. Applied
          * uniformly to all ten generated contracts; pass `[]` for none.
          *
-         * Per-action granularity (matching `visibility`/`destructive`, since `find` and `delete` on
-         * the same collection are very different blast radii) is a real, still-open question -- see
-         * `docs/CONTRACT_DRIVEN_PLACEMENT.md`. One collection-wide value here is the simpler starting
-         * point, not a final answer.
+         * An action that needs a different gate names it in `actionPermissions`.
          */
         permissions: readonly string[],
+        /**
+         * Per-action gates over `permissions`, keyed like `visibility`: e.g. a zone any member may
+         * read but only an operator may write, `permissions: ['member'], actionPermissions: { create:
+         * ['operator'], update: ['operator'], delete: ['operator'] }`. An api gate can only add to a
+         * contract's, never loosen it, so a collection read and written by different roles needs this.
+         */
+        actionPermissions?: Partial<Record<CrudActionKey, readonly string[]>>,
     }
 ): CrudContracts<
     TBase,
@@ -578,6 +582,12 @@ export function defineCrud<
         create: 'internal', createMany: 'internal', update: 'internal',
         replace: 'internal', delete: 'internal',
         ...options.visibility
+    };
+
+    const permissionsOf: Record<CrudActionKey, readonly string[]> = {
+        find: permissions, findOne: permissions, count: permissions, get: permissions, resolve: permissions,
+        create: permissions, createMany: permissions, update: permissions, replace: permissions, delete: permissions,
+        ...options.actionPermissions
     };
 
     const actionNames = {
@@ -662,7 +672,7 @@ export function defineCrud<
         timeout: timeouts.find,
         visibility: visibility.find,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.find,
         hooks: hooks?.find,
         print: defaultPrint
     });
@@ -679,7 +689,7 @@ export function defineCrud<
         timeout: timeouts.findOne,
         visibility: visibility.findOne,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.findOne,
         hooks: hooks?.findOne,
         print: defaultPrint
     });
@@ -696,7 +706,7 @@ export function defineCrud<
         timeout: timeouts.count,
         visibility: visibility.count,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.count,
         hooks: hooks?.count,
         print: defaultPrint
     });
@@ -713,7 +723,7 @@ export function defineCrud<
         timeout: timeouts.get,
         visibility: visibility.get,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.get,
         hooks: hooks?.get,
         print: defaultPrint
     });
@@ -730,7 +740,7 @@ export function defineCrud<
         timeout: timeouts.resolve,
         visibility: visibility.resolve,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.resolve,
         hooks: hooks?.resolve,
         print: defaultPrint
     });
@@ -747,7 +757,7 @@ export function defineCrud<
         timeout: timeouts.create,
         visibility: visibility.create,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.create,
         hooks: hooks?.create,
         print: defaultPrint
     });
@@ -764,7 +774,7 @@ export function defineCrud<
         timeout: timeouts.createMany,
         visibility: visibility.createMany,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.createMany,
         hooks: hooks?.createMany,
         print: defaultPrint
     });
@@ -781,7 +791,7 @@ export function defineCrud<
         timeout: timeouts.update,
         visibility: visibility.update,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.update,
         hooks: hooks?.update,
         print: defaultPrint
     });
@@ -798,7 +808,7 @@ export function defineCrud<
         timeout: timeouts.replace,
         visibility: visibility.replace,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.replace,
         hooks: hooks?.replace,
         print: defaultPrint
     });
@@ -815,7 +825,7 @@ export function defineCrud<
         timeout: timeouts.delete,
         visibility: visibility.delete,
         dependencies,
-        filePath, concurrency: 'on-demand', permissions,
+        filePath, concurrency: 'on-demand', permissions: permissionsOf.delete,
         hooks: hooks?.delete,
         print: defaultPrint
     });

@@ -92,5 +92,19 @@ describe('ICrudContract', () => {
             expect(crud.create.timeout).toBe(5000);
             expect(crud.find.timeout).toBeUndefined();
         });
+
+        it('gates each action by permissions, or by actionPermissions where it names one', () => {
+            const crud = defineCrud('zone', TestBaseSchema, {
+                dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts',
+                permissions: ['member'],
+                actionPermissions: { create: ['operator'], delete: ['operator'] },
+            });
+
+            expect(crud.find.permissions).toEqual(['member']);
+            expect(crud.get.permissions).toEqual(['member']);
+            expect(crud.update.permissions).toEqual(['member']);
+            expect(crud.create.permissions).toEqual(['operator']);
+            expect(crud.delete.permissions).toEqual(['operator']);
+        });
     });
 });
