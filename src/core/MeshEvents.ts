@@ -17,7 +17,8 @@ export const meshLinkChangedSchema = z.object({
     at: z.number().describe('When it happened on the reporting node (epoch ms)'),
 });
 
-export const meshLinkChangedEvent = defineEvent('mesh.link.changed', meshLinkChangedSchema, { scopedBy: 'global' });
+// The fleet's own wiring: an operator's to watch.
+export const meshLinkChangedEvent = defineEvent('mesh.link.changed', meshLinkChangedSchema, { scopedBy: 'global', permissions: ['operator'] });
 
 export type MeshLinkChanged = z.infer<typeof meshLinkChangedSchema>;
 
