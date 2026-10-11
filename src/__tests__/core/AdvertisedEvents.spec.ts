@@ -210,6 +210,10 @@ describe('EventContractRegistry.advertise', () => {
  * Who may watch an event over an api, declared with it -- so an api that exposes what its
  * definitions declare streams it with no row (owner, 10-11: 132 event rows by hand).
  */
+const peerInfo = (nodeID: string): NodeInfo => ({
+    nodeID, type: 'node', namespace: 'default', addresses: ['ws://127.0.0.1:6597'], available: true, timestamp: Date.now(), nodeSeq: 1, services: [],
+} as NodeInfo);
+
 describe('event permissions', () => {
     defineEvent('permtest.asked', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId', permissions: ['operator'] });
     defineEvent('permtest.open', z.object({ tenantId: z.string() }), { scopedBy: 'tenantId' });
@@ -245,6 +249,20 @@ describe('event permissions', () => {
         expect(registry.getAdvertisedPermissions('remote.changed')).toEqual(['member', 'operator']);
         expect(registry.getAdvertisedPermissions('never.heard')).toBeUndefined();
         expect(registry.advertisedNames()).toEqual(['remote.changed']);
+    });
+
+    it('adds a gate a peer advertises to an old local copy that has none', async () => {
+        const logger = new Logger(LogLevel.ERROR);
+        const registry = new PlacementRegistry(logger, { localNodeID: 'gateway' });
+        const node = { nodeID: 'gateway', namespace: 'default', logger, registry, send: async () => undefined, publish: async () => undefined } as unknown as IMeshNetworkNode;
+        const orchestrator = new MeshOrchestrator(node);
+        // The local copy, bundled before the gate existed.
+        expect(eventPermissions('permtest.open')).toBeUndefined();
+
+        await orchestrator.handlePresence({ node: { ...peerInfo('surf'), events: [{ name: 'permtest.open', scopedBy: 'tenantId', permissions: ['operator'] }] } });
+
+        expect(eventPermissions('permtest.open')).toEqual(['operator']);
+        await registry.stop();
     });
 
     it('knows its own events and its collections\'', () => {

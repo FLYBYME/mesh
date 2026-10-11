@@ -70,11 +70,18 @@ function localCrudOf(name: string): ReturnType<typeof globalCrudRegistry.get> {
  * nothing declares one, and only an api row streams it.
  */
 export function eventPermissions(name: string): readonly string[] | undefined {
+    // This node's definition and its peers' together: a gate a peer advertises adds to a local
+    // copy's, never the other way. A local copy can be an old one another part bundled -- on edge1
+    // (10-11) imported copies of alert.changed and email.message_received predated their gates, and
+    // hid them from the api.
     const own = globalEventRegistry.get(name);
-    if (own !== undefined) return own.permissions;
-    const crud = localCrudOf(name);
-    if (crud !== undefined) return crud.find.permissions.length > 0 ? crud.find.permissions : undefined;
-    return globalEventRegistry.getAdvertisedPermissions(name);
+    const crud = own === undefined ? localCrudOf(name) : undefined;
+    const local = own !== undefined ? own.permissions : crud !== undefined && crud.find.permissions.length > 0 ? crud.find.permissions : undefined;
+    const advertised = globalEventRegistry.getAdvertisedPermissions(name);
+    if (local === undefined) return advertised;
+    if (advertised === undefined) return local;
+
+    return [...new Set([...local, ...advertised])];
 }
 
 /** Every event this node knows: its own definitions, its collections' CRUD events, and its peers'. */
