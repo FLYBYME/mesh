@@ -7,6 +7,23 @@ import { globalCrudRegistry, type NormalizedUniqueKey, type IServiceCollectionRe
 import { MeshError } from '../core/MeshError.js';
 
 /**
+ * The database a connection string names, or undefined when it names none. Read from the path after
+ * the host list, by hand: `new URL()` throws on a replica set's several hosts (`h1:27017,h2:27017`),
+ * and the fallback silently put every node given a seed list on an empty "mesh" database
+ * (one-host.ca, 2026-10-12). A conforming URI percent-encodes "/" and "@" in its credentials, so the
+ * first "/" after the scheme ends the hosts.
+ */
+export function databaseNameOf(uri: string): string | undefined {
+    const rest = uri.replace(/^mongodb(\+srv)?:\/\//, '');
+    const slash = rest.indexOf('/');
+    if (slash === -1) return undefined;
+
+    const name = rest.slice(slash + 1).split('?')[0] ?? '';
+
+    return name === '' ? undefined : decodeURIComponent(name);
+}
+
+/**
  * Database: The dynamic repository manager for the Mesh Engine.
  */
 export class Database {
@@ -22,12 +39,7 @@ export class Database {
         uri: string = process.env.MONGODB_URI || 'mongodb://localhost:27017',
         private dbName: string = 'mesh'
     ) {
-        try {
-            const url = new URL(uri);
-            this.dbName = url.pathname.substring(1) || dbName;
-        } catch (e) {
-            // Keep default dbName if URL parsing fails
-        }
+        this.dbName = databaseNameOf(uri) ?? dbName;
         // Without this, the driver's own default BSON-encodes an `undefined` property as `null`
         // rather than omitting it -- every `.optional()` schema in this codebase means "absent",
         // never "null" (nothing here uses `.nullable()`), so a field left unset at create time gets
