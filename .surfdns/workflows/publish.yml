@@ -1,4 +1,6 @@
-# A vX.Y.Z tag publishes @flybyme/mesh@X.Y.Z to registry.surfdns.net (design/workflows.md).
+# A vX.Y.Z tag publishes @flybyme/mesh@X.Y.Z to the platform's registry (design/workflows.md).
+# npm-publish checks the tag is the version, and publishes with the job's own token: the registry
+# records which repository, commit and run each version came from.
 # Tests are not run here yet: some need a MongoDB the job does not have.
 name: publish
 on:
@@ -10,13 +12,7 @@ jobs:
     image: node:22
     memory: 2Gi
     steps:
-      - name: the tag is the version
-        run: test "v$(node -p 'require("./package.json").version')" = "${{ git.tag }}"
       - name: install and build
         run: npm ci
       - name: publish
-        run: |
-          echo "//registry.surfdns.net/:_authToken=${REGISTRY_TOKEN}" > "$HOME/.npmrc"
-          npm publish
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        uses: npm-publish
