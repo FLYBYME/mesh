@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 // ─── Event Definition ────────────────────────────────────────────────────────
 
@@ -28,6 +29,22 @@ export interface AdvertisedEventEntry {
     readonly name: string;
     readonly scopedBy?: string;
     readonly permissions?: readonly string[];
+    /** Its payload as JSON Schema, so a node without the definition (an api gateway) can describe it. */
+    readonly payload?: Record<string, unknown>;
+}
+
+const payloadJson = new WeakMap<z.ZodTypeAny, Record<string, unknown>>();
+
+/** A definition's payload as JSON Schema, made once per schema (every presence repeats it). */
+export function payloadSchemaOf(schema: z.ZodTypeAny): Record<string, unknown> {
+    const known = payloadJson.get(schema);
+    if (known !== undefined) return known;
+
+    const out: unknown = zodToJsonSchema(schema);
+    const json = typeof out === 'object' && out !== null && !Array.isArray(out) ? Object.fromEntries(Object.entries(out)) : {};
+    payloadJson.set(schema, json);
+
+    return json;
 }
 
 function unwrapZodType(type: z.ZodTypeAny): z.ZodTypeAny {
@@ -145,7 +162,7 @@ export class EventContractRegistry {
      * Definitions peers advertised (presence), for events no module on this node defines -- kept
      * per advertising node, so a node's latest presence replaces what it said before.
      */
-    private readonly advertised = new Map<string, Map<string, { readonly scopedBy?: string; readonly permissions?: readonly string[] }>>();
+    private readonly advertised = new Map<string, Map<string, { readonly scopedBy?: string; readonly permissions?: readonly string[]; readonly payload?: Record<string, unknown> }>>();
 
     /**
      * Records one peer's definition of an event, for resolving its scope here without its code.
@@ -158,7 +175,7 @@ export class EventContractRegistry {
      * gateway until the gateway restarted (surfdns-compute's volume events, 2026-09-26).
      * Returns false when another peer's stricter answer still decides.
      */
-    public advertise(name: string, scopedBy: string | undefined, from = 'unknown', permissions?: readonly string[]): boolean {
+    public advertise(name: string, scopedBy: string | undefined, from = 'unknown', permissions?: readonly string[], payload?: Record<string, unknown>): boolean {
         let byNode = this.advertised.get(name);
         if (byNode === undefined) {
             byNode = new Map();
@@ -167,6 +184,7 @@ export class EventContractRegistry {
         byNode.set(from, {
             ...(scopedBy !== undefined ? { scopedBy } : {}),
             ...(permissions !== undefined ? { permissions: [...permissions] } : {}),
+            ...(payload !== undefined ? { payload } : {}),
         });
         return this.getAdvertised(name)?.scopedBy === scopedBy;
     }
@@ -175,7 +193,7 @@ export class EventContractRegistry {
     public advertiseAll(from: string, entries: ReadonlyArray<AdvertisedEventEntry>): string[] {
         for (const byNode of this.advertised.values()) byNode.delete(from);
         const disagreements: string[] = [];
-        for (const e of entries) if (!this.advertise(e.name, e.scopedBy, from, e.permissions)) disagreements.push(e.name);
+        for (const e of entries) if (!this.advertise(e.name, e.scopedBy, from, e.permissions, e.payload)) disagreements.push(e.name);
         for (const [name, byNode] of this.advertised) if (byNode.size === 0) this.advertised.delete(name);
         return disagreements;
     }
@@ -208,6 +226,15 @@ export class EventContractRegistry {
         return declared ? [...roles] : undefined;
     }
 
+    /** The payload schema a peer advertised, from the first that sent one. */
+    public getAdvertisedPayload(name: string): Record<string, unknown> | undefined {
+        const byNode = this.advertised.get(name);
+        if (byNode === undefined) return undefined;
+        for (const answer of byNode.values()) if (answer.payload !== undefined) return answer.payload;
+
+        return undefined;
+    }
+
     /** Every event name some peer advertises. */
     public advertisedNames(): string[] {
         return [...this.advertised.keys()];
@@ -219,6 +246,7 @@ export class EventContractRegistry {
             name: event.name,
             ...(event.scopedBy !== undefined ? { scopedBy: event.scopedBy } : {}),
             ...(event.permissions !== undefined ? { permissions: event.permissions } : {}),
+            payload: payloadSchemaOf(event.schema),
         }));
     }
 

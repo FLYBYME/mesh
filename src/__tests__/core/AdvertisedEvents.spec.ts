@@ -5,7 +5,7 @@ import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
 import type { IMeshNetworkNode, NodeInfo } from '../../interfaces/IMeshNetwork.js';
 import { defineEvent, EventContractRegistry } from '../../interfaces/IEventContract.js';
-import { advertisableEvents, eventPermissions, eventScope, knownEvents, scopeOfOccurrence } from '../../core/EventScope.js';
+import { advertisableEvents, eventPayloadSchema, eventPermissions, eventScope, knownEvents, scopeOfOccurrence } from '../../core/EventScope.js';
 import { defineCrud } from '../../interfaces/ICrudContract.js';
 
 /**
@@ -63,7 +63,21 @@ describe('advertised event definitions', () => {
         await orchestrator.broadcastPresence();
 
         const presence = sent.find((s) => s.topic === '$node.presence')?.data as { node: NodeInfo } | undefined;
-        expect(presence?.node.events).toContainEqual({ name: 'advtest.local', scopedBy: 'tenantId' });
+        expect(presence?.node.events).toContainEqual({
+            name: 'advtest.local',
+            scopedBy: 'tenantId',
+            payload: expect.objectContaining({ type: 'object', properties: { tenantId: { type: 'string' } }, required: ['tenantId'] }),
+        });
+    });
+
+    it('describes an event only a peer defines by the payload schema that peer sent', async () => {
+        expect(eventPayloadSchema('advtest.remotepayload')).toBeUndefined();
+        const payload = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
+
+        await orchestrator.handlePresence({ node: peer([{ name: 'advtest.remotepayload', scopedBy: 'global', payload }]) });
+
+        expect(eventPayloadSchema('advtest.remotepayload')).toEqual(payload);
+        expect(eventPayloadSchema('advtest.local')).toEqual(expect.objectContaining({ properties: { tenantId: { type: 'string' } } }));
     });
 
     it('resolves the scope of an event only a peer defines, from that peer\'s presence', async () => {
@@ -235,7 +249,7 @@ describe('event permissions', () => {
 
     it('advertises them with presence', () => {
         const events = advertisableEvents();
-        expect(events).toContainEqual({ name: 'permtest.asked', scopedBy: 'tenantId', permissions: ['operator'] });
+        expect(events).toContainEqual(expect.objectContaining({ name: 'permtest.asked', scopedBy: 'tenantId', permissions: ['operator'] }));
         expect(events).toContainEqual({ name: 'permtest.zone.updated', scopedBy: 'item.tenantId', permissions: ['member'] });
         expect(events).toContainEqual({ name: 'permtest.note.updated', scopedBy: 'item.tenantId' });
     });

@@ -1,4 +1,4 @@
-import { globalEventRegistry, type AdvertisedEventEntry } from '../interfaces/IEventContract.js';
+import { globalEventRegistry, payloadSchemaOf, type AdvertisedEventEntry } from '../interfaces/IEventContract.js';
 import { globalCrudRegistry } from '../interfaces/ICrudContract.js';
 
 /**
@@ -82,6 +82,18 @@ export function eventPermissions(name: string): readonly string[] | undefined {
     if (advertised === undefined) return local;
 
     return [...new Set([...local, ...advertised])];
+}
+
+/**
+ * A defined event's payload as JSON Schema: this node's definition, else what a peer that has it
+ * advertised. Undefined for a collection's CRUD event (its payload is the collection's row, which
+ * its own contracts describe) and for an event nothing here or on a peer defines.
+ */
+export function eventPayloadSchema(name: string): Record<string, unknown> | undefined {
+    const own = globalEventRegistry.get(name);
+    if (own !== undefined) return payloadSchemaOf(own.schema);
+
+    return globalEventRegistry.getAdvertisedPayload(name);
 }
 
 /** Every event this node knows: its own definitions, its collections' CRUD events, and its peers'. */

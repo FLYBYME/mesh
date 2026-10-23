@@ -349,10 +349,13 @@ export class MeshOrchestrator implements IMeshOrchestrator {
             const scopedBy = 'scopedBy' in entry && typeof entry.scopedBy === 'string' ? entry.scopedBy : undefined;
             const roles: unknown = 'permissions' in entry ? entry.permissions : undefined;
             const permissions = Array.isArray(roles) && roles.every((r) => typeof r === 'string') ? roles.filter((r): r is string => typeof r === 'string') : undefined;
+            const sent: unknown = 'payload' in entry ? entry.payload : undefined;
+            const payload = typeof sent === 'object' && sent !== null && !Array.isArray(sent) ? Object.fromEntries(Object.entries(sent)) : undefined;
             entries.push({
                 name: entry.name,
                 ...(scopedBy !== undefined ? { scopedBy } : {}),
                 ...(permissions !== undefined ? { permissions } : {}),
+                ...(payload !== undefined ? { payload } : {}),
             });
         }
         for (const name of globalEventRegistry.advertiseAll(node.nodeID, entries)) {
