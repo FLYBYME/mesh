@@ -117,6 +117,25 @@ export function isMeshError(err: unknown): err is MeshError {
 }
 
 /**
+ * What a thrown value says, in words: an Error's message, a plain object's own `message` (some
+ * libraries reject with `{ message, ... }`), else the object as JSON -- never "[object Object]",
+ * which is what `String(err)` made of those and what a failed deployment then showed (10-22).
+ */
+export function thrownMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (typeof err !== 'object' || err === null) return String(err);
+
+    const message: unknown = Reflect.get(err, 'message');
+    if (typeof message === 'string' && message !== '') return message;
+
+    try {
+        return JSON.stringify(err).slice(0, 500);
+    } catch {
+        return Object.prototype.toString.call(err);
+    }
+}
+
+/**
  * Rebuilds the error a remote handler threw, from whatever crossed the wire.
  *
  * Three places used to do this, each reading a different field and all of them producing a plain

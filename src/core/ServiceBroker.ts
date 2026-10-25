@@ -28,7 +28,7 @@ import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
 import { errorMessage } from '../utils/isRecord.js';
-import { ClientError, MeshError, TimeoutError, errorFromWire, isMeshError } from './MeshError.js';
+import { ClientError, MeshError, TimeoutError, errorFromWire, isMeshError, thrownMessage } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /**
@@ -367,7 +367,7 @@ export class ServiceBroker implements IServiceBroker {
                         meta: { correlationID: packet.id }
                     }).catch(err => this.logger.error(`[ServiceBroker] Failed to send RESPONSE: ${err}`));
                 }).catch(err => {
-                    const message = err instanceof Error ? err.message : String(err);
+                    const message = thrownMessage(err);
                     // A MeshError's `code` and `status` travel too. Sending only the message meant
                     // every meaningful status collapsed to 500 the moment a handler ran on another
                     // node: the same call answered 404 locally and 500 remotely. Placement makes
@@ -1709,7 +1709,7 @@ export class ServiceBroker implements IServiceBroker {
                 return await this.executeChain(ctx as IContext<Record<string, unknown>, Record<string, unknown>>, chain, finalHandler);
 
             } catch (err) {
-                ctx.error = err instanceof Error ? err : new Error(String(err));
+                ctx.error = err instanceof Error ? err : new Error(thrownMessage(err));
                 throw ctx.error;
             }
         });

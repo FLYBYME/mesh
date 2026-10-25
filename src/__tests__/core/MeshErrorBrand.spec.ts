@@ -1,4 +1,4 @@
-import { MeshError, ClientError, ResiliencyError, isMeshError, errorFromWire, MESH_ERROR_BRAND } from '../../core/MeshError.js';
+import { MeshError, ClientError, ResiliencyError, isMeshError, errorFromWire, thrownMessage, MESH_ERROR_BRAND } from '../../core/MeshError.js';
 
 /**
  * `instanceof MeshError` is not reliable, and the failure is silent.
@@ -97,6 +97,16 @@ describe('MeshError identity across module copies', () => {
         it('falls back to a usable message rather than an empty one', () => {
             expect(errorFromWire({}).message).toBe('Remote RPC Error');
             expect(errorFromWire(undefined, 'RPC Error').message).toBe('RPC Error');
+        });
+    });
+
+    describe('thrownMessage', () => {
+        it('says what a thrown plain object says, never "[object Object]" (a failed deployment showed that, 10-22)', () => {
+            expect(thrownMessage(new Error('boom'))).toBe('boom');
+            expect(thrownMessage({ message: 'volume not attached', code: 'X' })).toBe('volume not attached');
+            expect(thrownMessage({ reason: 'Forbidden' })).toBe('{"reason":"Forbidden"}');
+            expect(thrownMessage('plain')).toBe('plain');
+            expect(thrownMessage(undefined)).toBe('undefined');
         });
     });
 });
