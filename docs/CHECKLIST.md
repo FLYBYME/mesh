@@ -18,6 +18,22 @@ Five do the work: zod, mongodb, ws, eventemitter3, zod-to-json-schema.
       used by two test files only; the rest are build-time. Today every consumer installs them.
 - [ ] **One test runner.** Mesh's own tests are jest; every other repo is vitest.
 
+## Time series CRUD out
+
+`defineTimeSeries` (MongoDB time series collections behind contracts) is used by nothing outside
+mesh: no surfdns service defines one (checked 10-26; the console's `TimeSeriesChart` is
+mesh-web-charts, unrelated). Metrics belong to the telemetry sink, not to a CRUD kind.
+
+- [ ] **mesh:** `interfaces/ITimeSeriesContract.ts` (164 lines), `db/TimeSeriesRepository.ts` (161),
+      `Database.tsRepo`, its paths in `DatabaseMiddleware.ts`, `ServiceBroker.ts`,
+      `IServiceBroker.ts` and `IToolContract.ts`, the exports in `interfaces/index.ts` and `node.ts`,
+      the demo's use (`examples/demo/demo.contract.ts`, `demo.service.ts`), `generated/api.ts`, and
+      `__tests__/TimeSeries.spec.ts`.
+- [ ] **mesh-serve:** the `defineTimeSeries` parsers in `cli/core/GenerateCommand.ts` (~414) and
+      `cli/core/discoverPartContracts.ts` (~106).
+- [ ] **docs:** `TIME_SERIES_CONTRACTS.md` removed; `DATABASE_INTEGRATION.md` (`tsRepo`) and
+      `MIGRATION.md` (`defineTimeSeries` requirements) updated.
+
 ## Words: mesh says tenant
 
 - [ ] **"organization" is mesh-serve's word, not mesh's.** In mesh core: the log field
