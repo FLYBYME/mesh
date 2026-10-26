@@ -4,6 +4,35 @@ Mesh is the framework (mesh, mesh-serve, mesh-web, mesh-web-kit), public one day
 of SurfDNS. This is its own list, from the owner's questions of 2026-10-26. SurfDNS's work that
 builds on it (streams.surfdns.net, the dashboards) is in company/architecture/design/streams-site.md.
 
+## First: what the 10-26 reviews found (reports in company/ai/reviews/*-claude-2026-10-26.md)
+
+Each checked against the code before listing.
+
+- [ ] **mesh: one bad WebSocket frame crashes a node.** Inbound sockets have no `error` listener
+      (`transports/node/WSTransport.ts:331-352`; outbound has one, `:836`); `ws` emits `error` on a
+      frame it rejects, before the mesh key is checked. Anything reaching the mesh port kills the
+      process. Add the listener and a `maxPayload`.
+- [ ] **mesh-serve: an api token is not limited to its organization or roles.** `lookUpCaller`
+      drops the token's `organizationId` (`api/gateway.ts:692-698`) and gates check the account's
+      roles: a token acts with all its account's power, in every organization.
+- [ ] **mesh-web: an effect that throws stops the rest of its update.** `flushPendingEffects`
+      (`reactivity/context.ts:119-123`) clears the batch before running it and has no try per
+      effect: one throw drops every effect after it (a duplicate key in `each()` freezes a list).
+- [ ] **mesh-serve: an organization admin can delete the owner's membership** (raw
+      `identity.membership.delete` public to admins, no hook) -- left with no owner.
+- [ ] **mesh-serve: no secret is `hidden`** (`passwordHash`, token hashes); **mesh: update and
+      replace events carry hidden fields** (the patch is not stripped).
+- [ ] **mesh-serve: suspending an account or changing its password ends no session or token.**
+- [ ] **mesh-web: a live list can show the previous user's or organization's rows** after a switch
+      (events held during a fetch are not cleared).
+- [ ] The rest of each report: registry records any peer can rewrite and request meta trusted as
+      `ctx.meta`; dead-node calls wait the full timeout and timed-out calls never abort; `'one'`
+      events on no node or every node; CRUD filters on hidden fields and `limit: 0`; stacks to remote
+      callers; session roles not tied to their part; regex contract discovery; sites serving any
+      build on any site; focus traps left behind; scopes and computeds never released; first
+      stream subscriber hears events twice; props as attributes (`javascript:`, `on*`, style).
+      Casts: mesh ~347 lines, mesh-serve 57 `as` + 36 `!`, mesh-web 49 `as` + 13 `!`.
+
 ## Dependencies (mesh's package.json)
 
 Five do the work: zod, mongodb, ws, eventemitter3, zod-to-json-schema.
