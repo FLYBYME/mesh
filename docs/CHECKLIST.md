@@ -24,7 +24,6 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 **mesh-serve**
 - [ ] **A part's session role is not tied to the part that issued it;** every unknown bearer token
       goes to every `session_validate`, and their errors are dropped.
-- [ ] **Two parts on one build:** a failed second load unregisters the first, which stays "running".
 - [ ] **The sites server** serves any build's files on any site, and its pages can be framed.
 - [ ] **Contract discovery by regex** drops contracts and can bind the wrong handler.
 
