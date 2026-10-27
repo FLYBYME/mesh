@@ -1,4 +1,4 @@
-import { WSTransport } from '../../transports/node/WSTransport.js';
+import { MAX_FRAME_BYTES, WSTransport } from '../../transports/node/WSTransport.js';
 import { JSONSerializer } from '../../serializers/JSONSerializer.js';
 import { Logger } from '../../utils/Logger.js';
 import { LogLevel } from '../../interfaces/ILogger.js';
@@ -137,6 +137,7 @@ describe('WSTransport', () => {
             // tell a second socket from the same process apart from a different process.
             expect(MockedWebSocket).toHaveBeenCalledWith('ws://remote:5005', {
                 headers: { 'x-mesh-node': 'test-node', 'x-mesh-instance': transport.instanceId },
+                maxPayload: MAX_FRAME_BYTES,
             });
             expect(peerConnectSpy).toHaveBeenCalledWith('remote-node');
         });
