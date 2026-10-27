@@ -41,6 +41,58 @@ function stripHidden(domain: string, value: unknown): unknown {
     return isRecord(value) ? omit(value) : value;
 }
 
+/**
+ * The Mongo operators a CRUD `query` may use. Anything else (`$where`, `$expr`, `$function`, ...)
+ * runs code or reads across fields, and is refused (review 10-26).
+ */
+const QUERY_OPERATORS = new Set([
+    '$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin', '$exists', '$regex', '$options',
+    '$and', '$or', '$nor', '$not', '$all', '$size', '$elemMatch',
+]);
+
+/** The most rows one find answers; `limit: 0` used to mean every row. */
+export const MAX_FIND_LIMIT = 100_000;
+
+function badQuery(domain: string, message: string): MeshError {
+    return new MeshError({ code: 'BAD_REQUEST', status: 400, message: `${domain}: ${message}` });
+}
+
+/**
+ * Refuses a query with an operator not in QUERY_OPERATORS, or one that filters on a hidden field:
+ * `{ apiKey: { $regex: '^a' } }` would guess a hidden value a character at a time.
+ */
+function checkQuery(domain: string, query: unknown, hidden: readonly string[]): void {
+    if (Array.isArray(query)) {
+        for (const item of query) checkQuery(domain, item, hidden);
+        return;
+    }
+    if (!isRecord(query)) return;
+    for (const [key, value] of Object.entries(query)) {
+        if (key.startsWith('$')) {
+            if (!QUERY_OPERATORS.has(key)) throw badQuery(domain, `the query operator ${key} is not allowed`);
+        } else if (hidden.includes(key.split('.')[0] ?? key)) {
+            throw badQuery(domain, `${key} can't be queried`);
+        }
+        checkQuery(domain, value, hidden);
+    }
+}
+
+/** A find's query and search fields, checked; and its limit, kept to 1..MAX_FIND_LIMIT. */
+function checkedFind(domain: string, params: Record<string, unknown>): { query: Record<string, unknown>; limit: number } {
+    const hidden = globalCrudRegistry.get(domain)?.hidden ?? [];
+    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+    checkQuery(domain, query, hidden);
+    const searchFields = typeof params.searchFields === 'string' ? [params.searchFields] : Array.isArray(params.searchFields) ? params.searchFields : [];
+    for (const field of searchFields) {
+        if (typeof field === 'string' && hidden.includes(field)) throw badQuery(domain, `${field} can't be searched`);
+    }
+    const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) && params.limit >= 1
+        ? Math.min(Math.floor(params.limit), MAX_FIND_LIMIT)
+        : 100;
+
+    return { query, limit };
+}
+
 /** One document, stripped the same way, typed as the document it was. */
 function stripHiddenFields(domain: string, doc: Record<string, unknown>): Record<string, unknown> {
     const hidden = globalCrudRegistry.get(domain)?.hidden ?? [];
@@ -236,13 +288,13 @@ export class CrudExecutor {
         try {
             switch (action) {
                 case 'find': {
-                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    const { query, limit } = checkedFind(domain, params);
                     if (scopedBy && callerScope) {
                         query[scopedBy] = callerScope;
                     }
                     const options: FindOptions<BaseDoc> = {
                         query: query as StrictFilterQuery<BaseDoc>,
-                        limit: typeof params.limit === 'number' ? params.limit : 100,
+                        limit,
                         offset: typeof params.offset === 'number' ? params.offset : undefined,
                     };
                     if (typeof params.sort === 'string' || Array.isArray(params.sort) || isRecord(params.sort)) {
@@ -261,7 +313,7 @@ export class CrudExecutor {
                     break;
                 }
                 case 'find_one': {
-                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    const { query } = checkedFind(domain, params);
                     if (scopedBy && callerScope) {
                         query[scopedBy] = callerScope;
                     }
@@ -276,7 +328,7 @@ export class CrudExecutor {
                     break;
                 }
                 case 'count': {
-                    const query: Record<string, unknown> = isRecord(params.query) ? { ...params.query } : {};
+                    const { query } = checkedFind(domain, params);
                     if (scopedBy && callerScope) {
                         query[scopedBy] = callerScope;
                     }

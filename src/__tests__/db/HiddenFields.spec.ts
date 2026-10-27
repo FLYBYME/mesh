@@ -18,7 +18,7 @@ export const providerCrud = defineCrud('hiddenprovider', ProviderSchema, {
 declare global {
     interface IServiceToolRegistry {
         'hiddenprovider.create': { params: { name: string; apiKey: string }; returns: { id: string; name: string; apiKey?: string } };
-        'hiddenprovider.find': { params: { query?: Record<string, unknown> }; returns: Array<{ id: string; name: string; apiKey?: string }> };
+        'hiddenprovider.find': { params: { query?: Record<string, unknown>; limit?: number; searchFields?: string[]; search?: string }; returns: Array<{ id: string; name: string; apiKey?: string }> };
         'hiddenprovider.get': { params: { id: string }; returns: { id: string; name: string; apiKey?: string } };
         'hiddenprovider.update': { params: { id: string; name?: string; apiKey?: string }; returns: { id: string; name: string; apiKey?: string } | undefined };
     }
@@ -133,6 +133,25 @@ describe('defineCrud: hidden fields', () => {
 
         expect(sent).toHaveLength(4);
         for (const payload of sent) expect(payload).not.toMatch(/secret-/);
+    });
+
+    it('a query can\'t filter or search on a hidden field, or use an operator that runs code', async () => {
+        await broker.call('hiddenprovider.create', { name: 'registrar-h', apiKey: 'abc-secret' });
+
+        await expect(broker.call('hiddenprovider.find', { query: { apiKey: { $regex: '^a' } } })).rejects.toMatchObject({ status: 400 });
+        await expect(broker.call('hiddenprovider.find', { query: { $or: [{ name: 'x' }, { apiKey: 'abc-secret' }] } })).rejects.toMatchObject({ status: 400 });
+        await expect(broker.call('hiddenprovider.find', { query: { $where: 'true' } })).rejects.toMatchObject({ status: 400 });
+        await expect(broker.call('hiddenprovider.find', { search: 'abc', searchFields: ['apiKey'] })).rejects.toMatchObject({ status: 400 });
+
+        const found = await broker.call('hiddenprovider.find', { query: { name: { $in: ['registrar-h'] } } });
+        expect(found.map((row) => row.name)).toEqual(['registrar-h']);
+    });
+
+    it('limit 0 answers the default page, not every row', async () => {
+        for (let i = 0; i < 105; i += 1) await broker.call('hiddenprovider.create', { name: `bulk-${i}`, apiKey: 'k' });
+
+        expect(await broker.call('hiddenprovider.find', { limit: 0 })).toHaveLength(100);
+        expect(await broker.call('hiddenprovider.find', { limit: 102 })).toHaveLength(102);
     });
 
     it('publicOutputSchema omits the hidden field; outputSchema and baseSchema still declare it', () => {
