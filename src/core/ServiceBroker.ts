@@ -97,6 +97,46 @@ function isZodObject(schema: z.ZodTypeAny): schema is z.AnyZodObject {
     return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodObject;
 }
 
+function isZodString(schema: z.ZodTypeAny): schema is z.ZodString {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodString;
+}
+
+function isZodDate(schema: z.ZodTypeAny): schema is z.ZodDate {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDate;
+}
+
+function isZodDefault(schema: z.ZodTypeAny): schema is z.ZodDefault<z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDefault;
+}
+
+function isZodRecord(schema: z.ZodTypeAny): schema is z.ZodRecord<z.ZodString, z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodRecord;
+}
+
+function isZodUnion(schema: z.ZodTypeAny): schema is z.ZodUnion<[z.ZodTypeAny, ...z.ZodTypeAny[]]> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodUnion;
+}
+
+function isZodEffects(schema: z.ZodTypeAny): schema is z.ZodEffects<z.ZodTypeAny> {
+    return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodEffects;
+}
+
+/** The schema under optional/nullable/default/effects wrappers: what the value itself must be. */
+function bareSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
+    if (isZodOptional(schema) || isZodNullable(schema)) return bareSchema(schema.unwrap());
+    if (isZodDefault(schema)) return bareSchema(schema.removeDefault());
+    if (isZodEffects(schema)) return bareSchema(schema.innerType());
+
+    return schema;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const proto: unknown = Object.getPrototypeOf(value);
+
+    return proto === Object.prototype || proto === null;
+}
+
 /** One side of a CRUD hook -- the shape `registerCrudHook` and `defineCrud`'s `hooks` both take. */
 export type CrudHook = (value: unknown, ctx: IServiceContext) => Promise<unknown>;
 
@@ -143,8 +183,75 @@ export class ServiceBroker implements IServiceBroker {
         projected: boolean,
         result: unknown,
     ): unknown {
-        if (!projected) return returns.parse(result);
-        return ServiceBroker.partialised(returns).parse(result);
+        const restored = ServiceBroker.restoreInstants(returns, result);
+        if (!projected) return returns.parse(restored);
+        return ServiceBroker.partialised(returns).parse(restored);
+    }
+
+    /**
+     * **A `Date` where the schema wants a string goes back to its ISO text.**
+     *
+     * The JSON codec revives every full ISO instant into a `Date` (see JSONSerializer: it keeps the
+     * wire format unchanged across a rolling upgrade), so a `z.string()` field holding a timestamp
+     * arrived on the far side as a `Date` and failed its own schema there -- a correct reply refused
+     * only because it crossed the network (`serve.node.inspect`'s `closesAt`: a 500 on every open,
+     * the inspector opened all the same, 10-27). The codec cannot know the schema; this can. Only a
+     * `Date` under a string position changes, so a `z.date()` field keeps its revived `Date`, and
+     * anything else is untouched: what was correct when sent is correct when received.
+     *
+     * Walks objects, arrays, records and unions, by `typeName` (a part's own zod copy, as in
+     * `partialised`). Returns the value itself when nothing in it needed restoring.
+     */
+    public static restoreInstants(schema: z.ZodTypeAny, value: unknown): unknown {
+        const bare = bareSchema(schema);
+
+        if (value instanceof Date) {
+            if (isZodString(bare)) return value.toISOString();
+            if (isZodUnion(bare)) {
+                const options = bare.options.map(bareSchema);
+                const takesString = options.some(isZodString);
+                const takesDate = options.some(isZodDate);
+                if (takesString && !takesDate) return value.toISOString();
+            }
+            return value;
+        }
+
+        if (Array.isArray(value) && isZodArray(bare)) {
+            let changed = false;
+            const items = value.map((item) => {
+                const restored = ServiceBroker.restoreInstants(bare.element, item);
+                if (restored !== item) changed = true;
+                return restored;
+            });
+
+            return changed ? items : value;
+        }
+
+        if (!isPlainObject(value)) return value;
+
+        let fieldSchema: (key: string) => z.ZodTypeAny | undefined;
+        if (isZodObject(bare)) {
+            const shape: Record<string, z.ZodTypeAny> = bare.shape;
+            fieldSchema = (key) => shape[key];
+        } else if (isZodRecord(bare)) {
+            fieldSchema = () => bare.valueSchema;
+        } else {
+            return value;
+        }
+
+        let copy: Record<string, unknown> | undefined;
+        for (const [key, field] of Object.entries(value)) {
+            const inner = fieldSchema(key);
+            if (inner === undefined) continue;
+
+            const restored = ServiceBroker.restoreInstants(inner, field);
+            if (restored === field) continue;
+
+            copy ??= { ...value };
+            copy[key] = restored;
+        }
+
+        return copy ?? value;
     }
 
     /**
@@ -1682,7 +1789,9 @@ export class ServiceBroker implements IServiceBroker {
                         const schema = MeshToolSchemaRegistry.get(ctx.toolName);
                         if (schema?.params) {
                             try {
-                                parsedParams = schema.params.parse(ctx.params);
+                                // Arrived over the wire: a string param holding an instant came as a
+                                // Date (see `restoreInstants`).
+                                parsedParams = schema.params.parse(ServiceBroker.restoreInstants(schema.params, ctx.params));
                             } catch (error) {
                                 // Same reasoning as internalCall's validation above: a raw ZodError
                                 // escaping here carries no status either, so a remote-dispatched
