@@ -139,12 +139,16 @@ describe('defineCrud: hidden fields', () => {
         await broker.call('hiddenprovider.create', { name: 'registrar-h', apiKey: 'abc-secret' });
 
         await expect(broker.call('hiddenprovider.find', { query: { apiKey: { $regex: '^a' } } })).rejects.toMatchObject({ status: 400 });
-        await expect(broker.call('hiddenprovider.find', { query: { $or: [{ name: 'x' }, { apiKey: 'abc-secret' }] } })).rejects.toMatchObject({ status: 400 });
+        await expect(broker.call('hiddenprovider.find', { query: { $or: [{ name: 'x' }, { apiKey: { $gt: 'a' } }] } })).rejects.toMatchObject({ status: 400 });
         await expect(broker.call('hiddenprovider.find', { query: { $where: 'true' } })).rejects.toMatchObject({ status: 400 });
         await expect(broker.call('hiddenprovider.find', { search: 'abc', searchFields: ['apiKey'] })).rejects.toMatchObject({ status: 400 });
 
         const found = await broker.call('hiddenprovider.find', { query: { name: { $in: ['registrar-h'] } } });
         expect(found.map((row) => row.name)).toEqual(['registrar-h']);
+        // An exact match on a hidden field stays: how a token is found by its hash.
+        const exact = await broker.call('hiddenprovider.find', { query: { apiKey: 'abc-secret' } });
+        expect(exact.map((row) => row.name)).toEqual(['registrar-h']);
+        await expect(broker.call('hiddenprovider.find', { query: { apiKey: { $eq: 'abc-secret' } } })).rejects.toMatchObject({ status: 400 });
     });
 
     it('limit 0 answers the default page, not every row', async () => {

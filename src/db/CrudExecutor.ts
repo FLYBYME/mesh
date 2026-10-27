@@ -58,8 +58,10 @@ function badQuery(domain: string, message: string): MeshError {
 }
 
 /**
- * Refuses a query with an operator not in QUERY_OPERATORS, or one that filters on a hidden field:
- * `{ apiKey: { $regex: '^a' } }` would guess a hidden value a character at a time.
+ * Refuses a query with an operator not in QUERY_OPERATORS, or an operator on a hidden field:
+ * `{ apiKey: { $regex: '^a' } }` would guess a hidden value a character at a time. Equality with a
+ * plain value stays: it is how a token is found by its hash (`{ tokenHash }`), and an exact match
+ * on a hash says nothing about it.
  */
 function checkQuery(domain: string, query: unknown, hidden: readonly string[]): void {
     if (Array.isArray(query)) {
@@ -71,7 +73,10 @@ function checkQuery(domain: string, query: unknown, hidden: readonly string[]): 
         if (key.startsWith('$')) {
             if (!QUERY_OPERATORS.has(key)) throw badQuery(domain, `the query operator ${key} is not allowed`);
         } else if (hidden.includes(key.split('.')[0] ?? key)) {
-            throw badQuery(domain, `${key} can't be queried`);
+            if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+                throw badQuery(domain, `${key} can only be matched exactly`);
+            }
+            continue;
         }
         checkQuery(domain, value, hidden);
     }
