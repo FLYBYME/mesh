@@ -40,7 +40,8 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 **mesh-web** (v0.21.26 fixed six: a throwing effect, duplicate `each()` keys, events held across a
 user switch, `on*`/`srcdoc`/`javascript:` props, a dialog's trap on route change, the first stream
 subscriber's double events)
-- [ ] **Never released:** disposed scopes stay in their parents, `computed` is never collected.
+- [ ] **`computed` is never collected:** it stays subscribed to its sources while nothing reads it
+      (disposed scopes, effects and resources leaving their parents: fixed, v0.21.27).
 - [ ] **`style` from api data** is still set as given (no script, but `url()` can call out).
 
 ## 2. Framework fixes for what the services keep getting wrong
