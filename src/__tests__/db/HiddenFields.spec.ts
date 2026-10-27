@@ -122,6 +122,19 @@ describe('defineCrud: hidden fields', () => {
         expect((namedEvents[0] as { apiKey?: string }).apiKey).toBeUndefined();
     });
 
+    it('update and replace events never carry the hidden field in their patch either', async () => {
+        const sent: string[] = [];
+        broker.on('data.updated', (payload) => sent.push(JSON.stringify(payload)));
+        broker.on('hiddenprovider.updated' as never, (payload) => sent.push(JSON.stringify(payload)));
+
+        const created = await broker.call('hiddenprovider.create', { name: 'registrar-g', apiKey: 'secret-before' });
+        await broker.call('hiddenprovider.update', { id: created.id, apiKey: 'secret-patched' });
+        await broker.call('hiddenprovider.replace', { id: created.id, name: 'registrar-g', apiKey: 'secret-replaced' });
+
+        expect(sent).toHaveLength(4);
+        for (const payload of sent) expect(payload).not.toMatch(/secret-/);
+    });
+
     it('publicOutputSchema omits the hidden field; outputSchema and baseSchema still declare it', () => {
         expect(providerCrud.publicOutputSchema.shape.apiKey).toBeUndefined();
         expect(providerCrud.outputSchema.shape.apiKey).toBeDefined();

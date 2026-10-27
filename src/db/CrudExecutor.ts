@@ -41,6 +41,13 @@ function stripHidden(domain: string, value: unknown): unknown {
     return isRecord(value) ? omit(value) : value;
 }
 
+/** One document, stripped the same way, typed as the document it was. */
+function stripHiddenFields(domain: string, doc: Record<string, unknown>): Record<string, unknown> {
+    const hidden = globalCrudRegistry.get(domain)?.hidden ?? [];
+
+    return Object.fromEntries(Object.entries(doc).filter(([field]) => !hidden.includes(field)));
+}
+
 function toSnakeCase(str: string): string {
     return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 }
@@ -329,15 +336,17 @@ export class CrudExecutor {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }
                     const strippedUpdateRes = stripHidden(domain, updateRes as Record<string, unknown>) as Record<string, unknown>;
+                    // The patch too: setting a password hash went out in identity.user.updated (review 10-26).
+                    const strippedPatch = stripHiddenFields(domain, params);
                     broker.emit('data.updated', {
                         domain,
                         id: updateRes.id,
-                        patch: params as Record<string, unknown>,
+                        patch: strippedPatch,
                         item: strippedUpdateRes
                     });
                     emitNamed(broker, domain, 'updated', {
                         id: updateRes.id,
-                        patch: params as Record<string, unknown>,
+                        patch: strippedPatch,
                         item: strippedUpdateRes
                     });
                     result = updateRes;
@@ -355,15 +364,16 @@ export class CrudExecutor {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }
                     const strippedReplaceRes = stripHidden(domain, replaceRes as Record<string, unknown>) as Record<string, unknown>;
+                    const strippedReplacement = stripHiddenFields(domain, params);
                     broker.emit('data.updated', {
                         domain,
                         id: replaceRes.id,
-                        patch: params as Record<string, unknown>,
+                        patch: strippedReplacement,
                         item: strippedReplaceRes
                     });
                     emitNamed(broker, domain, 'updated', {
                         id: replaceRes.id,
-                        patch: params as Record<string, unknown>,
+                        patch: strippedReplacement,
                         item: strippedReplaceRes
                     });
                     result = replaceRes;
