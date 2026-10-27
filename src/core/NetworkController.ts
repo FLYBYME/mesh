@@ -33,7 +33,7 @@ export class NetworkController {
         dispatcher.on('$node.ping', (_data, packet) => this.handlePing(packet));
         dispatcher.on('$node.pong', (data, packet) => this.handlePong(data as Record<string, unknown>, packet));
         dispatcher.on('$node.pex', (data, _packet) => this.handlePex(data as PexData));
-        dispatcher.on('$node.presence', (data, _packet) => this.handlePresence(data as PresenceData));
+        dispatcher.on('$node.presence', (data, packet) => this.handlePresence(data as PresenceData, packet));
         // v4.9.0 gossip (MeshOrchestrator's BEAT_TOPIC). Older nodes have none of these handlers
         // and drop the packets unread -- after renewing the sender's lease, as for any packet.
         dispatcher.on('$node.beat', (data, packet) => this.node.orchestrator?.handleBeat(packet.senderNodeID, data));
@@ -82,12 +82,18 @@ export class NetworkController {
         }
     }
 
-    private async handlePresence(data: PresenceData): Promise<void> {
+    private async handlePresence(data: PresenceData, packet: MeshPacket): Promise<void> {
         this.logger.debug(`HandlePresence called for node`, {
             hasOrchestrator: !!this.node.orchestrator,
             hasDataNode: !!data?.node,
             internal: true
         });
+        // Presence is a node speaking for itself, and is trusted over any relayed record: one
+        // naming another node is a peer rewriting that node's record (review 10-26).
+        if (data.node && data.node.nodeID !== packet.senderNodeID) {
+            this.logger.warn(`[NetworkController] ${packet.senderNodeID} sent presence for ${data.node.nodeID}; ignored`);
+            return;
+        }
         if (this.node.orchestrator && data.node) {
             this.node.orchestrator.handlePresence(data);
         }
