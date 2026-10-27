@@ -8,14 +8,11 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 ## 1. Security and correctness first (10-26 reviews, checked against the code)
 
 **mesh**
-- [ ] **One bad WebSocket frame crashes a node.** Inbound sockets have no `error` listener
-      (`transports/node/WSTransport.ts:331-352`; outbound has one, `:836`); `ws` emits `error` on a
-      frame it rejects, before the mesh key is checked. Add the listener and a `maxPayload`.
-- [ ] **A peer is trusted too far:** its REQUEST meta becomes `ctx.meta` (a peer can call as any
-      tenant), and it can rewrite another node's registry record.
-- [ ] **Hidden fields leak in events:** `updated` and `replaced` carry the patch unstripped.
-- [ ] **CRUD `query` takes any Mongo operator** (a filter on a hidden field guesses it character by
-      character) and `limit: 0` returns everything: an operator allowlist and a cap.
+- [ ] **A peer's REQUEST meta becomes `ctx.meta`:** any node holding the mesh key can call as any
+      tenant. That is how a gateway hands its caller on, so it is a design, not a patch: the
+      gateway signs the caller (user, tenant, roles, expiry) and a node trusts only a signed
+      caller. Safe while every node with the key is ours; it has to land before a node runs code
+      that isn't. (Presence for another node is refused since dbd3739.)
 - [ ] **Errors:** a network handler that throws is an unhandled rejection; a remote caller gets the
       handler's stack and internal messages; an unparseable frame is dropped with no log.
 - [ ] **Calls:** to a gone node, they wait the whole timeout; a timed-out call never aborts
@@ -25,12 +22,8 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 - [ ] **Event definitions** never update or leave: the first registration wins.
 
 **mesh-serve**
-- [ ] **An api token is not limited to its organization or roles.** `lookUpCaller` drops the
-      token's `organizationId` (`api/gateway.ts:692-698`); gates check the account's roles.
-- [ ] **An organization admin can delete the owner's membership** (raw `identity.membership.delete`
-      public to admins, no hook).
-- [ ] **No secret is `hidden`:** `passwordHash`, `apiToken.tokenHash`, `ticket.token`, `userToken.tokenHash`.
-- [ ] **Suspending an account or changing its password ends no session or api token.**
+- [ ] **The gateway passes an HTTP caller's `limit` through:** mesh keeps a find to 100000 rows
+      (938249b); a caller from outside should get far fewer.
 - [ ] **A part's session role is not tied to the part that issued it;** every unknown bearer token
       goes to every `session_validate`, and their errors are dropped.
 - [ ] **Two parts on one build:** a failed second load unregisters the first, which stays "running".
