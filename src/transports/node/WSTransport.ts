@@ -20,7 +20,12 @@ export interface WSTransportOptions {
     pingTimeoutMs?: number;
     authKey?: string;
     authToken?: string;
+    /** The largest frame taken or sent, in bytes (default MAX_FRAME_BYTES). A bigger one closes the socket. */
+    maxPayload?: number;
 }
+
+/** 64 MiB: a part's bundle travels in one message; anything larger is refused, not buffered. */
+export const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 
 /**
  * Close code for "your nodeID is already connected here". In the application range (4000-4999), and
@@ -149,7 +154,10 @@ export class WSTransport extends BaseTransport {
         this.pingIntervalMs = options.pingIntervalMs ?? 30000;
         this.pingTimeoutMs = options.pingTimeoutMs ?? Math.min(5000, this.pingIntervalMs);
         this.authKey = options.authKey ?? options.authToken ?? process.env.MESH_KEY;
+        this.maxPayload = options.maxPayload ?? MAX_FRAME_BYTES;
     }
+
+    private readonly maxPayload: number;
 
     async start(): Promise<void> {
         this.proactiveReplay();
@@ -288,6 +296,7 @@ export class WSTransport extends BaseTransport {
         this.server = server;
         this.wss = new WebSocketServer({
             server: this.server,
+            maxPayload: this.maxPayload,
             verifyClient: (info: any, cb: any) => this.verifyHandshake(info, cb)
         }) as IWSServer;
         this.setupWSSHandlers();
@@ -300,6 +309,7 @@ export class WSTransport extends BaseTransport {
         this.server = http.createServer();
         this.wss = new WebSocketServer({
             server: this.server,
+            maxPayload: this.maxPayload,
             verifyClient: (info: any, cb: any) => this.verifyHandshake(info, cb)
         }) as IWSServer;
         this.setupWSSHandlers();
@@ -335,6 +345,14 @@ export class WSTransport extends BaseTransport {
 
             ws.on('message', (raw: unknown) => {
                 this.handleIncomingMessage(raw, ws, (id) => this.claimPeer(id, ws));
+            });
+
+            // `ws` emits `error` for a frame it refuses (bad opcode, invalid UTF-8, too big), and
+            // closes the socket after. With no listener that error was thrown: one bad frame from
+            // anyone who could reach the port took the whole node down, before the mesh key was
+            // ever looked at (review 10-26). Said, and the close below does the rest.
+            ws.on('error', (err: unknown) => {
+                this.logger?.warn(`[WSTransport] inbound socket from ${remoteNode ?? 'an unnamed peer'}: ${err instanceof Error ? err.message : String(err)}`);
             });
 
             ws.on('close', () => {
@@ -793,7 +811,7 @@ export class WSTransport extends BaseTransport {
                 headers['x-mesh-key'] = key;
                 headers['authorization'] = `Bearer ${key}`;
             }
-            const ws: IWS = new WebSocket(url, { headers });
+            const ws: IWS = new WebSocket(url, { headers, maxPayload: this.maxPayload });
             this.outbound.set(url, ws);
 
             // A bootstrap dial starts under a temporary placeholder id (MeshOrchestrator's
