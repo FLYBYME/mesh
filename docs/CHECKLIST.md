@@ -37,15 +37,11 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 - [ ] **The sites server** serves any build's files on any site, and its pages can be framed.
 - [ ] **Contract discovery by regex** drops contracts and can bind the wrong handler.
 
-**mesh-web**
-- [ ] **An effect that throws stops the rest of its update** (`reactivity/context.ts:119-123`): one
-      throw leaves every later effect dirty for good; a duplicate key in `each()` freezes a list.
-- [ ] **A live list can show the previous user's or organization's rows** after a switch (events
-      held during a fetch are not cleared).
-- [ ] **Any prop becomes an attribute:** `javascript:` links, `on*` handlers and style from api data.
-- [ ] **A dialog left open on route change keeps its focus trap;** Tab stops working.
+**mesh-web** (v0.21.26 fixed six: a throwing effect, duplicate `each()` keys, events held across a
+user switch, `on*`/`srcdoc`/`javascript:` props, a dialog's trap on route change, the first stream
+subscriber's double events)
 - [ ] **Never released:** disposed scopes stay in their parents, `computed` is never collected.
-- [ ] **The first stream subscriber hears each event twice.**
+- [ ] **`style` from api data** is still set as given (no script, but `url()` can call out).
 
 ## 2. Framework fixes for what the services keep getting wrong
 
