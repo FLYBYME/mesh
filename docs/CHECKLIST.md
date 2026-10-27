@@ -22,8 +22,6 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 - [ ] **Event definitions** never update or leave: the first registration wins.
 
 **mesh-serve**
-- [ ] **The gateway passes an HTTP caller's `limit` through:** mesh keeps a find to 100000 rows
-      (938249b); a caller from outside should get far fewer.
 - [ ] **A part's session role is not tied to the part that issued it;** every unknown bearer token
       goes to every `session_validate`, and their errors are dropped.
 - [ ] **Two parts on one build:** a failed second load unregisters the first, which stays "running".
