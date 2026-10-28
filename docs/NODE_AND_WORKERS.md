@@ -84,18 +84,45 @@ holds state (a queue, a listener with a table) has one owner:
 
 `delivery: 'one'` events already claim this way, per event (`mesh.eventClaims`, 4.14.13).
 
+## Placement and scaling (the critical part)
+
+Every contract has a placement kind:
+
+- **anywhere** -- stateless; any number of copies, on any nodes, at once. Most contracts. CRUD is the
+  extreme case: every node holds the database pool and the framework is the handler, so a CRUD call
+  never leaves the node that makes it (an api's reads and writes stay in the api's node).
+- **owned** -- exactly one owner at a time (see "Owned units").
+- **pinned** -- needs what only some machines have (a public port, the host network); placed by label.
+
+**Anywhere contracts follow their calls.** Each node already counts its outgoing calls per contract
+and per peer (`recordOutgoing` / `recordOutgoingPeer`). That is the heat map: when a node keeps
+calling an anywhere contract on another node above a threshold, it loads that contract's chunk into
+one of its own workers, and from then on the calls are local (a local endpoint is preferred). A copy
+cold for a while is dropped again. Each node decides from its own counters: no central scheduler.
+
+**Memory is traded for throughput, on purpose.** The same chunk loaded ten times across the mesh is
+fine: ten copies of a handler cost memory; a remote hop on every call costs latency and the links.
+A node keeps a memory budget for copies; past it the coldest copies go first. Owned and pinned
+units are never dropped for room.
+
+**Chains come along.** The dependency map knows what a contract calls, so when a contract turns hot
+its callees that are anywhere become candidates too -- a proxy's chain of calls ends up local, not
+one hop at a time.
+
+**While a copy loads**, calls keep going where they went; nothing waits on a load.
+
 ## The frame channel
 
-Between the node and its workers. The node reads only a small header (topic, target, id) to route;
-the worker decodes the body. First version: `postMessage` with transferred buffers (no copy). A ring
-buffer on a `SharedArrayBuffer` (with framing, backpressure and `Atomics.waitAsync`) replaces it if
-measurement shows `postMessage` costs too much.
+Between the node and its workers: `postMessage` (decided, 10-28), with buffers transferred, not
+copied. The node reads only a small header (topic, target, id) to route; the worker decodes the body.
 
 ## Open, to measure first
 
 - A worker's real starting cost with mesh's worker side loaded, alone and ten at once.
 - How handlers group into workers (by domain is the first rule), and each group's heap cap.
-- Call latency through the channel against in-process.
+- Call latency through the channel against in-process, and against a remote hop -- which sets the
+  heat threshold for loading a local copy.
+- How long a copy may stay cold before it is dropped.
 
 ## Order
 
@@ -103,7 +130,7 @@ measurement shows `postMessage` costs too much.
    writes `part.ts` (mesh-serve); the loader mounts it -- still in process. Proven on one small part.
 2. The worker host and frame channel; one group of handlers in a worker; the measurements above.
 3. Per-handler builds and the dependency maps.
-4. One node per machine; placement by contract.
+4. One node per machine; placement kinds on contracts; anywhere contracts copied where they are hot.
 5. Owned units with claims, fencing and leases.
 
 Old-style parts (a `register.ts`) keep loading, in process, until each one moves.
