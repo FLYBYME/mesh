@@ -133,25 +133,31 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
                 this.registry.heartbeat(packet.senderNodeID);
             }
 
-            let processedData: MeshPacket = packet;
+            // An emitter's listener: nothing awaits it, so a throw below -- an interceptor refusing
+            // the packet, a dispatch failing -- was an unhandled rejection, said nowhere useful.
+            try {
+                let processedData: MeshPacket = packet;
 
-            for (const interceptor of [...this.interceptors].reverse()) {
-                if (interceptor.onInbound) {
-                    processedData = await interceptor.onInbound(processedData);
+                for (const interceptor of [...this.interceptors].reverse()) {
+                    if (interceptor.onInbound) {
+                        processedData = await interceptor.onInbound(processedData);
+                    }
                 }
-            }
 
-            // 3. Dispatch to generic handlers (Broker bridge)
-            for (const handler of this.anyPacketHandlers) {
-                try {
-                    handler(processedData.data, processedData);
-                } catch (err) {
-                    this.logger.error('[MeshNetwork] Error in generic packet handler', { error: err });
+                // 3. Dispatch to generic handlers (Broker bridge)
+                for (const handler of this.anyPacketHandlers) {
+                    try {
+                        handler(processedData.data, processedData);
+                    } catch (err) {
+                        this.logger.error(`[MeshNetwork] ${packet.type} ${packet.topic} from ${packet.senderNodeID}: a packet handler threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+                    }
                 }
-            }
 
-            // 4. Dispatch to specific handlers
-            await this.dispatcher.dispatch(processedData);
+                // 4. Dispatch to specific handlers
+                await this.dispatcher.dispatch(processedData);
+            } catch (err) {
+                this.logger.warn(`[MeshNetwork] dropped ${packet.type} ${packet.topic} from ${packet.senderNodeID}: ${err instanceof Error ? err.message : String(err)}`);
+            }
         });
     }
 

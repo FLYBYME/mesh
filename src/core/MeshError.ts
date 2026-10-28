@@ -191,9 +191,13 @@ export function errorFromWire(payload: unknown, fallbackMessage = 'Remote RPC Er
 
     // The far side's stack, then a marker naming where it threw, then ours -- so a reader sees where
     // it actually threw before seeing how the call got there.
+    // A node on this release sends no stack (ServiceBroker: it stays in that node's own log), so the
+    // marker alone says where to look; an older node's stack is still shown.
     const remoteStack = text('stack') ?? (typeof dataStack === 'string' ? dataStack : undefined);
     if (remoteStack !== undefined) {
         error.stack = `${remoteStack}\n--- Remote Boundary${nodeID !== undefined ? ` (thrown on ${nodeID})` : ''} ---\n${error.stack ?? ''}`;
+    } else if (nodeID !== undefined) {
+        error.stack = `${error.name}: ${error.message}\n--- Remote Boundary (thrown on ${nodeID}; its stack is in that node's log) ---\n${error.stack ?? ''}`;
     }
 
     return error;

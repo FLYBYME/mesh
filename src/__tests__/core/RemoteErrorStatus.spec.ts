@@ -159,9 +159,12 @@ describe('a MeshError keeps its status across the mesh', () => {
         expect((err as Error).message).toBe('something came loose');
     });
 
-    it('keeps the far side\'s stack behind the remote boundary marker, naming where it threw', async () => {
+    it('names where it threw behind the remote boundary marker, but brings none of that node\'s stack', async () => {
         const err = await clientBroker.call('remoteerr.fail', { status: 404, code: 'NOT_FOUND' }).catch((e: unknown) => e);
-        expect(err instanceof Error ? err.stack : '').toContain('--- Remote Boundary (thrown on err-server-node) ---');
+        const stack = err instanceof Error ? err.stack ?? '' : '';
+        expect(stack).toContain('--- Remote Boundary (thrown on err-server-node; its stack is in that node\'s log) ---');
+        // The far side's frames would sit above the marker; only the error's own line does.
+        expect(stack.split('--- Remote Boundary')[0]?.trim().split('\n')).toHaveLength(1);
     });
 
     it('keeps its data, its correlation id and the node that threw it', async () => {
@@ -176,6 +179,6 @@ describe('a MeshError keeps its status across the mesh', () => {
 
     it('names the node for an ordinary Error too, in its stack', async () => {
         const err = await clientBroker.call('remoteerr.plain', {}).catch((e: unknown) => e);
-        expect(err instanceof Error ? err.stack : '').toContain('(thrown on err-server-node)');
+        expect(err instanceof Error ? err.stack : '').toContain('(thrown on err-server-node; its stack is in that node\'s log)');
     });
 });

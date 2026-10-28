@@ -586,8 +586,26 @@ export class WSTransport extends BaseTransport {
             this.emit('packet', envelope);
         } catch (err: unknown) {
             if (!counted) this.metrics.recordPacket('in', 'event', 'unparsed', bytes);
-            this.emit('error', err instanceof Error ? err : new Error(String(err)));
+            const error = err instanceof Error ? err : new Error(String(err));
+            // Said on this node: it used to go only to an `error` event nothing listened to, and a
+            // frame nobody could read -- or a handler that threw on it -- left no trace at all.
+            this.reportDropped(socket, counted ? `a handler threw: ${error.message}` : `unreadable frame (${bytes} bytes): ${error.message}`);
+            this.emit('error', error);
         }
+    }
+
+    /** Dropped frames since the last line written, and when that was: one line per window, with the count. */
+    private dropped = { count: 0, lastLoggedAt: 0 };
+    private static readonly DROP_LOG_WINDOW_MS = 10_000;
+
+    private reportDropped(socket: IWS, why: string): void {
+        this.dropped.count += 1;
+        const now = Date.now();
+        if (now - this.dropped.lastLoggedAt < WSTransport.DROP_LOG_WINDOW_MS) return;
+
+        const peer = this.infoOf(socket).peerId ?? 'an unnamed peer';
+        this.logger?.warn(`[WSTransport] dropped a packet from ${peer}: ${why} (${this.dropped.count} dropped since the last line)`);
+        this.dropped = { count: 0, lastLoggedAt: now };
     }
 
     /** A received frame's size in bytes, from what `ws` handed over -- nothing is copied or encoded. */

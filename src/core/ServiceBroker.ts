@@ -523,9 +523,16 @@ export class ServiceBroker implements IServiceBroker {
                     // MESH_ERROR_BRAND -- that mismatch is exactly what kept turning a remote 404
                     // into a 500 while every test passed.
                     // The node that threw it, unless it came from further away and already says so.
+                    // No stack goes back: it is this node's code, paths and versions, and the caller
+                    // may run code that isn't ours. It is logged here instead, where it belongs --
+                    // a server fault with its stack; a refusal (4xx) is the caller's own business.
                     const wire = isMeshError(err)
-                        ? { ...err.toJSON(), nodeID: err.nodeID ?? this.nodeID }
-                        : { message, nodeID: this.nodeID, data: { stack: err instanceof Error ? err.stack : undefined } };
+                        ? { ...err.toJSON(), stack: undefined, nodeID: err.nodeID ?? this.nodeID }
+                        : { message, nodeID: this.nodeID };
+                    const status = isMeshError(err) ? err.status : 500;
+                    if (status >= 500 && !(isMeshError(err) && err.nodeID !== undefined && err.nodeID !== this.nodeID)) {
+                        this.logger.error(`[ServiceBroker] ${packet.topic} (called from ${packet.senderNodeID}) failed: ${err instanceof Error ? err.stack ?? message : message}`);
+                    }
 
                     // The same object as both payload and envelope error: a transport settles its
                     // own pending RPC and reads one of them, and which one depends on the
