@@ -15,8 +15,6 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
       that isn't. (Presence for another node is refused since dbd3739.)
 - [ ] **Errors:** a network handler that throws is an unhandled rejection; a remote caller gets the
       handler's stack and internal messages; an unparseable frame is dropped with no log.
-- [ ] **Calls:** to a gone node, they wait the whole timeout; a timed-out call never aborts
-      `ctx.signal`; `replace: true` on a long-running contract leaves the old timer ticking.
 - [ ] **`delivery: 'one'`** events can run on no node or on every node.
 - [ ] **Unbounded maps and timers** per node id or URL ever seen (redials, presence, peer metadata).
 - [ ] **Event definitions** never update or leave: the first registration wins.

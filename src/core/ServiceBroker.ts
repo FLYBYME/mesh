@@ -28,7 +28,7 @@ import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
 import { errorMessage } from '../utils/isRecord.js';
-import { ClientError, MeshError, TimeoutError, errorFromWire, isMeshError, thrownMessage } from './MeshError.js';
+import { ClientError, MeshError, NodeGoneError, TimeoutError, errorFromWire, isMeshError, thrownMessage } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /**
@@ -374,7 +374,11 @@ export class ServiceBroker implements IServiceBroker {
     private pendingRequests = new Map<string, {
         resolve: (val: unknown) => void,
         reject: (err: Error) => void,
-        timeout: TimerHandle
+        timeout: TimerHandle,
+        nodeID: string,
+        toolName: string,
+        // Whether the registry knew the node when the call was sent: one missing later was pruned.
+        nodeKnown: boolean
     }>();
 
     constructor(
@@ -438,6 +442,39 @@ export class ServiceBroker implements IServiceBroker {
 
     public setRegistry(registry: IServiceRegistry): void {
         this.registry = registry;
+        registry.on('changed', () => this.failCallsToGoneNodes());
+    }
+
+    /**
+     * Whether a node can still answer: false once the registry marks it offline (missed heartbeats)
+     * or prunes it. A node it never knew of is not judged -- a call may reach a node by name before
+     * its first heartbeat lands.
+     */
+    private nodeGone(nodeID: string): boolean {
+        if (nodeID === this.nodeID || this.registry === undefined) return false;
+        const node = this.registry.getNode(nodeID);
+
+        return node !== undefined && !node.available;
+    }
+
+    /**
+     * **A call to a node that is gone fails now, not at its timeout.** A caller waited out the whole
+     * timeout -- up to an hour for a long contract -- for a node that had died in the first second,
+     * holding whatever it held. Run on every registry change: each pending call whose node is now
+     * offline or pruned is failed as unavailable (503, NODE_GONE). Not retried here: the node may
+     * have run it before it went, and only the caller knows whether running it twice is safe.
+     */
+    private failCallsToGoneNodes(): void {
+        for (const [requestId, pending] of this.pendingRequests) {
+            const node = this.registry?.getNode(pending.nodeID);
+            // Pruned (known when the call was sent, missing now), or marked offline.
+            const gone = node === undefined ? pending.nodeKnown : !node.available;
+            if (!gone) continue;
+
+            SafeTimer.clearTimeout(pending.timeout);
+            this.pendingRequests.delete(requestId);
+            pending.reject(new NodeGoneError(pending.toolName, pending.nodeID));
+        }
     }
 
     private setupNetworkListeners() {
@@ -707,6 +744,14 @@ export class ServiceBroker implements IServiceBroker {
                 const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
                 const abort = lifetimeAbort ?? new AbortController();
                 if (lifetimeAbort === undefined) this.inFlightAborts.add(abort);
+                // This one call's time running out aborts its signal; a lifetime one is the
+                // registration's and is never cut short by one call.
+                const deadline = ctx.deadline;
+                const onDeadline = (): void => abort.abort(deadline?.reason);
+                if (lifetimeAbort === undefined && deadline !== undefined) {
+                    if (deadline.aborted) onDeadline();
+                    else deadline.addEventListener('abort', onDeadline, { once: true });
+                }
 
                 // Typed as the interface: a method added there and missing here fails the build.
                 const serviceCtx: IServiceContext = {
@@ -765,6 +810,7 @@ export class ServiceBroker implements IServiceBroker {
                     // Only a per-call controller is finished here -- a lifetime one stays live for
                     // the next invocation, and for whatever the handler left running behind it.
                     if (lifetimeAbort === undefined) this.inFlightAborts.delete(abort);
+                    deadline?.removeEventListener('abort', onDeadline);
                 }
             },
             highSecurity: contract.destructive === true
@@ -790,6 +836,18 @@ export class ServiceBroker implements IServiceBroker {
         // intentional override is still fine; it just has to say so.
         if (this.localTools.has(toolKeyStr) && options?.replace !== true) {
             throw new Error(`[ServiceBroker] Cannot register contract: "${toolKeyStr}" is already mounted on this node. Pass { replace: true } if overriding it is intended.`);
+        }
+
+        // A replaced long-running or interval contract is stopped first, as unregisterContract
+        // stops one: its signal aborted (its resource torn down) and its timer cleared. Kept, the
+        // old timer ticked on with the old contract's interval, and the new handler was handed the
+        // old registration's signal -- so the old resource never closed.
+        if (this.localTools.has(toolKeyStr)) {
+            this.lifetimeAborts.get(toolKeyStr)?.abort();
+            this.lifetimeAborts.delete(toolKeyStr);
+            SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
+            this.intervalTimers.delete(toolKeyStr);
+            this.pendingIntervals.delete(toolKeyStr);
         }
 
         const asAny = contract as unknown as ToolContract<z.ZodTypeAny, z.ZodTypeAny>;
@@ -1658,15 +1716,20 @@ export class ServiceBroker implements IServiceBroker {
 
         const timeoutMs = this.evaluateTimeout(ctx.meta?.timeout as number, schema?.timeout);
         let timer: ReturnType<typeof setTimeout> | undefined;
+        // A timed-out call used to leave its handler running, its `ctx.signal` never aborted, still
+        // holding and doing whatever it was -- after its caller had been told it failed.
+        const deadline = new AbortController();
 
         try {
-            const resultPromise = this.handlePipeline(ctx);
+            const resultPromise = this.handlePipeline({ ...ctx, deadline: deadline.signal });
             let result: unknown;
 
             const timeoutPromise = new Promise((_, reject) => {
                 timer = setTimeout(() => {
                     timedOut = true;
-                    reject(new TimeoutError(timeoutMessage(timeoutMs)));
+                    const error = new TimeoutError(timeoutMessage(timeoutMs));
+                    deadline.abort(error);
+                    reject(error);
                 }, timeoutMs);
             });
 
@@ -1876,6 +1939,11 @@ export class ServiceBroker implements IServiceBroker {
             this.metrics.recordOutgoingPeer(toolName, nodeID, outcome);
         };
 
+        if (this.nodeGone(nodeID)) {
+            settle('error');
+            throw new NodeGoneError(toolName, nodeID);
+        }
+
         return new Promise((resolveCall, rejectCall) => {
             const resolve = (value: unknown): void => { settle('ok'); resolveCall(value); };
             const reject = (err: Error): void => { settle('error'); rejectCall(err); };
@@ -1890,7 +1958,10 @@ export class ServiceBroker implements IServiceBroker {
             this.pendingRequests.set(requestId, {
                 resolve,
                 reject,
-                timeout
+                timeout,
+                nodeID,
+                toolName,
+                nodeKnown: this.registry?.getNode(nodeID) !== undefined,
             });
 
             this.network.send(nodeID, toolName, params, {

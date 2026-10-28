@@ -93,6 +93,17 @@ export class TimeoutError extends MeshError {
 }
 
 /**
+ * A call to a node the registry has marked offline or pruned: 503, failed at once instead of at
+ * its timeout (ServiceBroker.failCallsToGoneNodes). The node may have run it before it went.
+ */
+export class NodeGoneError extends MeshError {
+    constructor(toolName: string, nodeID: string) {
+        super({ message: `${toolName}: node ${nodeID} is gone (offline or left the mesh)`, code: 'NODE_GONE', status: 503 });
+        this.name = 'NodeGoneError';
+    }
+}
+
+/**
  * ClientError — Thrown for user-level validation or permission errors (4xx).
  */
 export class ClientError extends MeshError {

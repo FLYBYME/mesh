@@ -32,6 +32,9 @@ export interface IContext<TParams = Record<string, unknown>, TMeta = IMeshMeta> 
     readonly spanId?: string;
     readonly parentId?: string;
 
+    /** Aborted when this call's time is up: an on-demand handler's `ctx.signal` follows it. */
+    readonly deadline?: AbortSignal;
+
     // Pipeline control properties (pre-defined for stability)
     targetNodeID?: string;
     result?: unknown;
