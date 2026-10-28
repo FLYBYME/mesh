@@ -523,9 +523,9 @@ export class ServiceBroker implements IServiceBroker {
                     // MESH_ERROR_BRAND -- that mismatch is exactly what kept turning a remote 404
                     // into a 500 while every test passed.
                     // The node that threw it, unless it came from further away and already says so.
-                    // No stack goes back: it is this node's code, paths and versions, and the caller
-                    // may run code that isn't ours. It is logged here instead, where it belongs --
-                    // a server fault with its stack; a refusal (4xx) is the caller's own business.
+                    // No stack goes back: it belongs in the log of the node that threw, beside what
+                    // that node was doing, not in every caller's error. Logged here instead -- a
+                    // server fault with its stack; a refusal (4xx) is the caller's own business.
                     const wire = isMeshError(err)
                         ? { ...err.toJSON(), stack: undefined, nodeID: err.nodeID ?? this.nodeID }
                         : { message, nodeID: this.nodeID };
