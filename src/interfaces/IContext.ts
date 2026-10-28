@@ -35,6 +35,13 @@ export interface IContext<TParams = Record<string, unknown>, TMeta = IMeshMeta> 
     /** Aborted when this call's time is up: an on-demand handler's `ctx.signal` follows it. */
     readonly deadline?: AbortSignal;
 
+    /**
+     * A long-running contract's own context, which lasts as long as the contract runs. Each call,
+     * event or write made from it starts a trace of its own: otherwise everything a listener ever
+     * does is one trace, hours long.
+     */
+    readonly lifetime?: boolean;
+
     // Pipeline control properties (pre-defined for stability)
     targetNodeID?: string;
     result?: unknown;

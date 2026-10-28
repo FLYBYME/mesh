@@ -30,10 +30,17 @@ const kickoff = defineContract({
     filePath: 'src/__tests__/core/Spans.spec.ts', concurrency: 'on-demand', permissions: [], print: defaultPrint,
 });
 
+const listen = defineContract({
+    domain: 'spantest', action: 'listen', description: 'A listener: works, raises and writes from its own context',
+    inputSchema: z.object({}), outputSchema: z.object({}),
+    filePath: 'src/__tests__/core/Spans.spec.ts', concurrency: 'long-running', permissions: [], print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
         'spantest.work': { params: Record<string, never>; returns: { n: number } };
         'spantest.kickoff': { params: Record<string, never>; returns: Record<string, never> };
+        'spantest.listen': { params: Record<string, never>; returns: Record<string, never> };
     }
     interface IServiceCollectionRegistry {
         'spannote': { id: string; text: string; tenantId: string; createdAt: Date; updatedAt: Date };
@@ -109,6 +116,46 @@ describe('spans', () => {
         expect(task?.traceId).not.toBe('request-2');
         expect(task?.parentId).toBeUndefined();
         expect(work).toMatchObject({ traceId: task?.traceId, parentId: task?.spanId });
+    });
+
+    it('what a long-running contract does from its own context is a trace each, not one as long as it runs (10-28)', async () => {
+        spans.length = 0;
+        broker.setSpanSink((s) => spans.push(s));
+        broker.registerContract(listen, async (_params, ctx) => {
+            await ctx.call('spantest.work', {});
+            await ctx.call('spantest.work', {});
+            ctx.emit('spantest.done', { tenantId: 'acme' });
+            await ctx.db('spannote').find({ query: {} });
+            return {};
+        });
+
+        await broker.call('spantest.listen', {}, { meta: { tenant_id: 'acme' } });
+        await new Promise((r) => setTimeout(r, 100));
+
+        const listening = spans.find((s) => s.kind === 'call' && s.name === 'spantest.listen');
+        const works = spans.filter((s) => s.kind === 'call' && s.name === 'spantest.work');
+        const events = spans.filter((s) => s.kind === 'event');
+        const reads = spans.filter((s) => s.kind === 'db');
+        expect(works).toHaveLength(2);
+        expect(events).toHaveLength(3);
+        expect(reads).toHaveLength(3);
+
+        // Each piece of work its own root; what it does in turn stays under it.
+        const traces = new Set([listening?.traceId, ...works.map((s) => s.traceId)]);
+        expect(traces.size).toBe(3);
+        for (const w of works) expect(w.parentId).toBeUndefined();
+        for (const w of works) {
+            expect(events.filter((e) => e.traceId === w.traceId && e.parentId === w.spanId)).toHaveLength(1);
+            expect(reads.filter((r) => r.traceId === w.traceId && r.parentId === w.spanId)).toHaveLength(1);
+        }
+
+        // Raised and written from the listener itself: roots too, outside the listener's trace.
+        const raised = events.find((e) => !works.some((w) => w.traceId === e.traceId));
+        const written = reads.find((r) => !works.some((w) => w.traceId === r.traceId));
+        expect(raised?.parentId).toBeUndefined();
+        expect(raised?.traceId).not.toBe(listening?.traceId);
+        expect(written?.parentId).toBeUndefined();
+        expect(written?.traceId).not.toBe(listening?.traceId);
     });
 
     it('a sink that throws never fails the work', async () => {

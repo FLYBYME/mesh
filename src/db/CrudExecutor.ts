@@ -180,11 +180,14 @@ export class CrudExecutor {
         } finally {
             (deps.broker.metrics ?? meshMetrics).recordDb(args.domain, args.action, outcome, secondsSince(startedMs));
 
-            // A span under the call or handler it ran in -- the only one that gives it a trace.
+            // A span under the call or handler it ran in -- the only one that gives it a trace. A
+            // write from a long-running contract's own context is a trace of its own.
             const within = ContextStack.getContext();
-            if (deps.broker.recordSpan !== undefined && within?.traceId !== undefined) {
+            const under = within?.lifetime === true ? undefined : within;
+            const traceId = within?.lifetime === true ? randomUUID() : within?.traceId;
+            if (deps.broker.recordSpan !== undefined && traceId !== undefined) {
                 deps.broker.recordSpan({
-                    traceId: within.traceId, spanId: randomUUID(), ...(within.spanId !== undefined ? { parentId: within.spanId } : {}),
+                    traceId, spanId: randomUUID(), ...(under?.spanId !== undefined ? { parentId: under.spanId } : {}),
                     kind: 'db', name: `${args.domain}.${args.action}`, nodeID: deps.broker.nodeID,
                     startedAt, durationMs: performance.now() - startedMs, outcome,
                     ...(failure !== undefined ? { error: failure } : {}),

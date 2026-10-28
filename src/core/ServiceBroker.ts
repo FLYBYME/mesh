@@ -1665,7 +1665,9 @@ export class ServiceBroker implements IServiceBroker {
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
         // The trace it was raised in, never who raised it: handlers run as the event's tenant
         // (registerEventHandler), and are part of the same trace.
-        const raisedIn = this.getContext();
+        // Raised from a long-running contract's own context, each handler starts a trace of its own.
+        const current = this.getContext();
+        const raisedIn = current?.lifetime === true ? undefined : current;
         const trace: EventTrace | undefined = raisedIn?.traceId !== undefined
             ? { traceId: raisedIn.traceId, ...(raisedIn.spanId !== undefined ? { parentId: raisedIn.spanId } : {}) }
             : undefined;
@@ -1752,8 +1754,10 @@ export class ServiceBroker implements IServiceBroker {
         // ContextIsolation.spec.ts.
         const startsOwnContext = schema?.concurrency === 'long-running' || schema?.concurrency === 'interval';
         const activeCtx = startsOwnContext ? undefined : (parentCtx || this.getContext());
-        const traceId = options?.traceId ?? (activeCtx?.traceId || randomUUID());
-        const parentId = options?.traceId !== undefined ? options.parentSpanId : activeCtx?.spanId;
+        // Called from a long-running contract's own context: the same caller, a trace of its own.
+        const inTrace = activeCtx?.lifetime === true ? undefined : activeCtx;
+        const traceId = options?.traceId ?? (inTrace?.traceId || randomUUID());
+        const parentId = options?.traceId !== undefined ? options.parentSpanId : inTrace?.spanId;
         const spanId = randomUUID();
 
         const timeout = options?.timeout !== undefined ? options.timeout : schema?.timeout;
@@ -1770,6 +1774,7 @@ export class ServiceBroker implements IServiceBroker {
             traceId,
             spanId,
             parentId,
+            ...(schema?.concurrency === 'long-running' ? { lifetime: true } : {}),
         };
 
         this.metrics.recordCallEdge(activeCtx?.toolName, toolName);
