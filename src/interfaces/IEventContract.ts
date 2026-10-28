@@ -150,6 +150,11 @@ export function defineEvent<T extends z.ZodTypeAny>(
 
 // ─── Event Contract Registry ─────────────────────────────────────────────────
 
+/** How narrow a scope is: none (delivered to nobody) over a field over `'global'`. */
+function strictness(scope: string | undefined): number {
+    return scope === undefined ? 2 : scope === 'global' ? 0 : 1;
+}
+
 /**
  * EventContractRegistry: A typed map of all registered event definitions.
  * Populated at import time by defineEvent. Consumed by:
@@ -198,10 +203,28 @@ export class EventContractRegistry {
         return disagreements;
     }
 
+    /**
+     * Drops everything a node advertised once it has left: `present` says which still count. Without
+     * it a pruned node's definitions stayed for the life of the process, and a peer that left the
+     * mesh could still narrow (or gate) events that the nodes still here define. Returns who left.
+     */
+    public forgetAdvertisers(present: (from: string) => boolean): string[] {
+        const left = new Set<string>();
+        for (const [name, byNode] of this.advertised) {
+            for (const from of byNode.keys()) {
+                if (present(from)) continue;
+                byNode.delete(from);
+                left.add(from);
+            }
+            if (byNode.size === 0) this.advertised.delete(name);
+        }
+
+        return [...left];
+    }
+
     public getAdvertised(name: string): { readonly scopedBy?: string } | undefined {
         const byNode = this.advertised.get(name);
         if (byNode === undefined || byNode.size === 0) return undefined;
-        const strictness = (scope: string | undefined): number => (scope === undefined ? 2 : scope === 'global' ? 0 : 1);
         let strictest: { readonly scopedBy?: string } | undefined;
         for (const answer of byNode.values()) {
             if (strictest === undefined || strictness(answer.scopedBy) > strictness(strictest.scopedBy)) strictest = answer;
@@ -250,11 +273,41 @@ export class EventContractRegistry {
         }));
     }
 
+    /**
+     * A definition seen at import time. A second one for the same name (a part reloaded with a
+     * changed definition, or another part bundling an older copy) used to be dropped without a word,
+     * first wins: on edge1 (10-11) imported copies of alert.changed and email.message_received
+     * predated their gates. Now the stricter of the two stands -- the narrower scope, every role
+     * either names -- so a stale copy can never widen an event. A definition that loosens takes a
+     * restart: nothing records which part owns a definition, so nothing can say the looser one is
+     * the newer. The payload schema is the latest one's.
+     */
     public register<T extends z.ZodTypeAny>(event: EventDefinition<T>): void {
-        if (this.events.has(event.name)) {
+        const known = this.events.get(event.name);
+        if (known === undefined || known === event) {
+            this.events.set(event.name, event);
             return;
         }
-        this.events.set(event.name, event);
+
+        const scopedBy = strictness(event.scopedBy) >= strictness(known.scopedBy) ? event.scopedBy : known.scopedBy;
+        const roles = [...new Set([...(event.permissions ?? []), ...(known.permissions ?? [])])];
+        this.events.set(event.name, {
+            name: event.name,
+            schema: event.schema,
+            ...(scopedBy !== undefined ? { scopedBy } : {}),
+            ...(roles.length > 0 ? { permissions: roles } : {}),
+        });
+
+        const kept: string[] = [];
+        if (scopedBy !== event.scopedBy) kept.push(`scoped by ${scopedBy ?? 'nothing'} (this one: ${event.scopedBy ?? 'nothing'})`);
+        const dropped = roles.filter((role) => !(event.permissions ?? []).includes(role));
+        if (dropped.length > 0) kept.push(`gated by ${dropped.join(', ')}`);
+        if (kept.length === 0) return;
+
+        console.warn(
+            `[EventRegistry] "${event.name}" defined again, looser: it stays ${kept.join(' and ')}. ` +
+            'Two copies of this event disagree -- update the stale one, or restart to loosen it.',
+        );
     }
 
     public has(name: string): boolean {

@@ -134,6 +134,14 @@ export class MeshOrchestrator implements IMeshOrchestrator {
         this.node.registry.on('local:changed', () => {
             this.schedulePresence();
         });
+
+        // A node that left (pruned, disconnected, replaced at its address) takes its event
+        // definitions with it; one only offline keeps them, since a heartbeat brings it back without
+        // a presence. Coming back after leaving means a presence, which advertises them again.
+        this.node.registry.on('changed', () => {
+            const left = globalEventRegistry.forgetAdvertisers((from) => this.node.registry.getNode(from) !== undefined);
+            if (left.length > 0) this.logger.info(`Forgot the event definitions of node(s) that left: ${left.join(', ')}`);
+        });
     }
 
     private presenceTimer: TimerHandle | undefined;

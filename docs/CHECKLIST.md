@@ -14,7 +14,12 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
       caller. Mesh assumes every node runs only code its operator wrote and trusts (untrusted code
       does not belong in a mesh node), so this guards against a stolen mesh key, not against a
       node's own code. (Presence for another node is refused since dbd3739.)
-- [ ] **Event definitions** never update or leave: the first registration wins.
+- [x] **Event definitions** never update or leave: the first registration wins. Now a later
+      definition replaces the earlier one but can only narrow it: its schema stands, and the narrower
+      scope and every role either names are kept, with a warning when it was looser. A node that
+      leaves (pruned, disconnected) takes its advertised definitions with it; a node that is only
+      offline keeps them. Still open: a definition *loosened* on purpose needs a restart, because
+      nothing records which part owns a definition. That waits on mesh 5's contracts-reference-their-code.
 
 **mesh-serve**
 - [ ] **A part's session role is not tied to the part that issued it;** every unknown bearer token

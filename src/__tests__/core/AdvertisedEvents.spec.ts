@@ -124,6 +124,23 @@ describe('advertised event definitions', () => {
 
         expect(eventScope('advtest.local')).toEqual({ scopedBy: 'tenantId' });
     });
+
+    it('forgets a node\'s definitions once it leaves, and keeps them while it is only offline', async () => {
+        await orchestrator.handlePresence({ node: peer([{ name: 'advtest.leaving', scopedBy: 'tenantId' }]) });
+        expect(eventScope('advtest.leaving')).toEqual({ scopedBy: 'tenantId' });
+
+        const known = registry.getNode('peer-with-code');
+        if (known === undefined) throw new Error('peer not registered');
+        known.available = false;
+        registry.emit('changed', 'peer-with-code');
+        expect(eventScope('advtest.leaving')).toEqual({ scopedBy: 'tenantId' });
+
+        registry.unregisterNode('peer-with-code');
+        expect(eventScope('advtest.leaving')).toBeUndefined();
+
+        await orchestrator.handlePresence({ node: { ...peer([{ name: 'advtest.leaving', scopedBy: 'tenantId' }]), nodeSeq: 2 } });
+        expect(eventScope('advtest.leaving')).toEqual({ scopedBy: 'tenantId' });
+    });
 });
 
 /**
@@ -217,6 +234,53 @@ describe('EventContractRegistry.advertise', () => {
         registry.advertiseAll('surf', [{ name: 'old.event', scopedBy: 'tenantId' }]);
         registry.advertiseAll('surf', []);
         expect(registry.getAdvertised('old.event')).toBeUndefined();
+    });
+
+    it('forgets every node that is no longer present, and only those', () => {
+        const registry = new EventContractRegistry();
+        registry.advertiseAll('surf', [{ name: 'shared.event', scopedBy: 'global' }, { name: 'surf.only', scopedBy: 'tenantId' }]);
+        registry.advertiseAll('edge1', [{ name: 'shared.event', scopedBy: 'tenantId' }]);
+
+        expect(registry.forgetAdvertisers((from) => from === 'surf')).toEqual(['edge1']);
+        expect(registry.getAdvertised('shared.event')).toEqual({ scopedBy: 'global' });
+        expect(registry.forgetAdvertisers(() => false)).toEqual(['surf']);
+        expect(registry.advertisedNames()).toEqual([]);
+    });
+});
+
+describe('EventContractRegistry.register', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    beforeEach(() => warn.mockClear());
+    afterAll(() => warn.mockRestore());
+    const payload = z.object({ tenantId: z.string(), extra: z.string().optional() });
+
+    it('takes a stricter definition given later -- a scope gained in a reload counts', () => {
+        const registry = new EventContractRegistry();
+        registry.register({ name: 'e', schema: payload, scopedBy: 'global' });
+        registry.register({ name: 'e', schema: payload, scopedBy: 'tenantId', permissions: ['operator'] });
+
+        expect(registry.get('e')).toEqual(expect.objectContaining({ scopedBy: 'tenantId', permissions: ['operator'] }));
+    });
+
+    it('never lets a stale copy widen one, and says so (edge1, 10-11: imported copies predated their gates)', () => {
+        const registry = new EventContractRegistry();
+        registry.register({ name: 'alert.changed', schema: payload, scopedBy: 'tenantId', permissions: ['operator'] });
+        const later = z.object({ tenantId: z.string() });
+        registry.register({ name: 'alert.changed', schema: later, scopedBy: 'global' });
+
+        const kept = registry.get('alert.changed');
+        expect(kept).toEqual(expect.objectContaining({ scopedBy: 'tenantId', permissions: ['operator'] }));
+        expect(kept?.schema).toBe(later);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]?.[0])).toContain('alert.changed');
+    });
+
+    it('says nothing when the same definition is seen twice', () => {
+        const registry = new EventContractRegistry();
+        registry.register({ name: 'e', schema: payload, scopedBy: 'tenantId' });
+        registry.register({ name: 'e', schema: payload, scopedBy: 'tenantId' });
+
+        expect(warn).not.toHaveBeenCalled();
     });
 });
 

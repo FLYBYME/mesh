@@ -321,14 +321,16 @@ describe('IEventContract — defineEvent', () => {
 
     // ─── 7. Decision: Duplicate names (first-wins dedup matching ContractRegistry) ──
 
-    describe('Decision: Duplicate event names (first-wins matching ContractRegistry)', () => {
+    describe('Decision: Duplicate event names (the latest definition, never looser than the one before)', () => {
         let registry: EventContractRegistry;
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        afterAll(() => warn.mockRestore());
 
         beforeEach(() => {
             registry = new EventContractRegistry();
         });
 
-        it('should not overwrite an already registered event definition (first-wins)', () => {
+        it('takes the latest schema but keeps the narrower scope', () => {
             const SchemaV1 = z.object({ version: z.literal(1), orgId: z.string() });
             const SchemaV2 = z.object({ version: z.literal(2), orgId: z.string() });
 
@@ -340,11 +342,11 @@ describe('IEventContract — defineEvent', () => {
 
             expect(registry.size).toBe(1);
             const registered = registry.get('dup.event');
-            expect(registered?.schema).toBe(SchemaV1);
+            expect(registered?.schema).toBe(SchemaV2);
             expect(registered?.scopedBy).toBe('orgId');
         });
 
-        it('should retain first registration when defineEvent is called twice with same name', () => {
+        it('takes the latest definition when defineEvent is called twice with an equally narrow scope', () => {
             globalEventRegistry.clear();
 
             const SchemaA = z.object({ id: z.string() });
@@ -355,8 +357,8 @@ describe('IEventContract — defineEvent', () => {
 
             expect(globalEventRegistry.size).toBe(1);
             const registered = globalEventRegistry.get('collide.event');
-            expect(registered?.schema).toBe(SchemaA);
-            expect(registered?.scopedBy).toBe('id');
+            expect(registered?.schema).toBe(SchemaB);
+            expect(registered?.scopedBy).toBe('otherId');
         });
     });
 
