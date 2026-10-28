@@ -13,7 +13,6 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
       gateway signs the caller (user, tenant, roles, expiry) and a node trusts only a signed
       caller. Safe while every node with the key is ours; it has to land before a node runs code
       that isn't. (Presence for another node is refused since dbd3739.)
-- [ ] **Unbounded maps and timers** per node id or URL ever seen (redials, presence, peer metadata).
 - [ ] **Event definitions** never update or leave: the first registration wins.
 
 **mesh-serve**

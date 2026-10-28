@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { ILogger } from '../../interfaces/ILogger.js';
 import { packetKind } from '../../metrics/MeshMetrics.js';
+import { BoundedMap, BoundedSet, PEER_RECORDS_LIMIT } from '../../utils/Bounded.js';
 
 interface PendingRPC {
     resolve: (value: unknown) => void;
@@ -128,9 +129,10 @@ export class WSTransport extends BaseTransport {
      * *all* peers it logged "Max reconnection attempts reached" and never reconnected anyone again --
      * one of the reasons links on the live cluster stayed down after restarts.
      */
-    private readonly reconnectFailures = new Map<string, number>();
+    // Per URL ever dialed, so bounded (utils/Bounded.ts): every new instance is a new address.
+    private readonly reconnectFailures = new BoundedMap<string, number>(PEER_RECORDS_LIMIT);
     /** URLs whose duplicate-nodeID refusal has been logged, so a slow retry loop logs it once. */
-    private readonly refusalLogged = new Set<string>();
+    private readonly refusalLogged = new BoundedSet<string>(PEER_RECORDS_LIMIT);
     private heartbeatTimer?: NodeJS.Timeout;
     /** A scheduled redial, per peer URL -- at most one each. */
     private readonly reconnectionTimers = new Map<string, NodeJS.Timeout>();
@@ -142,7 +144,7 @@ export class WSTransport extends BaseTransport {
     /** The outbound socket currently open or opening to each URL -- at most one each. */
     private readonly outbound = new Map<string, IWS>();
     /** The nodeID each dialed URL turned out to be, so a redial can tell it is already connected. */
-    private readonly urlNode = new Map<string, string>();
+    private readonly urlNode = new BoundedMap<string, string>(PEER_RECORDS_LIMIT);
 
     public pingIntervalMs: number;
     public pingTimeoutMs: number;

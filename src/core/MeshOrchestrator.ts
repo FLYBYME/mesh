@@ -4,6 +4,7 @@ import { SafeTimer } from '../utils/SafeTimer.js';
 import { globalEventRegistry, type AdvertisedEventEntry } from '../interfaces/IEventContract.js';
 import { advertisableEvents } from './EventScope.js';
 import type { TimerHandle } from '../interfaces/ITimer.js';
+import { BoundedMap, BoundedSet, PEER_RECORDS_LIMIT } from '../utils/Bounded.js';
 
 export interface MeshOrchestratorOptions {
     bootstrapNodes?: string[];
@@ -114,11 +115,12 @@ export class MeshOrchestrator implements IMeshOrchestrator {
     private fullPresenceInterval?: TimerHandle;
     private supervisionInterval?: TimerHandle;
     /** Event-scope disagreements already logged (recordAdvertisedEvents): each is said once. */
-    private readonly warnedDisagreements = new Set<string>();
+    // These three are per node id ever met, so bounded (utils/Bounded.ts): only their newest.
+    private readonly warnedDisagreements = new BoundedSet<string>(PEER_RECORDS_LIMIT);
     /** nodeID -> when its presence was last asked for (PRESENCE_REQUEST_FLOOR_MS). */
-    private presenceRequests = new Map<string, number>();
+    private presenceRequests = new BoundedMap<string, number>(PEER_RECORDS_LIMIT);
     /** nodeID -> last dial attempt, so a PEX round cannot become a dial storm. */
-    private dialAttempts = new Map<string, number>();
+    private dialAttempts = new BoundedMap<string, number>(PEER_RECORDS_LIMIT);
     /** One placeholder id per bootstrap URL, kept for the process's life so its logs line up. */
     private bootstrapIds = new Map<string, string>();
 

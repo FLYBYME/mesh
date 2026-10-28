@@ -1556,6 +1556,7 @@ export class ServiceBroker implements IServiceBroker {
      * gone.
      */
     private locks = new Map<string, { token: string; expiresAt: number }>();
+    private static readonly LOCK_SWEEP_AT = 1024;
 
     private static readonly DEFAULT_LOCK_TTL_MS = 10_000;
     private static readonly MAX_LOCK_TTL_MS = 30_000;
@@ -1585,6 +1586,11 @@ export class ServiceBroker implements IServiceBroker {
             const now = Date.now();
             const existing = this.locks.get(key);
             if (existing === undefined || existing.expiresAt <= now) {
+                // A lock that expired unreleased stayed in the map for good, one per key ever
+                // locked (keys are often per record or tenant): those go whenever there are many.
+                if (this.locks.size >= ServiceBroker.LOCK_SWEEP_AT) {
+                    for (const [k, held] of this.locks) if (held.expiresAt <= now) this.locks.delete(k);
+                }
                 const token = randomUUID();
                 this.locks.set(key, { token, expiresAt: now + ttlMs });
                 return { token };
