@@ -15,6 +15,8 @@ export interface Span {
     /** The contract (`repo.find`), the event (`card.created`), or the collection and action. */
     readonly name: string;
     readonly nodeID: string;
+    /** A call's: the node it came from (`nodeID` itself for a local call), so calls between nodes are edges. */
+    readonly from?: string;
     /** The organization it ran for, when it ran for one. */
     readonly organization?: string;
     /** Epoch milliseconds. */

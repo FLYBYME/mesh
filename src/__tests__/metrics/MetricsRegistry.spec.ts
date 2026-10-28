@@ -134,3 +134,24 @@ describe('MetricsRegistry bounds and registration', () => {
         expect(registry.render()).toContain('mesh_test_collected 2\n');
     });
 });
+
+describe('MetricsRegistry snapshot', () => {
+    it('gives every series as data, cumulative, running collectors and leaving out empty metrics', () => {
+        const registry = new MetricsRegistry();
+        registry.counter('mesh_test_calls', 'calls', ['action']).inc(['a.b'], 3);
+        registry.gauge('mesh_test_empty', 'never set');
+        registry.histogram('mesh_test_seconds', 'durations', ['action'], [0.1, 1]).observe(['a.b'], 0.5);
+        const gauge = registry.gauge('mesh_test_heap', 'heap');
+        registry.addCollector(() => gauge.set([], 42));
+
+        const snapshot = registry.snapshot();
+
+        expect(snapshot.map((m) => m.name)).toEqual(['mesh_test_calls', 'mesh_test_seconds', 'mesh_test_heap']);
+        expect(snapshot[0]).toEqual({ name: 'mesh_test_calls', type: 'counter', labelNames: ['action'], series: [{ labels: ['a.b'], value: 3 }] });
+        expect(snapshot[1]).toEqual({
+            name: 'mesh_test_seconds', type: 'histogram', labelNames: ['action'], buckets: [0.1, 1],
+            series: [{ labels: ['a.b'], count: 1, sum: 0.5, counts: [0, 1, 0] }],
+        });
+        expect(snapshot[2].series).toEqual([{ labels: [], value: 42 }]);
+    });
+});

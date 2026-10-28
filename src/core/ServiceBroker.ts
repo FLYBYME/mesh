@@ -1766,6 +1766,8 @@ export class ServiceBroker implements IServiceBroker {
         ctx: IContext<Record<string, unknown>, IMeshMeta>,
         schema: ReturnType<typeof MeshToolSchemaRegistry.get>,
         timeoutMessage: (timeoutMs: number) => string,
+        // The node the call came from, for the span: this one unless it arrived off the network.
+        fromNode: string = this.nodeID,
     ): Promise<unknown> {
         const handledHere = !ctx.targetNodeID || ctx.targetNodeID === this.nodeID;
         const startedMs = performance.now();
@@ -1821,7 +1823,7 @@ export class ServiceBroker implements IServiceBroker {
                         traceId: ctx.traceId, spanId: ctx.spanId, ...(ctx.parentId !== undefined ? { parentId: ctx.parentId } : {}),
                         // The name asked for, even one nothing here serves: a span is not a metric
                         // label, and "unknown" says nothing about what was wanted.
-                        kind: 'call', name: ctx.toolName, nodeID: this.nodeID, ...organizationOf(ctx.meta),
+                        kind: 'call', name: ctx.toolName, nodeID: this.nodeID, from: fromNode, ...organizationOf(ctx.meta),
                         startedAt, durationMs: performance.now() - startedMs, outcome,
                         ...(failure !== undefined ? { error: failure } : {}),
                     });
@@ -1849,7 +1851,7 @@ export class ServiceBroker implements IServiceBroker {
         };
 
         const schema = MeshToolSchemaRegistry.get(packet.topic);
-        return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${ms}ms`);
+        return this.runUnderTimeout(ctx, schema, (ms) => `[ServiceBroker] RPC Timeout calling ${packet.topic} locally (from network) after ${ms}ms`, packet.senderNodeID);
     }
 
     public async handlePipeline(ctx: IContext<Record<string, unknown>, IMeshMeta>): Promise<unknown> {

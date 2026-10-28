@@ -1,6 +1,6 @@
 # One node per machine, handlers in worker threads
 
-**Status: decided, not built (owner, 10-28).** The shape of mesh from here: a network stack, contracts,
+**Status: decided, not built (owner, 10-28). This is mesh 5.** The shape of mesh from here: a network stack, contracts,
 and a reference from each contract to the code that serves it. Where that code runs is placement,
 not packaging.
 

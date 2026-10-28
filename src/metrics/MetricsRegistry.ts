@@ -147,6 +147,34 @@ abstract class Metric<S extends { readonly values: LabelValues }> {
     }
 
     protected abstract renderSeries(out: string[]): void;
+
+    snapshot(): MetricSnapshot {
+        return { name: this.name, type: this.type, labelNames: this.labelNames, series: this.snapshotSeries() };
+    }
+
+    protected abstract snapshotSeries(): SeriesSnapshot[];
+}
+
+/**
+ * One series as data, cumulative as it is held: a counter's or gauge's `value`; a histogram's
+ * `count`, `sum` and per-bucket `counts` (not cumulative, the last one past every bucket). A window's
+ * rate is the difference of two snapshots.
+ */
+export interface SeriesSnapshot {
+    readonly labels: LabelValues;
+    readonly value?: number;
+    readonly count?: number;
+    readonly sum?: number;
+    readonly counts?: readonly number[];
+}
+
+export interface MetricSnapshot {
+    readonly name: string;
+    readonly type: MetricType;
+    readonly labelNames: readonly string[];
+    /** A histogram's bucket bounds; `counts` has one more entry. */
+    readonly buckets?: readonly number[];
+    readonly series: readonly SeriesSnapshot[];
 }
 
 interface ValueSeries {
@@ -204,6 +232,10 @@ export class Counter extends Metric<ValueSeries> {
             out.push(`${this.name}${renderLabels(this.labelNames, s.values)} ${formatSampleValue(s.value)}`);
         }
     }
+
+    protected snapshotSeries(): SeriesSnapshot[] {
+        return Array.from(this.series.values(), (s) => ({ labels: s.values, value: s.value }));
+    }
 }
 
 export class Gauge extends Metric<ValueSeries> {
@@ -229,6 +261,10 @@ export class Gauge extends Metric<ValueSeries> {
         for (const s of this.series.values()) {
             out.push(`${this.name}${renderLabels(this.labelNames, s.values)} ${formatSampleValue(s.value)}`);
         }
+    }
+
+    protected snapshotSeries(): SeriesSnapshot[] {
+        return Array.from(this.series.values(), (s) => ({ labels: s.values, value: s.value }));
     }
 }
 
@@ -305,6 +341,14 @@ export class Histogram extends Metric<HistogramSeries> {
             out.push(`${this.name}_count${renderLabels(this.labelNames, s.values)} ${s.count}`);
         }
     }
+
+    override snapshot(): MetricSnapshot {
+        return { ...super.snapshot(), buckets: this.buckets };
+    }
+
+    protected snapshotSeries(): SeriesSnapshot[] {
+        return Array.from(this.series.values(), (s) => ({ labels: s.values, count: s.count, sum: s.sum, counts: Array.from(s.counts) }));
+    }
 }
 
 type AnyMetric = Counter | Gauge | Histogram;
@@ -369,16 +413,34 @@ export class MetricsRegistry {
      * skipped rather than failing the scrape -- a scrape that fails loses every other metric too.
      */
     render(): string {
+        this.runCollectors();
+        const out: string[] = [];
+        for (const metric of this.metrics.values()) metric.render(out);
+        return out.length === 0 ? '' : `${out.join('\n')}\n`;
+    }
+
+    /**
+     * The whole registry as data, collectors run first as for `render`: what a node sends instead
+     * of being scraped. Metrics with no series yet are left out.
+     */
+    snapshot(): MetricSnapshot[] {
+        this.runCollectors();
+        const out: MetricSnapshot[] = [];
+        for (const metric of this.metrics.values()) {
+            if (metric.size > 0) out.push(metric.snapshot());
+        }
+
+        return out;
+    }
+
+    private runCollectors(): void {
         for (const collector of this.collectors) {
             try {
                 collector();
             } catch {
-                // See above: one broken collector must not blank the whole page.
+                // One broken collector must not blank the whole page: a scrape that fails loses every other metric too.
             }
         }
-        const out: string[] = [];
-        for (const metric of this.metrics.values()) metric.render(out);
-        return out.length === 0 ? '' : `${out.join('\n')}\n`;
     }
 
     /** Every series of every metric back to nothing. Metrics and collectors stay registered. */

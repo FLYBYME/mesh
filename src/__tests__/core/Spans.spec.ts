@@ -78,7 +78,7 @@ describe('spans', () => {
         const read = spans.find((s) => s.kind === 'db' && s.name === 'spannote.find');
         const event = spans.find((s) => s.kind === 'event' && s.name === 'spantest.done');
 
-        expect(call).toMatchObject({ traceId: 'request-1', parentId: 'the-gateway', nodeID: 'spans-node', organization: 'acme', outcome: 'ok' });
+        expect(call).toMatchObject({ traceId: 'request-1', parentId: 'the-gateway', nodeID: 'spans-node', from: 'spans-node', organization: 'acme', outcome: 'ok' });
         expect(read).toMatchObject({ traceId: 'request-1', parentId: call?.spanId, outcome: 'ok' });
         expect(event).toMatchObject({ traceId: 'request-1', parentId: call?.spanId, organization: 'acme', outcome: 'ok' });
         expect(call?.durationMs).toBeGreaterThanOrEqual(0);
