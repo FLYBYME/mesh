@@ -11,8 +11,9 @@ findings in company/architecture/open.md. Review reports: company/ai/reviews/*-2
 - [ ] **A peer's REQUEST meta becomes `ctx.meta`:** any node holding the mesh key can call as any
       tenant. That is how a gateway hands its caller on, so it is a design, not a patch: the
       gateway signs the caller (user, tenant, roles, expiry) and a node trusts only a signed
-      caller. Safe while every node with the key is ours; it has to land before a node runs code
-      that isn't. (Presence for another node is refused since dbd3739.)
+      caller. Every node with the key is ours, and stays so (owner, 10-28: no client code ever runs
+      in a mesh node; clients run only in containers), so this guards against a stolen mesh key,
+      not against a node's own code. (Presence for another node is refused since dbd3739.)
 - [ ] **Event definitions** never update or leave: the first registration wins.
 
 **mesh-serve**
