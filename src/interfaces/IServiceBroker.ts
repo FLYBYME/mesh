@@ -33,6 +33,13 @@ export interface IServiceBroker {
     setSpanSink?(sink: SpanSink | undefined): void;
     /** Records one span, when a sink is set -- for work done outside a call, like a database operation. */
     recordSpan?(span: Span): void;
+    /**
+     * Runs `fn` as the start of a trace of its own, recorded as one `task` span named `name`.
+     * For work a node starts by itself, between calls: a controller's pass, a sweep. Without it
+     * such work runs inside whatever context set it going, and every pass for its whole life joins
+     * that one trace (compute's controller, 10-28: one trace 740 s long, dozens of passes in it).
+     */
+    inNewTrace<T>(name: string, fn: () => Promise<T>): Promise<T>;
     useLocal(mw: IMiddleware): void;
     /** Resolves the Database override (if any) registered via `registerContract`'s
      *  `options.database` for `toolKey`. Undefined when the tool isn't mounted, or was mounted

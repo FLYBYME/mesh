@@ -24,9 +24,16 @@ const work = defineContract({
     filePath: 'src/__tests__/core/Spans.spec.ts', concurrency: 'on-demand', permissions: [], print: defaultPrint,
 });
 
+const kickoff = defineContract({
+    domain: 'spantest', action: 'kickoff', description: 'Starts a pass and returns at once',
+    inputSchema: z.object({}), outputSchema: z.object({}),
+    filePath: 'src/__tests__/core/Spans.spec.ts', concurrency: 'on-demand', permissions: [], print: defaultPrint,
+});
+
 declare global {
     interface IServiceToolRegistry {
         'spantest.work': { params: Record<string, never>; returns: { n: number } };
+        'spantest.kickoff': { params: Record<string, never>; returns: Record<string, never> };
     }
     interface IServiceCollectionRegistry {
         'spannote': { id: string; text: string; tenantId: string; createdAt: Date; updatedAt: Date };
@@ -82,6 +89,26 @@ describe('spans', () => {
         expect(read).toMatchObject({ traceId: 'request-1', parentId: call?.spanId, outcome: 'ok' });
         expect(event).toMatchObject({ traceId: 'request-1', parentId: call?.spanId, organization: 'acme', outcome: 'ok' });
         expect(call?.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('starts a trace of its own for work the node sets going itself, even from inside a request (10-28)', async () => {
+        spans.length = 0;
+        broker.setSpanSink((s) => spans.push(s));
+        let pass: Promise<unknown> = Promise.resolve();
+        broker.registerContract(kickoff, async () => {
+            pass = broker.inNewTrace('spantest.pass', () => broker.call('spantest.work', {}));
+            return {};
+        });
+
+        await broker.call('spantest.kickoff', {}, { meta: { tenant_id: 'acme' }, traceId: 'request-2' });
+        await pass;
+
+        const task = spans.find((s) => s.kind === 'task');
+        const work = spans.find((s) => s.kind === 'call' && s.name === 'spantest.work');
+        expect(task).toMatchObject({ name: 'spantest.pass', nodeID: 'spans-node', organization: 'acme', outcome: 'ok' });
+        expect(task?.traceId).not.toBe('request-2');
+        expect(task?.parentId).toBeUndefined();
+        expect(work).toMatchObject({ traceId: task?.traceId, parentId: task?.spanId });
     });
 
     it('a sink that throws never fails the work', async () => {

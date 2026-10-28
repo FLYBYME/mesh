@@ -1632,6 +1632,36 @@ export class ServiceBroker implements IServiceBroker {
         }
     }
 
+    public async inNewTrace<T>(name: string, fn: () => Promise<T>): Promise<T> {
+        // Who it acts as stays the same; only the trace is new.
+        const meta = this.getContext()?.meta ?? {};
+        const traceId = randomUUID();
+        const spanId = randomUUID();
+        const root: IContext<Record<string, unknown>, IMeshMeta> = {
+            id: spanId, correlationID: spanId, toolName: name, params: {}, meta,
+            callerID: null, nodeID: this.nodeID, traceId, spanId,
+        };
+
+        const startedMs = performance.now();
+        const startedAt = Date.now();
+        const span = (outcome: 'ok' | 'error', error?: string): void => {
+            this.recordSpan({
+                traceId, spanId, kind: 'task', name, nodeID: this.nodeID, ...organizationOf(meta),
+                startedAt, durationMs: performance.now() - startedMs, outcome, ...(error !== undefined ? { error } : {}),
+            });
+        };
+
+        try {
+            const out = await ContextStack.run(root, fn);
+            span('ok');
+
+            return out;
+        } catch (err: unknown) {
+            span('error', err instanceof Error ? err.message : String(err));
+            throw err;
+        }
+    }
+
     public emit<K extends keyof EventRegistry>(event: K, payload: EventRegistry[K], options?: { skipNetwork?: boolean }): void {
         // The trace it was raised in, never who raised it: handlers run as the event's tenant
         // (registerEventHandler), and are part of the same trace.

@@ -10,8 +10,11 @@ export interface Span {
     readonly traceId: string;
     readonly spanId: string;
     readonly parentId?: string;
-    /** `call`: a contract handled here; `event`: an event handler; `db`: a database operation. */
-    readonly kind: 'call' | 'event' | 'db';
+    /**
+     * `call`: a contract handled here; `event`: an event handler; `db`: a database operation;
+     * `task`: work the node started on its own (`IServiceBroker.inNewTrace`), the root of its trace.
+     */
+    readonly kind: 'call' | 'event' | 'db' | 'task';
     /** The contract (`repo.find`), the event (`card.created`), or the collection and action. */
     readonly name: string;
     readonly nodeID: string;
