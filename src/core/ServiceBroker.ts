@@ -1348,9 +1348,9 @@ export class ServiceBroker implements IServiceBroker {
      * Takes a declared handler (`defineEventHandler`) or, the older form, a bare event name --
      * which has no domain to elect a leader by, so it is delivered `'each'`.
      *
-     * - `'one'` runs only on the leader for the handler's domain; every other node drops the event
-     *   here. No leader known (nothing advertises that domain yet) runs it locally, the same
-     *   fallback a `leaderScoped` interval contract has.
+     * - `'one'` runs on exactly one of the nodes holding the handler: each claims the event in the
+     *   database (`claimEvent`) and only the first claim runs it. With no database it runs on the
+     *   leader for the handler's domain, or locally when no leader is known.
      * - `ctx.meta` carries the tenant the event belongs to, read from its payload by its own
      *   definition (`eventScope`), so `ctx.db` and `ctx.call` act for that tenant. Before this a
      *   handler got the packet's meta, which for an event from another node names nobody.
@@ -1359,6 +1359,49 @@ export class ServiceBroker implements IServiceBroker {
      * Returns the unsubscribe. `unregisterOwner` calls it too, for handlers registered in a
      * `withOwner` scope.
      */
+    /** Where `'one'` handlers claim an event: one document per (event, domain), gone after an hour. */
+    private static readonly EVENT_CLAIMS = 'mesh.eventClaims';
+    private static readonly EVENT_CLAIM_TTL_S = 3600;
+    private claimIndex?: Promise<unknown>;
+
+    /**
+     * **Whether this node runs a `'one'` event: true for exactly one node holding the handler.**
+     *
+     * It was the leader for the handler's domain -- the closest node *advertising* that domain,
+     * which is not the same as holding the handler: a leader without it meant the event ran on no
+     * node, and two nodes with different views of the mesh each took themselves for leader and ran
+     * it twice. Now every node holding the handler inserts `<event id>:<domain>` into one shared
+     * collection; the unique `_id` lets exactly one insert succeed. At most once: a node that dies
+     * between its claim and its handler loses that event, where two runs were the failure before.
+     *
+     * With no database (a browser, a bare test broker), or an event with no id, or the database
+     * failing: the leader rule as before, said in the log on a failure.
+     */
+    private async claimEvent(domain: string, event: string, packet: IMeshPacket | undefined): Promise<boolean> {
+        const byLeader = (): boolean => {
+            const leader = this.registry?.leaderFor(domain);
+            return leader === undefined || leader.nodeID === this.nodeID;
+        };
+
+        const db = this.providers.has('database') ? this.getProvider<Database>('database').getDb() : null;
+        if (db === null || packet?.id === undefined) return byLeader();
+
+        const claims = db.collection<{ _id: string; nodeID: string; event: string; claimedAt: Date }>(ServiceBroker.EVENT_CLAIMS);
+        try {
+            this.claimIndex ??= claims.createIndex({ claimedAt: 1 }, { expireAfterSeconds: ServiceBroker.EVENT_CLAIM_TTL_S });
+            await this.claimIndex;
+            await claims.insertOne({ _id: `${packet.id}:${domain}`, nodeID: this.nodeID, event, claimedAt: new Date() });
+
+            return true;
+        } catch (err) {
+            if (Reflect.get(Object(err), 'code') === 11000) return false;
+            this.claimIndex = undefined;
+            this.logger.warn(`[ServiceBroker] ${event} for ${domain}: no claim (${err instanceof Error ? err.message : String(err)}); the leader runs it`);
+
+            return byLeader();
+        }
+    }
+
     public registerEventHandler<K extends keyof EventRegistry>(
         definition: EventHandlerDefinition<K> | K,
         handler: (payload: EventRegistry[K], ctx: IServiceContext) => void | Promise<void>,
@@ -1368,11 +1411,14 @@ export class ServiceBroker implements IServiceBroker {
         const id = randomUUID();
         const lifetime = new AbortController();
 
-        const listener = (data: unknown, packet?: IMeshPacket) => {
-            if (declared?.delivery === 'one') {
-                const leader = this.registry?.leaderFor(declared.domain);
-                if (leader !== undefined && leader.nodeID !== this.nodeID) return;
-            }
+        const listener = (data: unknown, packet?: IMeshPacket): void => {
+            if (declared?.delivery !== 'one') return run(data, packet);
+
+            void this.claimEvent(declared.domain, name, packet)
+                .then((mine) => { if (mine) run(data, packet); });
+        };
+
+        const run = (data: unknown, packet?: IMeshPacket): void => {
             const ctx = this.makeEventContext(name, data, packet, lifetime.signal);
             // Its own context: the event's tenant, nobody's user, the raiser's trace. A local event
             // is delivered inside the context of the call that raised it, and without this every
@@ -1603,7 +1649,8 @@ export class ServiceBroker implements IServiceBroker {
         this._triggerLocal(event as string, payload, packet);
 
         if (this.network && !options?.skipNetwork) {
-            this.network.publish(event as string, payload, trace);
+            // The same id as the local delivery's: a `'one'` handler on any node claims by it.
+            this.network.publish(event as string, payload, trace, packet.id);
         }
     }
 

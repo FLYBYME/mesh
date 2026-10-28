@@ -1,4 +1,5 @@
 import { EventEmitter } from 'eventemitter3';
+import { randomUUID } from 'node:crypto';
 import { IMeshNetwork, IMeshPacket, IMeshNetworkSubscriptionHandler, MeshPacket, IMeshNetworkNode, LinkChange, PeerLink, type EventTrace } from '../interfaces/IMeshNetwork.js';
 import type { ILogger } from '../interfaces/ILogger.js';
 import type { IServiceRegistry } from '../interfaces/IServiceRegistry.js';
@@ -324,7 +325,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
     }
 
 
-    async publish<T>(topic: string, data: T, trace?: EventTrace): Promise<void> {
+    async publish<T>(topic: string, data: T, trace?: EventTrace, id?: string): Promise<void> {
         try {
             let priority = 1;
             if (topic.startsWith('raft.') || topic.startsWith('kademlia.')) {
@@ -336,7 +337,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork, IMeshNetw
             const packet: MeshPacket = {
                 topic,
                 data,
-                id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
+                id: id ?? `mesh_${randomUUID()}`,
                 type: 'EVENT',
                 senderNodeID: this.nodeID,
                 namespace: this.namespace,

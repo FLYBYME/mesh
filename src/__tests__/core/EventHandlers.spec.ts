@@ -17,6 +17,9 @@ import type { IServiceBroker } from '../../interfaces/IServiceBroker.js';
 import type { IServiceContext } from '../../interfaces/IServiceContext.js';
 import { eventScope, scopeOfOccurrence } from '../../core/EventScope.js';
 import { ContextStack } from '../../core/ContextStack.js';
+import { DatabaseModule } from '../../modules/DatabaseModule.js';
+import type { Database } from '../../db/Database.js';
+import { withTestDatabase } from '../../testing/TestHelpers.js';
 
 /**
  * Event handlers after `ServiceModule`: declared (`defineEventHandler`), delivered `'each'` or
@@ -327,5 +330,60 @@ describe('event handler delivery across two nodes', () => {
         expect([...ran.each].sort()).toEqual(['evdelivery-node-a', 'evdelivery-node-b']);
         const leader = appA.getProvider<ServiceBroker>('broker').registry.leaderFor('evleader');
         expect(ran.one).toEqual([leader?.nodeID]);
+    });
+});
+
+/**
+ * With a database, `'one'` is claimed, not elected: exactly one of the nodes holding the handler
+ * runs each event. Its domain here is advertised by no contract -- the leader rule found no leader
+ * and ran it on every node (CHECKLIST 1, "delivery: 'one'").
+ */
+describe("'one' delivery claimed in the database", () => {
+    const apps: MeshApp[] = [];
+    const logger = new Logger(LogLevel.ERROR);
+    const serializer = new JSONSerializer();
+    const ran: number[] = [];
+    const dbName = 'mesh_test_event_claims';
+    const uri = withTestDatabase(process.env.MONGODB_URI || 'mongodb://localhost:27017', dbName);
+
+    const start = async (nodeID: string, port: number, bootstrap?: string): Promise<MeshApp> => {
+        const app = new MeshApp({ nodeID, logger });
+        app.use(new RegistryModule());
+        app.use(new NetworkModule({
+            port,
+            transports: [new WSTransport(serializer, port, '127.0.0.1')],
+            ...(bootstrap !== undefined ? { bootstrapNodes: [bootstrap] } : {}),
+        }));
+        app.use(new BrokerModule());
+        app.use(new DatabaseModule({ uri, dbName }));
+        await app.start();
+
+        app.getProvider<IServiceBroker>('broker').registerEventHandler(
+            defineEventHandler({ event: 'evtest.ping', domain: 'evclaimonly', delivery: 'one', description: 'test' }),
+            (payload) => { ran.push(payload.n); },
+        );
+        apps.push(app);
+
+        return app;
+    };
+
+    beforeAll(async () => {
+        await start('evclaim-node-a', 6551);
+        await start('evclaim-node-b', 6552, 'ws://127.0.0.1:6551');
+        await start('evclaim-node-c', 6553, 'ws://127.0.0.1:6551');
+        await settle(800);
+    });
+
+    afterAll(async () => {
+        await apps[0]?.getProvider<Database>('database').getDb()?.dropDatabase();
+        for (const app of apps.reverse()) await app.stop();
+    });
+
+    it('runs each event once, across three nodes holding the handler', async () => {
+        const raiser = apps[1]?.getProvider<IServiceBroker>('broker');
+        for (let n = 1; n <= 5; n++) raiser?.emit('evtest.ping', { n });
+        await settle(800);
+
+        expect([...ran].sort()).toEqual([1, 2, 3, 4, 5]);
     });
 });
