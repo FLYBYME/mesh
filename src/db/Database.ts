@@ -144,6 +144,16 @@ export class Database {
                     throw err;
                 }
             }
+
+            // After the declared ones exist, so the collection is never left with neither.
+            const declared = new Set(keys.map((u) => u.name ?? `uniq_${domain}_${u.fields.join('_')}`));
+            for (const index of await collection.indexes()) {
+                const name = index.name;
+                if (name === undefined || !name.startsWith(`uniq_${domain}_`) || declared.has(name)) continue;
+
+                await collection.dropIndex(name);
+                this.logger.warn(`[DB] Dropped unique index "${name}" on collection "${domain}": no contract declares it any more`);
+            }
         })();
 
         this.ensuredIndexes.set(domain, promise);

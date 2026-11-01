@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MongoClient } from 'mongodb';
-import { defineCrud } from '../../interfaces/ICrudContract.js';
+import { defineCrud, type NormalizedUniqueKey } from '../../interfaces/ICrudContract.js';
 import { Database } from '../../db/Database.js';
 import { DomainRepository } from '../../db/DomainRepository.js';
 import { MeshError } from '../../core/MeshError.js';
@@ -151,6 +151,73 @@ describe('Unique Key Constraints', () => {
     });
 
     // ─── 2. Legible MeshError on Duplicates ──────────────────────────────────
+
+    describe('1b. A unique index no contract declares any more', () => {
+        const DOMAIN = 'staleuniq';
+        const KEYS: NormalizedUniqueKey[] = [{ fields: ['tenantId', 'key'], scope: 'global' }];
+
+        async function indexNames(): Promise<string[]> {
+            const indexes = await rawClient.db(TEST_DB_NAME).collection(DOMAIN).indexes();
+
+            return indexes.map((index) => String(index.name));
+        }
+
+        async function ensure(keys: NormalizedUniqueKey[]): Promise<void> {
+            const db = new Database(new Logger(LogLevel.ERROR), baseUri, TEST_DB_NAME);
+
+            await db.connect();
+            await db.ensureDomainIndexes(DOMAIN, keys);
+            await db.disconnect();
+        }
+
+        beforeEach(async () => {
+            await rawClient.db(TEST_DB_NAME).dropCollection(DOMAIN).catch(() => {});
+            await rawClient.db(TEST_DB_NAME).createCollection(DOMAIN);
+        });
+
+        it('is dropped once the declared one exists, so a key can stop being global', async () => {
+            const collection = rawClient.db(TEST_DB_NAME).collection(DOMAIN);
+            await collection.createIndex({ key: 1 }, { unique: true, name: `uniq_${DOMAIN}_key` });
+            await collection.insertOne({ tenantId: 'a', key: 'same' });
+
+            await ensure(KEYS);
+
+            expect(await indexNames()).toEqual(expect.arrayContaining([`uniq_${DOMAIN}_tenantId_key`]));
+            expect(await indexNames()).not.toContain(`uniq_${DOMAIN}_key`);
+
+            await expect(collection.insertOne({ tenantId: 'b', key: 'same' })).resolves.toBeDefined();
+            await expect(collection.insertOne({ tenantId: 'b', key: 'same' })).rejects.toThrow('E11000');
+        });
+
+        it('leaves every index that is not one of its own: _id, plain ones, hand-named ones', async () => {
+            const collection = rawClient.db(TEST_DB_NAME).collection(DOMAIN);
+            await collection.createIndex({ when: 1 }, { name: 'by_when' });
+            await collection.createIndex({ token: 1 }, { unique: true, name: 'token_unique' });
+
+            await ensure(KEYS);
+
+            expect(await indexNames()).toEqual(expect.arrayContaining(['_id_', 'by_when', 'token_unique', `uniq_${DOMAIN}_tenantId_key`]));
+        });
+
+        it('keeps a declared key under the name it was declared with', async () => {
+            const named: NormalizedUniqueKey = { fields: ['key'], scope: 'global', name: `uniq_${DOMAIN}_custom` };
+
+            await ensure([named, ...KEYS]);
+            await ensure([named, ...KEYS]);
+
+            expect(await indexNames()).toEqual(expect.arrayContaining([`uniq_${DOMAIN}_custom`, `uniq_${DOMAIN}_tenantId_key`]));
+        });
+
+        it('changes nothing when the old index cannot be replaced: duplicates refuse first', async () => {
+            const collection = rawClient.db(TEST_DB_NAME).collection(DOMAIN);
+            await collection.createIndex({ key: 1 }, { unique: true, name: `uniq_${DOMAIN}_key` });
+            await collection.insertMany([{ tenantId: 'a', other: 1, key: 'x' }, { tenantId: 'a', other: 1, key: 'y' }]);
+
+            await expect(ensure([{ fields: ['tenantId', 'other'], scope: 'global' }])).rejects.toThrow('duplicates');
+
+            expect(await indexNames()).toContain(`uniq_${DOMAIN}_key`);
+        });
+    });
 
     describe('2. A duplicate must fail legibly (naming collection, field, value)', () => {
         let db: Database;
