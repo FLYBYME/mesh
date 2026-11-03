@@ -318,6 +318,8 @@ export class ServiceBroker implements IServiceBroker {
     // Every event handler subscribed through `registerEventHandler`, by registration id -- each
     // with the unsubscribe that also aborts the `ctx.signal` its handler received.
     private readonly eventHandlers = new Map<string, { readonly unregister: () => void }>();
+    // `<domain> <event>` -> the registration id of the one `'one'` handler that may hold it here.
+    private readonly oneHandlers = new Map<string, string>();
     // Unscopable events a handler has run for, so the log says so once per event name, not per event.
     private readonly unscopedHandlerEventsLogged = new Set<string>();
 
@@ -1411,6 +1413,16 @@ export class ServiceBroker implements IServiceBroker {
         const id = randomUUID();
         const lifetime = new AbortController();
 
+        // A `'one'` event is claimed once per (event, domain), so a second handler of the same pair
+        // would never run whenever the first claimed -- silently. workflows had two
+        // `instance.changed` handlers in `build` (builds and releases): from mesh 4.14.13 each pod
+        // change moved one of them on, never both (found 11-03). Refused here, at load.
+        const oneKey = declared?.delivery === 'one' ? `${declared.domain} ${name}` : undefined;
+        if (oneKey !== undefined && this.oneHandlers.has(oneKey)) {
+            throw new Error(`[ServiceBroker] Cannot register a second 'one' handler for "${name}" in domain "${declared?.domain}": the event is claimed once per domain, so only one of the two would run. Give one of them a domain of its own, or do both in one handler.`);
+        }
+        if (oneKey !== undefined) this.oneHandlers.set(oneKey, id);
+
         const listener = (data: unknown, packet?: IMeshPacket): void => {
             if (declared?.delivery !== 'one') return run(data, packet);
 
@@ -1457,6 +1469,7 @@ export class ServiceBroker implements IServiceBroker {
 
         const unregister = (): void => {
             if (!this.eventHandlers.delete(id)) return;
+            if (oneKey !== undefined && this.oneHandlers.get(oneKey) === id) this.oneHandlers.delete(oneKey);
             this.localEvents.off(name, listener);
             lifetime.abort();
         };

@@ -211,6 +211,25 @@ describe('declared event handlers on one node', () => {
         expect(signal?.aborted).toBe(true);
     });
 
+    it("refuses a second 'one' handler for the same event and domain, which would never run; free again once the first leaves", () => {
+        const first = defineEventHandler({ event: 'evtest.ping', domain: 'evonepair', delivery: 'one', description: 'first' });
+        const second = defineEventHandler({ event: 'evtest.ping', domain: 'evonepair', delivery: 'one', description: 'second' });
+        const elsewhere = defineEventHandler({ event: 'evtest.ping', domain: 'evonepair2', delivery: 'one', description: 'own domain' });
+        const each = defineEventHandler({ event: 'evtest.ping', domain: 'evonepair', delivery: 'each', description: 'each' });
+
+        const offFirst = broker.registerEventHandler(first, () => undefined);
+        expect(() => broker.registerEventHandler(second, () => undefined)).toThrow(/second 'one' handler for "evtest.ping" in domain "evonepair"/);
+        const offElsewhere = broker.registerEventHandler(elsewhere, () => undefined);
+        const offEach = broker.registerEventHandler(each, () => undefined);
+
+        offFirst();
+        const offSecond = broker.registerEventHandler(second, () => undefined);
+
+        offSecond();
+        offElsewhere();
+        offEach();
+    });
+
     it('unregisterOwner removes everything a scope registered -- even after an await', async () => {
         let handled = 0;
         await broker.withOwner('part:gadget-extras@v1', async () => {
