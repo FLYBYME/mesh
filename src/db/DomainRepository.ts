@@ -318,10 +318,12 @@ export class DomainRepository<T extends { id: string }> {
         return this.mapOutbound(docToInsert as WithId<Document>);
     }
 
+    /** `unset`: fields removed from the record, not set (CrudExecutor's `$unset`). */
     public async update(
         id: string,
         data: Partial<T>,
-        query?: StrictFilterQuery<T>
+        query?: StrictFilterQuery<T>,
+        unset: readonly string[] = []
     ): Promise<T | undefined> {
         if (!ObjectId.isValid(id)) return undefined;
         if (this.readyPromise) {
@@ -332,7 +334,9 @@ export class DomainRepository<T extends { id: string }> {
             ...data,
             updatedAt: new Date()
         };
-        const { id: _, ...updateDoc } = updateData;
+        const { id: _, ...setDoc } = updateData;
+        // A field both set and removed is removed: Mongo refuses the same path in $set and $unset.
+        const updateDoc: Record<string, unknown> = Object.fromEntries(Object.entries(setDoc).filter(([k]) => !unset.includes(k)));
 
         const filter: Filter<Document> = query
             ? { ...this.mapQuery(query), _id: new ObjectId(id) }
@@ -342,7 +346,7 @@ export class DomainRepository<T extends { id: string }> {
         try {
             result = await this.collection.findOneAndUpdate(
                 filter,
-                { $set: updateDoc },
+                unset.length > 0 ? { $set: updateDoc, $unset: Object.fromEntries(unset.map((k) => [k, ''])) } : { $set: updateDoc },
                 { returnDocument: 'after' }
             );
         } catch (err: unknown) {

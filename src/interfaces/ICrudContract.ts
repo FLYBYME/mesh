@@ -12,7 +12,16 @@ type Prettify<T> = { [K in keyof T]: T[K] } & { [K in keyof T as never]: T[K] };
 type OmittedFields = 'id' | '_id' | 'createdAt' | 'updatedAt';
 
 type CreateIn<TBaseIn, TId extends string> = Prettify<Omit<TBaseIn, OmittedFields>> & { [K in TId as never]: string };
-type UpdateIn<TBaseIn, TId extends string> = Prettify<Partial<Omit<TBaseIn, OmittedFields>> & { [K in TId]: string }>;
+/** The fields a record may be without: the only ones an update may remove. */
+type OptionalKeys<T> = { [K in keyof T]-?: undefined extends T[K] ? K : never }[keyof T];
+/**
+ * `$unset` names optional fields to remove: `$set` alone (with `ignoreUndefined`) could never take a
+ * field away, so a finished run kept its `waitingFor` (11-01). Explicit, never `undefined` meaning
+ * "remove": a patch built from optional input must not delete what it simply did not mention.
+ */
+type UpdateIn<TBaseIn, TId extends string> = Prettify<Partial<Omit<TBaseIn, OmittedFields>> & { [K in TId]: string } & {
+    $unset?: Array<Extract<OptionalKeys<Omit<TBaseIn, OmittedFields>>, string>>;
+}>;
 type ReplaceIn<TBaseIn, TId extends string> = Prettify<Omit<TBaseIn, OmittedFields> & { [K in TId]: string }>;
 type IdOnlyIn<TId extends string> = Prettify<{ [K in TId]: string }>;
 
@@ -623,9 +632,16 @@ export function defineCrud<
         ? baseCreate.extend({ [scopedBy]: baseCreateShape[scopedBy].optional() })
         : baseCreate) as z.ZodTypeAny;
 
+    // The fields a record may be without: the only ones `$unset` may name.
+    const rawShape = rawBase.shape as Record<string, z.ZodTypeAny>;
+    const optionalFields = Object.keys(rawShape).filter((k) => !['id', '_id', 'createdAt', 'updatedAt', idField].includes(k) && rawShape[k].isOptional());
+    const [firstOptional, ...otherOptional] = optionalFields;
+    const unsetShape: Record<string, z.ZodTypeAny> = firstOptional === undefined
+        ? {}
+        : { $unset: z.array(z.enum([firstOptional, ...otherOptional])).optional().describe('Optional fields to remove') };
     const UpdateInputSchema = rawBase
         .partial()
-        .extend({ [idField]: z.string() } as Record<string, z.ZodTypeAny>) as unknown as z.ZodType<
+        .extend({ [idField]: z.string(), ...unsetShape } as Record<string, z.ZodTypeAny>) as unknown as z.ZodType<
             UpdateIn<z.output<TBase>, TIdField>,
             z.ZodTypeDef,
             UpdateIn<z.input<TBase>, TIdField>

@@ -38,6 +38,19 @@ describe('ICrudContract', () => {
             }
         });
 
+        it('update takes $unset naming only optional fields; a collection with none takes no $unset', () => {
+            const WithOptional = z.object({ name: z.string(), waitingFor: z.string().optional(), wakeAt: z.date().optional() });
+            const crud = defineCrud('run', WithOptional, { dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
+
+            expect(crud.update.inputSchema.safeParse({ id: 'r1', $unset: ['waitingFor', 'wakeAt'] }).success).toBe(true);
+            expect(crud.update.inputSchema.safeParse({ id: 'r1', $unset: ['name'] }).success).toBe(false);
+            expect(crud.update.inputSchema.safeParse({ id: 'r1', $unset: ['tenantId'] }).success).toBe(false);
+
+            const none = defineCrud('plain', TestBaseSchema, { dependencies: [], filePath: 'src/__tests__/ICrudContract.spec.ts', permissions: [] });
+            const parsed = none.update.inputSchema.safeParse({ id: 'p1', $unset: ['name'] });
+            expect(parsed.success && '$unset' in parsed.data).toBe(false);
+        });
+
         it('should throw an error if the idField is defined in the baseSchema', () => {
             const BadSchema = z.object({
                 id: z.string(), // Not allowed

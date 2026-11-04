@@ -387,11 +387,18 @@ export class CrudExecutor {
                 case 'update': {
                     const id = typeof params.id === 'string' ? params.id : '';
                     const updatePatch: Record<string, unknown> = { ...params };
+                    // Fields to remove, named (the update's input schema allows only optional ones);
+                    // never the scope, the id or the timestamps, whoever calls.
+                    const rawUnset = updatePatch['$unset'];
+                    delete updatePatch['$unset'];
+                    const unset = Array.isArray(rawUnset)
+                        ? rawUnset.filter((k): k is string => typeof k === 'string' && k !== scopedBy && !['id', '_id', 'createdAt', 'updatedAt'].includes(k))
+                        : [];
                     if (scopedBy) {
                         delete updatePatch[scopedBy];
                     }
                     const scopeQuery = scopedBy && callerScope ? ({ [scopedBy]: callerScope } as StrictFilterQuery<BaseDoc>) : undefined;
-                    const updateRes = await repo.update(id, updatePatch as Partial<BaseDoc>, scopeQuery);
+                    const updateRes = await repo.update(id, updatePatch as Partial<BaseDoc>, scopeQuery, unset);
                     if (!updateRes) {
                         throw new MeshError({ code: 'NOT_FOUND', status: 404, message: `${domain} not found: ${id}` });
                     }

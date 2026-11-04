@@ -267,6 +267,22 @@ describe('DomainRepository', () => {
             const result = await repo.update(new ObjectId().toString(), { name: 'Nope' } as Partial<Item>);
             expect(result).toBeUndefined();
         });
+
+        // 11-01: $set alone could never take a field away; a finished run kept its waitingFor.
+        it('removes the fields it is told to unset, and only those; a field both set and unset is removed', async () => {
+            const created = await repo.create({ name: 'Unset', value: 1, category: 'kept-until-unset' });
+
+            const untouched = await repo.update(created.id, { value: 2 });
+            expect(untouched?.category).toBe('kept-until-unset');
+
+            const removed = await repo.update(created.id, { name: 'Renamed', category: 'ignored' }, undefined, ['category']);
+            expect(removed?.name).toBe('Renamed');
+            expect(removed?.value).toBe(2);
+            expect(removed !== undefined && 'category' in removed).toBe(false);
+
+            const raw = await collection.findOne({ _id: new ObjectId(created.id) });
+            expect(raw !== null && 'category' in raw).toBe(false);
+        });
     });
 
     // ─── delete ──────────────────────────────────────────────────────────────
