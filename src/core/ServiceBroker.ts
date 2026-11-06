@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
+import { closesOf, STOP_WAIT_MS } from './StopWork.js';
 import { errorMessage } from '../utils/isRecord.js';
 import { ClientError, MeshError, NodeGoneError, TimeoutError, errorFromWire, isMeshError, thrownMessage } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
@@ -851,9 +852,10 @@ export class ServiceBroker implements IServiceBroker {
         // stops one: its signal aborted (its resource torn down) and its timer cleared. Kept, the
         // old timer ticked on with the old contract's interval, and the new handler was handed the
         // old registration's signal -- so the old resource never closed.
+        // Not waited for: registering is synchronous. Unregister first (and await it) to have the old
+        // resource gone before the new one starts.
         if (this.localTools.has(toolKeyStr)) {
-            this.lifetimeAborts.get(toolKeyStr)?.abort();
-            this.lifetimeAborts.delete(toolKeyStr);
+            void this.endLifetime(toolKeyStr);
             SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
             this.intervalTimers.delete(toolKeyStr);
             this.pendingIntervals.delete(toolKeyStr);
@@ -906,8 +908,11 @@ export class ServiceBroker implements IServiceBroker {
      * contract under the same domain untouched. That granularity is the point: a standalone
      * on-demand contract has to be evictable on its own, not only as part of tearing down every
      * contract a domain mounted.
+     *
+     * Unmounted at once; the promise resolves when what the contract handed to `onStop(ctx.signal,
+     * ...)` has closed (StopWork.ts) -- await it before starting what needs the same resources.
      */
-    public unregisterContract(toolKeyStr: string): void {
+    public unregisterContract(toolKeyStr: string): Promise<void> {
         const contract = this.standaloneContracts.get(toolKeyStr);
         if (!contract) {
             throw new Error(`[ServiceBroker] Cannot unregister contract '${toolKeyStr}': not registered as a standalone contract`);
@@ -916,12 +921,8 @@ export class ServiceBroker implements IServiceBroker {
         // Order matters: abort before unwiring, so a long-running handler's teardown
         // (`ctx.signal.addEventListener('abort', ...)` -- closing its listener, clearing its own
         // state) runs while the contract is still fully mounted. This abort *is* the stop: there is
-        // no onStop for a standalone contract, by design.
-        const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
-        if (lifetimeAbort) {
-            lifetimeAbort.abort();
-            this.lifetimeAborts.delete(toolKeyStr);
-        }
+        // no onStop hook on a standalone contract, by design -- only `onStop(ctx.signal, ...)`.
+        const closed = this.endLifetime(toolKeyStr);
         SafeTimer.clearInterval(this.intervalTimers.get(toolKeyStr));
         this.intervalTimers.delete(toolKeyStr);
         this.pendingIntervals.delete(toolKeyStr);
@@ -936,6 +937,29 @@ export class ServiceBroker implements IServiceBroker {
         this.registry?.unregisterContract(toolKeyStr);
 
         this.logger.info(`[ServiceBroker] Contract unregistered: ${toolKeyStr}`);
+
+        return closed;
+    }
+
+    /**
+     * Aborts a long-running or interval contract's registration signal, and resolves once what it
+     * handed to `onStop` has closed -- or `STOP_WAIT_MS` has passed, which is logged with what was
+     * still closing. Never rejects: a close that failed is logged, and the stop goes on.
+     */
+    private async endLifetime(toolKeyStr: string): Promise<void> {
+        const lifetimeAbort = this.lifetimeAborts.get(toolKeyStr);
+        if (lifetimeAbort === undefined) return;
+
+        this.lifetimeAborts.delete(toolKeyStr);
+        lifetimeAbort.abort();
+
+        const outcome = await closesOf(lifetimeAbort.signal);
+        for (const err of outcome.failed) {
+            this.logger.error(`[ServiceBroker] ${toolKeyStr}: a close on stop failed`, err);
+        }
+        if (outcome.stillClosing > 0) {
+            this.logger.warn(`[ServiceBroker] ${toolKeyStr}: ${outcome.stillClosing} close(s) still running after ${STOP_WAIT_MS} ms; the stop goes on without them`);
+        }
     }
 
     /**
@@ -1206,16 +1230,18 @@ export class ServiceBroker implements IServiceBroker {
      * still the one `owner` put there: a contract since replaced by another owner, or a hook since
      * overwritten, is left alone.
      */
-    public unregisterOwner(owner: string): void {
+    public async unregisterOwner(owner: string): Promise<void> {
         const registrations = this.ownedRegistrations.get(owner);
         if (registrations === undefined) return;
         this.ownedRegistrations.delete(owner);
 
+        // Everything is unmounted at once, as before; then the owner's closes are waited for together.
+        const closes: Array<Promise<void>> = [];
         for (const registration of [...registrations].reverse()) {
             switch (registration.kind) {
                 case 'contract':
                     if (this.contractOwners.get(registration.key) === owner && this.standaloneContracts.has(registration.key)) {
-                        this.unregisterContract(registration.key);
+                        closes.push(this.unregisterContract(registration.key));
                     }
                     break;
                 case 'crudHook':
@@ -1229,6 +1255,8 @@ export class ServiceBroker implements IServiceBroker {
             }
         }
         this.logger.info(`[ServiceBroker] Unregistered everything owned by ${owner} (${registrations.length} registrations)`);
+
+        await Promise.all(closes);
     }
 
     private currentOwner(): string | undefined {
@@ -2112,8 +2140,7 @@ export class ServiceBroker implements IServiceBroker {
         this.pendingIntervals.clear();
 
         // Every long-running contract's teardown, and cancellation for whatever is still in flight.
-        for (const abort of this.lifetimeAborts.values()) abort.abort();
-        this.lifetimeAborts.clear();
+        const closes = [...this.lifetimeAborts.keys()].map((toolKeyStr) => this.endLifetime(toolKeyStr));
         for (const abort of this.inFlightAborts) abort.abort();
         this.inFlightAborts.clear();
 
@@ -2122,6 +2149,9 @@ export class ServiceBroker implements IServiceBroker {
             pending.reject(new Error('Broker stopped'));
         }
         this.pendingRequests.clear();
+
+        // Before the plugins: a close may still need the transport or the database (a last report).
+        await Promise.all(closes);
 
         for (const plugin of this.plugins) {
             if (plugin.onStop) await plugin.onStop(this);

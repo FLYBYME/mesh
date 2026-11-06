@@ -34,6 +34,7 @@ export * from './core/EventScope.js';
 export * from './core/ContractDeclaration.js';
 export * from './core/MeshEvents.js';
 export * from './core/ContextStack.js';
+export * from './core/StopWork.js';
 export * from './core/MeshError.js';
 export * from './core/Tenancy.js';
 export * from './utils/isRecord.js';

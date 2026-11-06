@@ -118,7 +118,8 @@ export interface IServiceBroker {
             database?: Database;
         },
     ): void;
-    unregisterContract(toolKey: string): void;
+    /** Unmounts at once; resolves when what the contract handed to `onStop(ctx.signal, ...)` has closed. */
+    unregisterContract(toolKey: string): Promise<void>;
     listContracts(): ToolContract<z.ZodTypeAny, z.ZodTypeAny>[];
     /** How a contract is called and who may call it, from this node's definition or its peers' advertisements. */
     contractDeclaration(key: string): ContractDeclaration | undefined;
@@ -154,8 +155,11 @@ export interface IServiceBroker {
      * `register(broker)` in, so unloading the part removes what loading it added.
      */
     withOwner<T>(owner: string, fn: () => T): T;
-    /** Removes everything registered under `owner`, newest first. A no-op for an unknown owner. */
-    unregisterOwner(owner: string): void;
+    /**
+     * Removes everything registered under `owner`, newest first, at once; resolves when its
+     * contracts' `onStop` closes have finished. A no-op for an unknown owner.
+     */
+    unregisterOwner(owner: string): Promise<void>;
 
     /** Mounts every contract a domain declares, wiring each to its own `filePath`'s handler --
      *  the replacement for a hand-written `register(broker)`. See the implementation in
