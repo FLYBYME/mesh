@@ -127,6 +127,34 @@ export function isMeshError(err: unknown): err is MeshError {
         && (err as Record<symbol, unknown>)[MESH_ERROR_BRAND] === true;
 }
 
+/** Set on an error once a node has logged it as a server fault; process-wide, as the brand is. */
+const LOGGED = Symbol.for('@flybyme/mesh.logged');
+
+/**
+ * A server fault (5xx, or no status at all) that no node has logged yet. A handler's fault is
+ * logged once, on the node whose handler threw it: an error rebuilt from the wire was logged
+ * where it was thrown, and one a caller only passes on was logged by the handler under it.
+ */
+export function unloggedFault(err: unknown): boolean {
+    // A thrown string or number can't be marked: logged at each node it passes, as before.
+    if (typeof err !== 'object' || err === null) return true;
+    if (Reflect.get(err, LOGGED) === true) return false;
+    if (!isMeshError(err)) return true;
+
+    return err.status >= 500;
+}
+
+/** Says an error has been logged; a frozen one can't be marked, and is logged again instead. */
+export function markLogged(err: unknown): void {
+    if (typeof err !== 'object' || err === null) return;
+
+    try {
+        Object.defineProperty(err, LOGGED, { value: true, enumerable: false });
+    } catch {
+        // Frozen, or a proxy that refuses: logged once more further up, no worse than before.
+    }
+}
+
 /**
  * What a thrown value says, in words: an Error's message, a plain object's own `message` (some
  * libraries reject with `{ message, ... }`), else the object as JSON -- never "[object Object]",
@@ -199,6 +227,9 @@ export function errorFromWire(payload: unknown, fallbackMessage = 'Remote RPC Er
     } else if (nodeID !== undefined) {
         error.stack = `${error.name}: ${error.message}\n--- Remote Boundary (thrown on ${nodeID}; its stack is in that node's log) ---\n${error.stack ?? ''}`;
     }
+
+    // Named by the node that threw it: that node logged it (a node on 4.14.13 or later does).
+    if (nodeID !== undefined) markLogged(error);
 
     return error;
 }

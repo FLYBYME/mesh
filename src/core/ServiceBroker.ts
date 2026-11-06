@@ -29,7 +29,7 @@ import { EventEmitter } from 'eventemitter3';
 import { ContextStack } from './ContextStack.js';
 import { closesOf, STOP_WAIT_MS } from './StopWork.js';
 import { errorMessage } from '../utils/isRecord.js';
-import { ClientError, MeshError, NodeGoneError, TimeoutError, errorFromWire, isMeshError, thrownMessage } from './MeshError.js';
+import { ClientError, MeshError, NodeGoneError, TimeoutError, errorFromWire, isMeshError, markLogged, thrownMessage, unloggedFault } from './MeshError.js';
 import { meshMetrics, secondsSince, UNKNOWN_ACTION, type MeshMetrics, type RpcOutcome } from '../metrics/MeshMetrics.js';
 
 /**
@@ -532,9 +532,10 @@ export class ServiceBroker implements IServiceBroker {
                     const wire = isMeshError(err)
                         ? { ...err.toJSON(), stack: undefined, nodeID: err.nodeID ?? this.nodeID }
                         : { message, nodeID: this.nodeID };
-                    const status = isMeshError(err) ? err.status : 500;
-                    if (status >= 500 && !(isMeshError(err) && err.nodeID !== undefined && err.nodeID !== this.nodeID)) {
-                        this.logger.error(`[ServiceBroker] ${packet.topic} (called from ${packet.senderNodeID}) failed: ${err instanceof Error ? err.stack ?? message : message}`);
+                    // Its handler's fault is logged already (logFault); this catches what failed
+                    // around the handler (a middleware, a timeout).
+                    if (!(isMeshError(err) && err.nodeID !== undefined && err.nodeID !== this.nodeID)) {
+                        this.logFault(packet.topic, packet.senderNodeID, err);
                     }
 
                     // The same object as both payload and envelope error: a transport settles its
@@ -2023,7 +2024,15 @@ export class ServiceBroker implements IServiceBroker {
                             }
                         }
 
-                        return await tool.handler({ ...ctx, params: parsedParams } as IContext<Record<string, unknown>, Record<string, unknown>>);
+                        try {
+                            return await tool.handler({ ...ctx, params: parsedParams } as IContext<Record<string, unknown>, Record<string, unknown>>);
+                        } catch (err) {
+                            // Logged where it was thrown, whoever called: a call from this same node
+                            // (another handler, the api gateway) used to leave a line only when the
+                            // caller chose to write one (an infer 500 left none anywhere).
+                            this.logFault(ctx.toolName, ctx.callerID ?? undefined, err);
+                            throw err;
+                        }
                     } else {
                         return await this.executeRemote(ctx.targetNodeID!, ctx.toolName, ctx.params, ctx.meta as Record<string, unknown>);
                     }
@@ -2042,6 +2051,19 @@ export class ServiceBroker implements IServiceBroker {
                 throw ctx.error;
             }
         });
+    }
+
+    /**
+     * A server fault, with its stack, once: on the node that threw it. A refusal (4xx) is the
+     * caller's own business, and an error that came from another node was logged there.
+     */
+    private logFault(toolName: string, callerID: string | undefined, err: unknown): void {
+        if (!unloggedFault(err)) return;
+
+        markLogged(err);
+        const message = thrownMessage(err);
+        const from = callerID !== undefined && callerID !== this.nodeID ? ` (called from ${callerID})` : '';
+        this.logger.error(`[ServiceBroker] ${toolName}${from} failed: ${err instanceof Error ? err.stack ?? message : message}`);
     }
 
     private async executeChain(

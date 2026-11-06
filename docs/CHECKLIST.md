@@ -87,8 +87,10 @@ mesh plugs in where it goes (SurfDNS: streams.surfdns.net).
       one that throws never fails the work it describes.
 - [ ] **Structured records** (the handler gets a formatted string today): time, level, message,
       fields, error with stack, trace and span id, and node, part and version on every one.
-- [ ] **A handler's unexpected error logged** on the node that ran it, with its stack (today only
-      event listeners' are, `ServiceBroker.ts:504`; an infer 500 left no line anywhere).
+- [x] **A handler's unexpected error logged** on the node that ran it, with its stack -- 4.18.3:
+      at the handler, whoever called (a call from the same node left no line before); once, as an
+      error is marked logged and one rebuilt from the wire was logged where it was thrown
+      (`unloggedFault`, `markLogged`; FaultLogged.spec.ts).
 - [ ] **Failed spans always sent;** every span when asked (`MESH_SPANS=1`).
 - [ ] **Metrics as data:** `MetricsRegistry.snapshot()`; `/metrics` becomes one sink among others.
 - [ ] **Plain sinks shipped:** text to stdout (default), Prometheus, a batching HTTP sink (bounded
