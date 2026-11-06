@@ -141,6 +141,80 @@ describe('DomainRepository', () => {
         });
     });
 
+    // ─── the tie-break and the index ─────────────────────────────────────────
+
+    describe('the sort sent to MongoDB (11-06)', () => {
+        // intel's "nearest range below this address" -- sort { startIp: -1 }, one row -- ran as
+        // { startIp: -1, _id: 1 }: an order no single-field index gives, so MongoDB read and sorted
+        // ~283,000 rows in memory (~40 s) per lookup, and a burst took the platform's database down.
+        let watched: MongoClient;
+        let watchedRepo: DomainRepository<Item>;
+        const sorts: Document[] = [];
+
+        beforeAll(async () => {
+            watched = new MongoClient(withTestDatabase(process.env.MONGODB_URI || 'mongodb://localhost:27017', TEST_DB_NAME), { monitorCommands: true });
+            watched.on('commandStarted', (event) => {
+                // The driver hands a command's sort over as a Map.
+                const sort: unknown = event.command['sort'];
+                if (event.commandName !== 'find') return;
+                if (sort instanceof Map) sorts.push(Object.fromEntries(sort));
+                else if (typeof sort === 'object' && sort !== null) sorts.push({ ...sort });
+            });
+            await watched.connect();
+            watchedRepo = new DomainRepository<Item>(watched.db(TEST_DB_NAME).collection('repo_test'), ItemSchema, 'repo_test');
+        });
+
+        afterAll(async () => {
+            await watched.close();
+        });
+
+        beforeEach(async () => {
+            sorts.length = 0;
+            await collection.createIndex({ value: 1 });
+            const rows = Array.from({ length: 2_000 }, (_, i) => ({ name: `Row ${i}`, value: i, createdAt: new Date(), updatedAt: new Date() }));
+            await collection.insertMany(rows);
+        });
+
+        /** Whether the plan MongoDB chose for this sort sorts in memory (the rejected ones aside). */
+        const sortsInMemory = async (sort: Document): Promise<boolean> => {
+            const plan = await collection.find({ value: { $lte: 1_500 } }).sort(sort).limit(1).explain('executionStats');
+            const planner: unknown = plan['queryPlanner'];
+            const winning: unknown = typeof planner === 'object' && planner !== null ? Reflect.get(planner, 'winningPlan') : undefined;
+            return JSON.stringify(winning).includes('"stage":"SORT"');
+        };
+
+        it('one row (findOne) is sorted only as asked: no tie-break, so the index answers it', async () => {
+            const found = await watchedRepo.findOne({ value: { $lte: 1_500 } }, { sort: '-value' });
+
+            expect(found?.value).toBe(1_500);
+            expect(sorts).toEqual([{ value: -1 }]);
+            expect(await sortsInMemory({ value: -1 })).toBe(false);
+            // What it used to send: the index cannot give it.
+            expect(await sortsInMemory({ value: -1, _id: 1 })).toBe(true);
+        });
+
+        it('one row by find (limit 1, no offset) the same', async () => {
+            await watchedRepo.find({ sort: '-value', limit: 1 });
+
+            expect(sorts).toEqual([{ value: -1 }]);
+        });
+
+        it('a page keeps its tie-break, in the direction of the last key asked', async () => {
+            await watchedRepo.find({ sort: '-value', limit: 25 });
+            await watchedRepo.find({ sort: 'value', limit: 25, offset: 25 });
+            await watchedRepo.findOne({}, { sort: '-value', offset: 3 });
+
+            expect(sorts).toEqual([{ value: -1, _id: -1 }, { value: 1, _id: 1 }, { value: -1, _id: -1 }]);
+        });
+
+        it('an index ending in _id serves the page\'s sort, read either way', async () => {
+            await collection.createIndex({ value: 1, _id: 1 });
+
+            expect(await sortsInMemory({ value: -1, _id: -1 })).toBe(false);
+            expect(await sortsInMemory({ value: 1, _id: 1 })).toBe(false);
+        });
+    });
+
     // ─── findOne ─────────────────────────────────────────────────────────────
 
     describe('findOne()', () => {

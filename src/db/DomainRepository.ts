@@ -158,7 +158,7 @@ export class DomainRepository<T extends { id: string }> {
         // Always a total order: the asked-for sort, then _id. Without the tiebreaker, rows that tie on
         // the sort come back in any order, differently per page, and paging loses some and repeats
         // others (serve.expose.find by role: 70 of 276 missing).
-        cursor.sort(this.parseSort(options.sort));
+        cursor.sort(this.parseSort(options.sort, !DomainRepository.single(options)));
 
         const docs = await cursor.toArray();
         const hasFields = Object.keys(projection).length > 0;
@@ -227,7 +227,8 @@ export class DomainRepository<T extends { id: string }> {
 
         if (options.offset) cursor.skip(options.offset);
         if (options.sort !== undefined || options.offset) {
-            cursor.sort(this.parseSort(options.sort));
+            // One row: a tie-break only when an offset pages through them one at a time.
+            cursor.sort(this.parseSort(options.sort, Boolean(options.offset)));
         }
         cursor.limit(1);
         const docs = await cursor.toArray();
@@ -236,11 +237,19 @@ export class DomainRepository<T extends { id: string }> {
     }
 
     /**
-     * The asked-for sort ("-createdAt", a list of them, or { field: 1 | -1 }), then `_id` ascending
-     * unless it is already there: a total order, so `offset` pages never overlap or skip. `id` is
-     * the document's `_id`.
+     * The asked-for sort ("-createdAt", a list of them, or { field: 1 | -1 }), then -- for a result
+     * that can be paged (`tieBreak`) -- `_id` unless it is already there: a total order, so `offset`
+     * pages never overlap or skip. `id` is the document's `_id`.
+     *
+     * The tie-break runs in the direction of the last key asked for, so an index on that key and
+     * `_id` (`{ startIp: 1, _id: 1 }`) serves `-startIp` read backwards. And a single result (one
+     * row, no offset) gets none: which of several tied rows is "first" does not matter when only
+     * one is taken, and the tie-break is an order no single-field index has. 11-06: intel's
+     * "nearest range below this address" -- `{ startIp: -1 }`, limit 1 -- ran as
+     * `{ startIp: -1, _id: 1 }`, read and sorted ~283,000 rows in memory (~40 s) instead of one
+     * index step, and a burst of them took the platform's database down with core's sign-ins.
      */
-    private parseSort(sort?: string | string[] | Partial<Record<string, 1 | -1>>): Record<string, 1 | -1> {
+    private parseSort(sort?: string | string[] | Partial<Record<string, 1 | -1>>, tieBreak = true): Record<string, 1 | -1> {
         const result: Record<string, 1 | -1> = {};
 
         const add = (spec: string): void => {
@@ -261,10 +270,17 @@ export class DomainRepository<T extends { id: string }> {
             }
         }
 
-        if (result['_id'] === undefined)
-            result['_id'] = 1;
+        if (tieBreak && result['_id'] === undefined) {
+            const directions = Object.values(result);
+            result['_id'] = directions[directions.length - 1] ?? 1;
+        }
 
         return result;
+    }
+
+    /** A result of one row with no offset: nothing to page, so no tie-break is needed (parseSort). */
+    private static single(options: { readonly limit?: number; readonly offset?: number }): boolean {
+        return options.limit === 1 && !options.offset;
     }
 
     /**
@@ -396,7 +412,8 @@ export class DomainRepository<T extends { id: string }> {
             };
         }
 
-        const sort = options.sort ? this.parseSort(options.sort as any) : undefined;
+        // One document: no tie-break (parseSort).
+        const sort = options.sort ? this.parseSort(options.sort as any, false) : undefined;
 
         let result: Document | null = null;
         try {
