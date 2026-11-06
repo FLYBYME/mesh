@@ -580,4 +580,24 @@ describe('Unique Key Constraints', () => {
             expect(error?.message).toContain('sha256:existing');
         });
     });
+
+    describe('a database closed while its indexes are being made (11-06)', () => {
+        it('leaves no unhandled rejection: one ends a Node 22 process', async () => {
+            const unhandled: unknown[] = [];
+            const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+            process.on('unhandledRejection', onUnhandled);
+            try {
+                const db = new Database(new Logger(LogLevel.ERROR), baseUri, TEST_DB_NAME);
+                await db.connect();
+                // The repository starts making its indexes; nothing awaits it before the close.
+                db.collection('artifact');
+                await db.disconnect();
+                await new Promise((resolve) => setTimeout(resolve, 200));
+            } finally {
+                process.off('unhandledRejection', onUnhandled);
+            }
+
+            expect(unhandled).toEqual([]);
+        });
+    });
 });

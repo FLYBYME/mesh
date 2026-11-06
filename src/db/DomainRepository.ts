@@ -23,6 +23,9 @@ export class DomainRepository<T extends { id: string }> {
                 this.readyPromise = this.ensureUniqueIndexes(keys);
             }
         }
+        // Awaited by each operation, which fails with it; never an unhandled rejection meanwhile
+        // (one ends a Node 22 process: Database.ensureDomainIndexes says why).
+        this.readyPromise?.catch(() => undefined);
     }
 
     private async ensureUniqueIndexes(keys: readonly NormalizedUniqueKey[]): Promise<void> {

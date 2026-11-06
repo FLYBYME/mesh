@@ -156,6 +156,14 @@ export class Database {
             }
         })();
 
+        // Started for every repository, awaited only by its operations: one that fails with nobody
+        // operating yet (the database closed under it) was an unhandled rejection, which ends a
+        // Node 22 process (found 11-06, routes' tests). Said here; an operation awaiting it still
+        // fails with it, as before.
+        promise.catch((err: unknown) => {
+            this.logger.warn(`[DB] Indexes for "${domain}" could not be ensured: ${err instanceof Error ? err.message : String(err)}`);
+        });
+
         this.ensuredIndexes.set(domain, promise);
         return promise;
     }
@@ -256,6 +264,10 @@ export class Database {
         const collection = this.dbInstance.collection(domain);
         
         const readyPromise = this.ensureTimeSeriesCollection(domain);
+        // Awaited by each operation; never an unhandled rejection meanwhile (see ensureDomainIndexes).
+        readyPromise.catch((err: unknown) => {
+            this.logger.warn(`[DB] Time-series collection "${domain}" could not be ensured: ${err instanceof Error ? err.message : String(err)}`);
+        });
 
         const repository = new TimeSeriesRepository<T>(collection, schema, domain, readyPromise);
         this.tsRepositories.set(domain, repository as unknown as TimeSeriesRepository<{ timestamp: Date, tags: Record<string, string> }>);
