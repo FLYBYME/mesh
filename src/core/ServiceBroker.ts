@@ -815,7 +815,10 @@ export class ServiceBroker implements IServiceBroker {
                     }
                 }
                 try {
-                    return await dispatch(ctx.params, serviceCtx);
+                    // Run as the contract's owner (a part's, when a part mounted it): what the handler
+                    // registers is that part's, and work it leaves running carries the owner, so an
+                    // error out of it can be traced to the part (ownerInEffect).
+                    return await this.asOwner(this.contractOwners.get(toolKeyStr), () => dispatch(ctx.params, serviceCtx));
                 } finally {
                     // Only a per-call controller is finished here -- a lifetime one stays live for
                     // the next invocation, and for whatever the handler left running behind it.
@@ -1263,6 +1266,22 @@ export class ServiceBroker implements IServiceBroker {
         return ServiceBroker.ownerStorage?.getStore() ?? this.ownerFallback;
     }
 
+    /**
+     * The owner whose work is running now: the `withOwner` scope, or the owned contract or event
+     * handler this async work came from -- however much later it runs (a timer, a socket's error).
+     * What a process-level handler reads to tell whose code an uncaught error came from, when the
+     * error's own stack names none of it (11-05: an EADDRINUSE raised by node:net alone). Undefined
+     * outside any owner's work, and always without AsyncLocalStorage.
+     */
+    public ownerInEffect(): string | undefined {
+        return ServiceBroker.ownerStorage?.getStore();
+    }
+
+    /** `fn` as `owner`'s work, when there is one; otherwise in whatever scope is in effect. */
+    private asOwner<T>(owner: string | undefined, fn: () => T): T {
+        return owner === undefined ? fn() : this.withOwner(owner, fn);
+    }
+
     private recordOwned(owner: string, registration: OwnedRegistration): void {
         const list = this.ownedRegistrations.get(owner);
         if (list === undefined) this.ownedRegistrations.set(owner, [registration]);
@@ -1482,8 +1501,8 @@ export class ServiceBroker implements IServiceBroker {
                     ...organizationOf(ctx.meta), startedAt, durationMs: performance.now() - startedMs, outcome, ...(error !== undefined ? { error } : {}),
                 });
             };
-            void ContextStack.run(root, () => Promise.resolve()
-                .then(() => handler(data as EventRegistry[K], ctx)))
+            void ContextStack.run(root, () => this.asOwner(owner, () => Promise.resolve()
+                .then(() => handler(data as EventRegistry[K], ctx))))
                 .then(() => span('ok'))
                 .catch((err: unknown) => {
                     span('error', err instanceof Error ? err.message : String(err));

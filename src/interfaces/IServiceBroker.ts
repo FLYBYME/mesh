@@ -156,6 +156,11 @@ export interface IServiceBroker {
      */
     withOwner<T>(owner: string, fn: () => T): T;
     /**
+     * Whose work is running now: the `withOwner` scope, or the owned contract or event handler this
+     * async work came from, however much later it runs. Undefined outside any owner's work.
+     */
+    ownerInEffect(): string | undefined;
+    /**
      * Removes everything registered under `owner`, newest first, at once; resolves when its
      * contracts' `onStop` closes have finished. A no-op for an unknown owner.
      */
